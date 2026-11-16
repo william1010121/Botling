@@ -7,7 +7,7 @@
 // a time), the old build is what really runs (not the bundle on disk now), and a build that changed since the card is refused.
 import { afterEach, describe, expect, it } from "vitest";
 import * as nodeFs from "node:fs";
-import { chmodSync, copyFileSync, mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../../../test/helpers";
 import type { AppState, BotInfo, ReplyTag } from "../../../../Web/host/src/api";
@@ -233,6 +233,53 @@ describe("inside Electron, where fs sees app.asar as a folder", () => {
     await waitFor(() => first.picks.length === 1);
     first.picks[0]!(0);
     await waitFor(() => first.calls.some((call) => call[0] === "install"));
+    const second = run(root, old);
+    await second.program.start();
+    const said = await second.told();
+    expect(said).toMatch(/was not installed/);
+    expect(said).not.toMatch(/restarted on/);
+  });
+});
+
+// The build that installs the fix still has the bug: its state has no hash for the requested build and builtAt values that were
+// Electron's clock. The fixed build that comes up must not report itself as "neither" for that state (and must not take the old
+// build for the requested one either).
+describe("a state written by a build from before original-fs", () => {
+  /** What such a build recorded: no hash, and times that were the clock at the card and at its start. */
+  function oldState(root: string) {
+    const file = join(root, "core", "self-update", "state.json");
+    const state = JSON.parse(readFileSync(file, "utf8"));
+    state.to = { ...state.to, asarSha256: null, builtAt: Date.now() };
+    state.from = { ...state.from, builtAt: Date.now() - 600_000 };
+    writeFileSync(file, JSON.stringify(state));
+  }
+  async function installed(root: string, old: string, dist: string) {
+    const first = run(root, old);
+    await first.program.start();
+    first.ask(dist);
+    await waitFor(() => first.picks.length === 1);
+    first.picks[0]!(0);
+    await waitFor(() => first.calls.some((call) => call[0] === "install"));
+    oldState(root);
+  }
+
+  it("the requested build that came up (same content as the bundle asked for) is reported installed", async () => {
+    const root = tempDir("install-check");
+    const old = fakeApp(join(root, "Applications"), "Botling 3", { BotlingGitCommit: "c8d10570aaaa", BotlingGitDirty: "1" }, "old build", T0);
+    const dist = fakeApp(join(root, "dist"), "Botling 3", { BotlingGitCommit: "38060f517c36", BotlingGitDirty: "0" }, "the fix", T0 + 100);
+    await installed(root, old, dist);
+    const second = run(root, install(dist, join(root, "Applications", "Botling 3 installed.app")));
+    await second.program.start();
+    const said = await second.told();
+    expect(said).toMatch(/restarted on 3\.0\.0-beta\.1 \(38060f5\)/);
+    expect(said).not.toMatch(/not installed|neither/);
+  });
+
+  it("the old build of the same label coming back is still not installed", async () => {
+    const root = tempDir("install-check");
+    const old = fakeApp(join(root, "Applications"), "Botling 3", SAME, "old build", T0);
+    const dist = fakeApp(join(root, "dist"), "Botling 3", SAME, "the fix", T0 + 100);
+    await installed(root, old, dist);
     const second = run(root, old);
     await second.program.start();
     const said = await second.told();

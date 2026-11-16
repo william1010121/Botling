@@ -134,6 +134,14 @@ export function whichBuild(running: BuildInfo, state: { from: BuildInfo; to: Bui
   // The requested build carries the hash of its asar from when the install started; the running bundle is read for it only
   // when its label is the requested one (a different label needs no hash to be told apart).
   const seen = typeof state.to.asarSha256 === "string" && typeof running.asarSha256 !== "string" && sameLabel(running, state.to) ? withAsarHash(running) : running;
+  // A state written by a build from before original-fs (2026-11-17) has no hash for the requested build, and its builtAt was
+  // Electron's clock, not a file time: compare the running asar with the requested bundle's asar as it is now. Only equal content
+  // says "to"; a rebuild since then says no (never the other way round).
+  if (typeof state.to.asarSha256 !== "string" && running.path !== state.to.path && sameLabel(running, state.to)) {
+    const now = asarSha256(running.path);
+    const wanted = asarSha256(state.to.path);
+    if (now !== null && wanted !== null) return now === wanted ? "to" : sameBuild(running, state.from) ? "from" : "other";
+  }
   if (sameBuild(seen, state.to)) return "to";
   return sameBuild(seen, state.from) ? "from" : "other";
 }
