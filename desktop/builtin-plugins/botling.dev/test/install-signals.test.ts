@@ -130,19 +130,21 @@ describe("the Botling 3 install script is not ended unseen", () => {
     expect(readBuild(r.from.path)?.commit).toBe("bbbbbbb2222");
   });
 
-  it("a SIGTERM during the copy puts the old app back, never deletes it, and opens it again", async () => {
+  it("a SIGTERM while the new build is still being copied puts the old app back, never deletes it, opens it again and leaves no staged copy", async () => {
     const dir = tempDir("install-signals");
     const r = rig(dir);
     const args = r.make(botlingd(0).pid!);
     const script = r.start(args, { SLOW_DITTO: "1", MAKE_HEALTHY: join(dir, "never") });
-    await script.until("copying the new build");
+    await script.until("nothing runs from the old app any more");
     process.kill(script.child.pid!, "SIGTERM");
     await script.closed;
-    expect(script.out()).toContain("got SIGTERM at step: copying the new build");
-    expect(script.out()).toContain("putting the old app back");
+    expect(script.out()).toContain("got SIGTERM at step: waiting for the new build copy");
     expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
     expect(r.openedLines()).toEqual([`-n ${r.from.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
-    expect(installOutcome(r.server)).toMatchObject({ kind: "rolledBack", reason: "the install script ended early at step: copying the new build" });
+    expect(installOutcome(r.server)).toMatchObject({ kind: "rolledBack", reason: "the install script ended early at step: waiting for the new build copy" });
+    // The copy was still running when the script ended; nothing may be left beside the app, not even once that copy would have finished.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(existsSync(`${r.from.path}.staging`)).toBe(false);
   });
 
   it("a signal before the old app was moved never touches it", async () => {
@@ -184,28 +186,32 @@ describe("review probes: a signal at the edges of a step never loses the old app
     }, 20_000);
   }
 
-  it("v3: a SIGTERM that lands right after a failed copy put the old app back does not remove it", async () => {
+  it("v3: a SIGTERM that lands right after the staged copy was moved into place puts the old app back and leaves no staged copy", async () => {
     const dir = tempDir("install-probe");
     const r = rig(dir);
     const args = r.make(botlingd(0).pid!);
-    const script = r.start(args, { PATH: r.path, FAIL_DITTO: "1", SLOW_MV_TO: r.from.path, MAKE_HEALTHY: join(dir, "never") });
+    const script = r.start(args, { PATH: r.path, SLOW_MV_TO: r.from.path, MAKE_HEALTHY: join(dir, "never") });
     await script.until("slow mv to");
     process.kill(script.child.pid!, "SIGTERM");
     await script.closed;
     expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
+    expect(existsSync(`${r.from.path}.staging`)).toBe(false);
     expect(r.openedLines().at(-1)).toContain(r.from.path);
-  });
+  }, 20_000);
 
   it("a second SIGTERM while recover puts things back does not stop it half way", async () => {
     const dir = tempDir("install-probe");
     const r = rig(dir);
     const args = r.make(botlingd(0).pid!);
-    const script = r.start(args, { PATH: r.path, SLOW_DITTO: "1", SLOW_RM: r.from.path, MAKE_HEALTHY: join(dir, "never") });
-    await script.until("copying the new build");
+    // The first signal lands right after the staged copy was moved into place, so recover removes it ($TARGET) to put the old app back.
+    const script = r.start(args, { PATH: r.path, SLOW_MV_TO: r.from.path, SLOW_RM: r.from.path, MAKE_HEALTHY: join(dir, "never") });
+    await script.until("slow mv to");
     process.kill(script.child.pid!, "SIGTERM");
     await script.until("slow rm of");
     process.kill(script.child.pid!, "SIGTERM");
     await script.closed;
+    expect(script.out()).toContain("got SIGTERM while putting things back; carrying on");
+    expect(script.out()).not.toContain("invalid signal specification");
     expect(readBuild(r.from.path)?.commit).toBe("aaaaaaa1111");
     expect(r.openedLines()).toEqual([`-n ${r.from.path} --env BOTLING_DATA_DIR=/data --env BOTLING_SERVER_DATA_DIR=/srv`]);
   });

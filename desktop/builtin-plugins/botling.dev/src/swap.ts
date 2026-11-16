@@ -207,7 +207,7 @@ recover() {
   say "opening the old app again"
   reopen "$PREVIOUS"
 }
-on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say \"got SIG$sig while putting things back; carrying on\"" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say 'got SIG$sig while putting things back; carrying on'" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
 trap on_exit EXIT
 echo $$ > "$(dirname "$HEALTHY")/script.pid"
 STEP="waiting for Botling 2 to quit"
@@ -336,12 +336,14 @@ STEP="starting"; PHASE="before"; OK=""
 trap 'say "got SIGHUP (ignored) at step: $STEP"' HUP
 on_signal() { say "got SIG$1 at step: $STEP; ending"; exit 1; }
 for sig in TERM INT QUIT PIPE ABRT; do trap "on_signal $sig" "$sig"; done
+# The staged copy is of no use once the script ended without opening the new build: stop a copy still running, remove what it made.
+discard_stage() { if [ -n "$STAGER" ]; then pkill -P "$STAGER" 2>/dev/null; kill "$STAGER" 2>/dev/null; wait "$STAGER" 2>/dev/null; fi; rm -rf "$STAGE"; }
 recover() {
   case "$PHASE" in
-    before) [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
+    before) discard_stage; [ -e "$TARGET" ] || putback ;; # a signal that waited for "mv $TARGET $BACKUP" to finish
     launched) say "the new build was already opened; leaving it to come up"; return 0 ;;
     # $TARGET is the new build's copy only while the backup is still there (else it is the old app, already put back).
-    swap) if [ -z "$BACKUP" ] || [ -e "$BACKUP" ]; then say "putting the old app back"; rm -rf "$TARGET"; putback; fi ;;
+    swap) discard_stage; if [ -z "$BACKUP" ] || [ -e "$BACKUP" ]; then say "putting the old app back"; rm -rf "$TARGET"; putback; fi ;;
     rollback) say "finishing the roll back"; roll_back ;;
   esac
   echo "the install script ended early at step: $STEP" > "$ROLLED"
@@ -350,7 +352,7 @@ recover() {
   say "opening the old app again"
   reopen "$PREVIOUS"
 }
-on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say \"got SIG$sig while putting things back; carrying on\"" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
+on_exit() { local status=$?; [ -n "$OK" ] && return 0; OK=1; for sig in TERM INT QUIT PIPE ABRT; do trap "say 'got SIG$sig while putting things back; carrying on'" "$sig"; done; say "the install script ended early at step: $STEP (status $status)"; recover; }
 trap on_exit EXIT
 # The next start tells a script still at work from one that died by this pid (swap.ts installScriptRunning).
 echo $$ > "$(dirname "$HEALTHY")/script.pid"
