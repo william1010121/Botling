@@ -44,10 +44,10 @@ const said = (id: string, text: string): MessageView => ({ id, role: "bot", text
 interface Rig { server: FakeServer; clock: FakeClock; link: FeLink; adapter: RendererAdapter; store: WorkspaceStore; client: Pick<Client, "request">; sent: Command[] }
 const rigs: Rig[] = [];
 let epochs = 0;
-async function rig(lines: MessageView[] = [said("m1", "hello from the bot"), said("m2", "second line")]): Promise<Rig> {
+async function rig(lines: MessageView[] = [said("m1", "hello from the bot"), said("m2", "second line")], farName = farSummary.name): Promise<Rig> {
   const server = new FakeServer();
   server.servers = [{ id: SERVER_ID, name: "Studio", state: "live", since: 1 }, { id: B, name: "Linux box", state: "live", since: 2 }];
-  server.tables.set(`srv:${B}`, { logId: "incb-0001", rev: 1, rows: new Map([[`bot:${FAR}`, { rev: 1, body: farSummary }]]), retired: [] });
+  server.tables.set(`srv:${B}`, { logId: "incb-0001", rev: 1, rows: new Map([[`bot:${FAR}`, { rev: 1, body: { ...farSummary, name: farName } }]]), retired: [] });
   server.peerTargets.add(`bot:${FAR}` as StreamId);
   for (const line of lines) server.append(BOT, "message.added", { botId: "b1", message: line });
   server.snapView = () => ({ bot: null, messages: lines, history: { hasMore: false, older: 0 }, cards: [] });
@@ -177,6 +177,23 @@ describe("a chat plugin that throws in activate", () => {
     expect(pick.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("opens a peer's bot when its name is pressed, and draws a name and a line from outside as clean text (M7-07c review)", async () => {
+    const r = await rig([said("m1", "ring\u0007 <b>bold</b>\nnext")], "Far\u0007away\nsecond line");
+    const host = await draw(r);
+    await act(async () => { await chatHost().start(); });
+    await settle(() => { expect(shownLines(host)).toHaveLength(1); });
+    // One line per name, control characters escaped; a line keeps its newline, escapes the rest, and is text, never markup.
+    expect(botNames(host)).toEqual(["Studio bot", "Far\\u0007away"]);
+    expect(shownLines(host)).toEqual(["ring\\u0007 <b>bold</b>\nnext"]);
+    expect(host.querySelector(".fallback-lines b")).toBeNull();
+    const select = vi.spyOn(r.store, "select");
+    const peer = [...host.querySelectorAll<HTMLButtonElement>(".fallback-bots button")][1];
+    expect(peer.getAttribute("data-bot")).not.toBe("b1");
+    await act(async () => { peer.click(); });
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(select).toHaveBeenCalledWith(peer.getAttribute("data-bot"));
+  });
+
   it("shows only the last lines of a long chat, in order", async () => {
     const lines = Array.from({ length: FALLBACK_LINES + 7 }, (_, index) => said(`m${index}`, `line ${index}`));
     const r = await rig(lines);
@@ -220,6 +237,21 @@ describe("a chat plugin that throws in activate", () => {
     expect(refuse).toHaveBeenCalledTimes(1);
     expect(host.querySelector<HTMLTextAreaElement>(".fallback-input textarea")!.value).toBe("refused text");
     expect(host.querySelector(".fallback-input [role=alert]")?.textContent).toBe("Not sent: nope.");
+  });
+
+  it("keeps what was typed while a send was under way (M7-07c review)", async () => {
+    const r = await rig();
+    const host = await draw(r);
+    await act(async () => { await chatHost().start(); });
+    await settle(() => { expect(fallbackOf(host)).not.toBeNull(); });
+    let answer!: (value: unknown) => void;
+    vi.spyOn(r.client, "request").mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }) as never);
+    await type(host, "first");
+    await act(async () => { press(host).click(); });
+    await type(host, "first and more");
+    await act(async () => { answer({ messageId: "u-1", turnId: null }); });
+    await tick();
+    expect(host.querySelector<HTMLTextAreaElement>(".fallback-input textarea")!.value).toBe("first and more");
   });
 
   it("refuses a text over the limit before it asks anything", async () => {
