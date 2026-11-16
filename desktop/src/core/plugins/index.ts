@@ -16,6 +16,8 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
@@ -41,6 +43,8 @@ import type { PluginLinkTarget } from "../plugin-link";
 
 import * as hostEvents from "./host-events";
 import { requested } from "./requests";
+import { PluginWorkers } from "../orchestration/plugin-workers";
+import { writeFileAtomic } from "../durable/atomic";
 import { isRegularFile, type BotInfo, type LineContentRef, type MessageDecoration, type PluginStatusItem, type PluginsOptions, type SnapshotFile } from "./types";
 import { materializeSnapshot, pruneSnapshots, readPluginSnapshot, SERVER_PART_HELD_NOTICE } from "./snapshot";
 import type { PluginEventName } from "./request-params";
@@ -66,6 +70,8 @@ export class Plugins {
   readonly held: PendingTags;
   /** The folders built-in plugins assigned to bots' sessions (`sessions.folder`), kept on disk (session-folders.ts). */
   readonly folders: SessionFolders;
+  /** The worker primitives' book (M7-O03a), made when first needed. */
+  private workerBook: PluginWorkers | null = null;
   /** The developer briefing botling.dev pushed (app-seam.ts), kept on disk. */
   readonly briefings: BriefingBook;
   /** The notes plugins read or saved (`notes.*`), watched for changes on disk (`noteChanged`). */
@@ -680,6 +686,28 @@ export class Plugins {
   needs(plugin: InstalledPlugin, capability: string, what: string) { return hostEvents.needs.call(this, plugin, capability, what); }
   keybindings(): { command: string; key: string; source: "default" | "user" | "plugin" }[] { return hostEvents.keybindings.call(this); }
   notified(method: string, params: unknown, owner?: string) { return hostEvents.notified.call(this, method, params, owner); }
+
+  /** `workers.*`'s book (plugin-workers.ts): the world's workers, this plugin's facts now, the card in the main chat, the book in `plugin-workers.json`. */
+  workers(): PluginWorkers {
+    const world = this.options.world.orchestration;
+    if (!world) throw new Error("Workers are not available here.");
+    const file = join(this.options.dataDir, "plugin-workers.json");
+    return this.workerBook ??= new PluginWorkers({
+      world,
+      facts: (name) => {
+        const plugin = this.loaded(name);
+        return plugin ? { name, identity: createHash("sha256").update(JSON.stringify(plugin.manifest)).digest("hex"), permissions: plugin.manifest.ccb?.permissions ?? [], botWritten: !plugin.builtIn && !plugin.installedFrom } : null;
+      },
+      ask: (question) => this.options.world.ask(question),
+      tell: (plugin, event, data) => this.hostFor(plugin).event(event, data),
+      file: { read: () => { try { return readFileSync(file, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; } }, write: (text) => writeFileAtomic(file, text) },
+    });
+  }
+
+  /** A worker's run ended (the core's event): the plugin that started it hears `workerReport`, once. */
+  workerEnded(taskId: string, run: number, status: string, report: string) {
+    try { if (this.options.world.orchestration) this.workers().ended(taskId, run, status, report); } catch (error) { this.options.world.log(`workerReport not told: ${(error as Error).message}`); }
+  }
 
   private requested(method: string, params: unknown, owner?: string): Promise<unknown> {
     return requested.call(this, method, params, owner);
