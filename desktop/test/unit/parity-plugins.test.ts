@@ -226,7 +226,7 @@ export function activate(ccb) {
     expect(imported.problems).toEqual([]);
     expect(imported.reportText).toContain("sample-plugin");
     expect(imported.reportText).toContain("approve in Settings › Plugins");
-    expect(imported.reportText).toContain("plugins: 18 (2 wait for your approval in Settings › Plugins)");
+    expect(imported.reportText).toContain("plugins: 19 (2 wait for your approval in Settings › Plugins)");
     expect(existsSync(join(dataDir, "plugin-secrets.json"))).toBe(false);
     expect(imported.reportText).toContain("request-helper");
     // B-20(a): each imported third-party plugin has its own "approve to restore" line; no built-in has one.
