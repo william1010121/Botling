@@ -98,10 +98,10 @@ const GOLDENS: Record<string, string> = {
   "contributions.json": "7086a04fff8b005af8ce8ee63d6f5ae217c4b8911ae2874e141275709899448a",
   "frame-broker.json": "f67f7ec2d79045d56ed018b5f03b663da140217a2982942daa3f5afb0656e37d",
   "host-session.json": "8ac71e51dbc22cfbad46f5bc39ee8fa224488944a82e40f57f0a4901470ff02b",
-  "plugins-list.json": "016bbf7077f5a06de2da1a488886341953b35eae4d81d5d3aae9a4cbc8d8b79c",
+  "plugins-list.json": "17c6976d15bd78710dc47d1f5d61926a8483c093102f912b574d43ded31e26e2",
   "plugins-panel.json": "f849021fec1ffc3b0c31893bb989030a95a8543c90ba429ed2625f5ec133e8f1",
   "plugins-web.json": "c1b04565824bf16c9cbf51bcf1cc9e5162d967f86658b6e5be6b96cbc981673b",
-  "registry-plugins.json": "e612cee2fd61982164a1a54cd918548753e412badacc91c5225a5e75ed4a50f3",
+  "registry-plugins.json": "c7ffbf133fd277b5f75cb79e220575292aa64dc1e3de309998ee7a120f2c0241",
   "view-surfaces-after-disable.json": "c9555a6a695dca2807a8194460ecc7631fe0bd73f96635c59e4ac6ed0402bdeb",
   "view-surfaces.json": "be0ec3a9c245ae46d012c477809368136f090b6868a9e086be20ef8b518baf78",
 };

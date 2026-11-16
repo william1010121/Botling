@@ -70,7 +70,7 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.component-studio", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.note", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.component-studio", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.note", true, true], ["botling.orchestration", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
