@@ -3,7 +3,8 @@
 // the client in, and the check that the 2.x main entry pulls in nothing of Botling 3. Headless: no Electron, no window.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
@@ -12,10 +13,11 @@ import { MemoryFeStorage } from "../../src/fe-link";
 import { FrameSplitter, packFrame } from "../../src/protocol/frame";
 import type { Message } from "../../src/protocol";
 import type { CoreClientOptions } from "../../src/main/core-client";
-import { ServerClient, serverPaths, serverScriptFor } from "../../src/main-v3/server-client";
+import { MAX_BUNDLE_BYTES } from "../../src/renderer/shell/row-loader";
+import { ServerClient, localBundleFetcher, serverPaths, serverScriptFor } from "../../src/main-v3/server-client";
 import { unixDial } from "../../src/main-v3/unix-dial";
 import { v3DataDir } from "../../src/main-v3/paths";
-import { FakeClock, FakeServer, flush } from "./fe-link-harness";
+import { FakeClock, FakeServer, flush, SRV_STREAM } from "./fe-link-harness";
 
 const root = resolve(__dirname, "..", "..");
 const clients: ServerClient[] = [];
@@ -254,4 +256,112 @@ describe("builds", () => {
     expect(inputs).toContain("src/main-v3/guard.ts");
     expect(inputs).not.toContain("src/main/core-client.ts");
   }, 60_000);
+});
+
+describe("the window's plugin web parts", () => {
+  const refOf = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+  const made: string[] = [];
+  afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  function dataDir(files: Record<string, string> = {}): string {
+    const dir = mkdtempSync(join(tmpdir(), "botling-bundles-"));
+    made.push(dir);
+    mkdirSync(join(dir, "plugin-bundles"));
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, "plugin-bundles", name), text);
+    return dir;
+  }
+  const never: () => Promise<string> = () => new Promise(() => undefined);
+
+  it("reads a plugin's web part from botlingd's folder by the hash its row names, never asking the session (a local session drops content.ticket)", async () => {
+    const code = "export const note = 'Note tab';";
+    const dir = dataDir({ [refOf(code).slice("sha256:".length)]: code });
+    const asked: unknown[] = [];
+    const fetch = localBundleFetcher(dir, (request) => { asked.push(request); return never(); });
+    expect(await fetch({ plugin: "botling.note", ref: refOf(code) })).toBe(code);
+    expect(asked).toEqual([]);
+  });
+
+  it("leaves what is not the hash's bytes (a missing file, other bytes, a link, a ref that is not a hash) to the fallback", async () => {
+    const code = "real bytes";
+    const hex = refOf(code).slice("sha256:".length);
+    const other = refOf("another").slice("sha256:".length);
+    const dir = dataDir({ [hex]: "tampered bytes" });
+    symlinkSync(join(dir, "plugin-bundles", hex), join(dir, "plugin-bundles", other));
+    const asked: string[] = [];
+    const fetch = localBundleFetcher(dir, async (request) => { asked.push(request.ref); return "from the session"; });
+    expect(await fetch({ plugin: "a", ref: refOf(code) })).toBe("from the session");
+    expect(await fetch({ plugin: "a", ref: refOf("another") })).toBe("from the session");
+    expect(await fetch({ plugin: "a", ref: refOf("missing") })).toBe("from the session");
+    expect(await fetch({ plugin: "a", ref: "sha256:../../etc/passwd" })).toBe("from the session");
+    expect(asked).toHaveLength(4);
+  });
+
+  it("refuses a file of the right hash that is not UTF-8 text, never handing it to the session", async () => {
+    const bytes = Buffer.from([0xff, 0xfe, 0xfd]);
+    const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    const dir = dataDir();
+    writeFileSync(join(dir, "plugin-bundles", ref.slice("sha256:".length)), bytes);
+    await expect(localBundleFetcher(dir, never)({ plugin: "a", ref })).rejects.toThrow(/not UTF-8/);
+  });
+
+  it("a symlink named by the right hash that points outside the folder to the right bytes is not followed (the fallback is asked)", async () => {
+    const code = "export const outside = true;";
+    const hex = refOf(code).slice("sha256:".length);
+    const dir = dataDir();
+    const elsewhere = mkdtempSync(join(tmpdir(), "botling-outside-"));
+    made.push(elsewhere);
+    writeFileSync(join(elsewhere, "real.js"), code);
+    symlinkSync(join(elsewhere, "real.js"), join(dir, "plugin-bundles", hex));
+    const asked: string[] = [];
+    const fetch = localBundleFetcher(dir, async (request) => { asked.push(request.ref); return "from the session"; });
+    expect(await fetch({ plugin: "a", ref: refOf(code) })).toBe("from the session");
+    expect(asked).toEqual([refOf(code)]);
+  });
+
+  it("serves a web part of exactly the size cap and leaves one byte more to the fallback", async () => {
+    const atCap = "a".repeat(MAX_BUNDLE_BYTES);
+    const over = "b".repeat(MAX_BUNDLE_BYTES + 1);
+    const dir = dataDir({ [refOf(atCap).slice("sha256:".length)]: atCap, [refOf(over).slice("sha256:".length)]: over });
+    const asked: string[] = [];
+    const fetch = localBundleFetcher(dir, async (request) => { asked.push(request.ref); return "from the session"; });
+    expect(await fetch({ plugin: "a", ref: refOf(atCap) })).toBe(atCap);
+    expect(asked).toEqual([]);
+    expect(await fetch({ plugin: "a", ref: refOf(over) })).toBe("from the session");
+    expect(asked).toEqual([refOf(over)]);
+  });
+
+  it("the window's own wiring: with the default deps the frames' web parts come from the data folder and no content.ticket is ever sent (a local session drops it)", async () => {
+    const panel = "export const panel = 'Note tab from disk';";
+    const web = "export const web = 'chat frame part from disk';";
+    const dir = dataDir({ [refOf(panel).slice("sha256:".length)]: panel, [refOf(web).slice("sha256:".length)]: web });
+    const server = new FakeServer();
+    server.onMessage = (message: Message) => {
+      if (message.t !== "req") return;
+      const answer = (result: unknown) => server.send({ t: "res", req: message.req, ok: true, result });
+      if (message.cmd.type === "chat.snapshot") answer({ epoch: "server", seq: 0, bots: [], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null }, chat: null });
+      else if (message.cmd.type === "plugins.panel") answer({ title: "t", source: "SERVER-PANEL", settings: {} });
+      else if (message.cmd.type === "plugins.web") answer({ specs: [{ name: "botling.web", version: "1", source: "SERVER-WEB", styles: [], settings: {}, commands: [] }] });
+      else answer({});
+      // content.ticket is not a req: nothing here would answer it, as on the real local session.
+    };
+    const { c } = client(server, undefined, { env: { BOTLING_APP_DATA_DIR: "/app-data", BOTLING_SERVER_DATA_DIR: dir } });
+    c.start();
+    await c.ready();
+    await flush();
+    await c.request({ type: "chat.snapshot" } as never, "snap");
+    const row = (code: string) => ({
+      codeHash: "h", author: "user", grants: {}, files: { web: refOf(code) },
+      manifest: { tier: "read", reads: [], requests: [], owns: [], provides: [], requires: [], uses: [], clients: [], needsShell: [] },
+    });
+    server.sendWire({ t: "rows", stream: SRV_STREAM, logId: "incown01", after: 0, to: 3, rows: [{ key: "plugin:botling.note", rev: 2, body: row(panel) }, { key: "plugin:botling.web", rev: 3, body: row(web) }], more: false });
+    await flush();
+    const shown = await Promise.race([
+      Promise.all([c.request({ type: "plugins.panel", name: "botling.note", panel: "botling.note.tab" }, "p1"), c.request({ type: "plugins.web" }, "w1")]),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3_000)),
+    ]);
+    expect(shown).not.toBeNull();
+    const [panelAnswer, webAnswer] = shown!;
+    expect(panelAnswer).toMatchObject({ ok: true, result: { source: panel } });
+    expect(webAnswer).toMatchObject({ ok: true, result: { specs: [{ name: "botling.web", source: web }] } });
+    expect(server.received.filter((message) => message.t === "content.ticket")).toEqual([]);
+  });
 });

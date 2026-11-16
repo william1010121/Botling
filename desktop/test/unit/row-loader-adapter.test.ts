@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Command, EventEnvelope } from "../../src/contract";
 import { FeLink, MemoryFeStorage } from "../../src/fe-link";
 import { RendererAdapter } from "../../src/main-v3/renderer-adapter";
-import { BundleRefusedError, type BundleFetcher, type BundleRequest } from "../../src/renderer/shell/row-loader";
+import { BundleRefusedError, ticketBundleFetcher, type BundleFetcher, type BundleRequest } from "../../src/renderer/shell/row-loader";
 import { sourceByRef } from "../../src/main-v3/web-by-ref";
 import type { Message } from "../../src/protocol";
 import { FakeClock, FakeServer, flush, SRV_STREAM } from "./fe-link-harness";
@@ -45,7 +45,7 @@ const opened: Array<{ link: FeLink; adapter: RendererAdapter }> = [];
 afterEach(async () => { for (const { link, adapter } of opened.splice(0)) { adapter.stop(); await link.stop(); } });
 
 let epochs = 0;
-async function rig(options: { bundles?: (fetched: BundleRequest[]) => BundleFetcher | undefined } = {}): Promise<Rig> {
+async function rig(options: { bundles?: (fetched: BundleRequest[]) => BundleFetcher | undefined; fetcherFor?: (link: FeLink) => BundleFetcher } = {}): Promise<Rig> {
   const server = new FakeServer();
   const clock = new FakeClock();
   const reqs: Command[] = [];
@@ -61,7 +61,7 @@ async function rig(options: { bundles?: (fetched: BundleRequest[]) => BundleFetc
   };
   const link = await FeLink.open({ storage: new MemoryFeStorage(), dial: server.dial, deviceId: "desktop", feVersion: "3.0.0", clock, newEpoch: () => (++epochs).toString(16).padStart(32, "0") });
   const events: EventEnvelope[] = [];
-  const bundles = options.bundles ? options.bundles(fetched) : undefined;
+  const bundles = options.fetcherFor ? options.fetcherFor(link) : options.bundles ? options.bundles(fetched) : undefined;
   const adapter = new RendererAdapter({ link, clock, newEpoch: () => "e1", emit: (envelope) => { events.push(envelope); }, ...(bundles ? { bundles } : {}) });
   opened.push({ link, adapter });
   adapter.start();
@@ -258,5 +258,23 @@ describe("a bundle that does not match its row is refused", () => {
     expect(answer).toEqual({ refused: expect.stringMatching(/./), key: expect.stringContaining(refOf(A2)) });
     expect(lines.join("\n")).toMatch(/refused/);
     expect(lines.join("\n")).not.toMatch(/server's source is used/);
+  });
+});
+
+describe("a session that never answers content.ticket (the window's local one drops it)", () => {
+  it("still answers plugins.panel and plugins.web within a bounded time, from the server's source, so no plugin frame (Note, Usage, 陪讀) waits for ever", async () => {
+    const r = await rig({ fetcherFor: (link) => ticketBundleFetcher({ link: link as never, base: "http://127.0.0.1:1", ticketMs: 40 }) });
+    r.rows(0, 3, [{ key: "plugin:botling.note", rev: 2, body: plugin("h-note", refOf(A1)) }, { key: "plugin:botling.usage", rev: 3, body: plugin("h-usage", refOf(A2)) }]);
+    await flush();
+    const started = Date.now();
+    const [note, usage] = await Promise.all([
+      r.adapter.request({ type: "plugins.panel", name: "botling.note", panel: "botling.note.tab" }),
+      r.adapter.request({ type: "plugins.panel", name: "botling.usage", panel: "botling.usage.settings" }),
+    ]);
+    expect(note).toEqual({ ok: true, result: { title: "t", source: "SERVER-PANEL-botling.note", settings: {} } });
+    expect(usage).toEqual({ ok: true, result: { title: "t", source: "SERVER-PANEL-botling.usage", settings: {} } });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // The ask was made, and nobody answered it.
+    expect(r.server.received.filter((message) => message.t === "content.ticket")).toHaveLength(2);
   });
 });

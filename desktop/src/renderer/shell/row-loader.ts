@@ -124,6 +124,19 @@ export interface TicketFetcherOptions {
   fetch?: typeof fetch;
   /** How many fetched bundles are kept (default 32). */
   keep?: number;
+  /**
+   * How long the server has to answer the ticket (default 10 s). A session that does not serve `content.ticket` (the window's local one, which drops
+   * it) never answers; without a limit the frame that asked (the Note tab, any plugin panel) waits for ever and draws nothing.
+   */
+  ticketMs?: number;
+}
+
+/** `ms` for a promise; the timer is always cleared. */
+function within<T>(asked: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(what)), ms);
+    asked.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 /**
@@ -136,7 +149,7 @@ export function ticketBundleFetcher(options: TicketFetcherOptions): BundleFetche
   const keep = options.keep ?? 32;
   const run = async (plugin: string, ref: string, server: string): Promise<string> => {
     const entry = { stream: `srv:${server}`, seq: 1 };
-    const answer = await options.link.remoteContent({ t: "content.ticket", owner: server, id: ref, entry, plugin });
+    const answer = await within(options.link.remoteContent({ t: "content.ticket", owner: server, id: ref, entry, plugin }), options.ticketMs ?? 10_000, "the server did not answer the ticket for the web part");
     if (answer.t !== "content.granted" || typeof answer.ticket !== "string") throw new Error(`no ticket for the web part (${String(answer.reason ?? answer.t).slice(0, 60)})`);
     const base = typeof options.base === "function" ? options.base() : options.base;
     if (!base) throw new Error("the server has no content address");
