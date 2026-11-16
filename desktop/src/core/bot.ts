@@ -265,33 +265,33 @@ export class Bot {
 
   /** Made on first use, from this bot: a fake `Object.create(Bot.prototype)` has one too. */
   private botContext: BotContext | null = null;
-  private get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
+  get ctx(): BotContext { return this.botContext ??= new BotContext(this); }
   /** Made on first use too (M7-S44): it owns the approvals and the allow rules. */
   private botQuestions: BotQuestions | null = null;
-  private get questions(): BotQuestions { return this.botQuestions ??= new BotQuestions(this, this.ctx); }
+  get questions(): BotQuestions { return this.botQuestions ??= new BotQuestions(this, this.ctx); }
   private botProgress: BotProgress | null = null;
   get progress(): BotProgress { return this.botProgress ??= new BotProgress(this, this.ctx); }
   private botTasks: BotTasks | null = null;
   get tasks(): BotTasks { return this.botTasks ??= new BotTasks(this, this.ctx); }
   private botGuests: BotGuests | null = null;
-  private get guests(): BotGuests { return this.botGuests ??= new BotGuests(this, this.ctx); }
+  get guests(): BotGuests { return this.botGuests ??= new BotGuests(this, this.ctx); }
   private botSettings: BotSettings | null = null;
   get settings(): BotSettings { return this.botSettings ??= new BotSettings(this, this.ctx); }
   /** Made on first use, from this bot (M7-S42). */
   private botRoutines: BotRoutines | null = null;
-  private get routines(): BotRoutines { return this.botRoutines ??= new BotRoutines(this, this.ctx); }
+  get routines(): BotRoutines { return this.botRoutines ??= new BotRoutines(this, this.ctx); }
   private botRecords: BotRecords | null = null;
   get recordsBook(): BotRecords { return this.botRecords ??= new BotRecords(this, this.ctx); }
   private botSubagentRows: BotSubagentRows | null = null;
-  private get subagentRowBook(): BotSubagentRows { return this.botSubagentRows ??= new BotSubagentRows(this, this.ctx); }
+  get subagentRowBook(): BotSubagentRows { return this.botSubagentRows ??= new BotSubagentRows(this, this.ctx); }
   private botGroup: BotGroup | null = null;
   get group(): BotGroup { return this.botGroup ??= new BotGroup(this, this.ctx); }
   private botDelivery: BotDelivery | null = null;
   get delivery(): BotDelivery { return this.botDelivery ??= new BotDelivery(this, this.ctx); }
   private botViews: BotViews | null = null;
-  private get views(): BotViews { return this.botViews ??= new BotViews(this, this.ctx); }
+  get views(): BotViews { return this.botViews ??= new BotViews(this, this.ctx); }
   private botDecisions: BotDecisions | null = null;
-  private get decisions(): BotDecisions { return this.botDecisions ??= new BotDecisions(this, this.ctx); }
+  get decisions(): BotDecisions { return this.botDecisions ??= new BotDecisions(this, this.ctx); }
   private botWorkers: BotWorkers | null = null;
   get workers(): BotWorkers { return this.botWorkers ??= new BotWorkers(this, this.ctx); }
   private botRestart: BotRestart | null = null;
@@ -328,7 +328,7 @@ export class Bot {
 
   /** What a head says and what becomes of it (M7-S53): made on first use, from this bot. */
   private botHeadEvents: HeadEvents | null = null;
-  private get headEvents(): HeadEvents { return this.botHeadEvents ??= new HeadEvents(this, this.ctx); }
+  get headEvents(): HeadEvents { return this.botHeadEvents ??= new HeadEvents(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
     const primary = options.primary;
