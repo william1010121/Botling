@@ -30,6 +30,15 @@ describe("addMentionSource", () => {
     expect(listHidden()).toBe(true);
   });
 
+  it("puts the row's own `insert` in the box, not '@name ', when the two differ (review: C8)", () => {
+    make();
+    composer.addMentionSource(() => [{ name: "Deploy", insert: "@p-0003 " }]);
+    type("@de");
+    key("Enter");
+    expect(composer.text).toBe("@p-0003 ");
+    expect(composer.view.state.selection.main.head).toBe(8);
+  });
+
   it("takes a row with no `insert` as '@name ' like a bot", () => {
     make();
     composer.addMentionSource(() => [{ name: "Plain" }]);

@@ -155,6 +155,19 @@ describe("what a bot's tags do", () => {
     expect(t.book("B1").pins[0]!.status).toBe("later");
   });
 
+  it("stops a bot's <pin-say> after 30 in a minute too, and takes it again a minute later (review: P5)", () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m", text: "Deploy" });
+    // nothing waits: each answer is a turn of its own, so the thread counts the tags that got through
+    for (let n = 0; n < 40; n++) t.tag("B1", "pin-say", { id: "p-0001" }, `say ${n}`);
+    const thread = t.book("B1").pins[0]!.thread;
+    expect(thread).toHaveLength(30);
+    expect(thread[29]!.a).toBe("say 29");
+    t.tick(61_000);
+    t.tag("B1", "pin-say", { id: "p-0001" }, "later");
+    expect(t.book("B1").pins[0]!.thread.map((turn) => turn.a).at(-1)).toBe("later");
+  });
+
   it("with broken storage reads an empty book and does not throw out of a tag", () => {
     const t = setup({ "pins:B1": "garbage", "pins:bots": "garbage" });
     expect(() => t.tag("B1", "pin-card", { id: "k", title: "T", state: "wait" }, "ok")).not.toThrow();
@@ -207,6 +220,15 @@ describe("@card words", () => {
     t.tick(M.UNPOSTED_MS + 1);
     t.send("B1", "@Deploy again");
     expect(t.book("B1").pins[0]!.thread.map((turn) => turn.q)).toEqual(["again"]);
+  });
+
+  it("reads no storage for a message to a bot that has no cards: every message passes this hook (review: P1)", () => {
+    const t = pinned();
+    const get = vi.spyOn(t.api.storage, "get");
+    expect(t.send("B9", "@Deploy words")).toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+    expect(typeof t.send("B1", "@Deploy words")).toBe("string");
+    expect(get).toHaveBeenCalledWith("pins:B1");
   });
 
   it("does not let a message too long to route through (it is sent as it is)", () => {
