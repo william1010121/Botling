@@ -155,6 +155,42 @@ describe("O05 item 2: a send in flight keeps its place", () => {
   });
 });
 
+describe("O05 cancel: the model's CancelAsk needs no send in flight (sending = \"no\")", () => {
+  /** T1 is at work; the plugin sends to it and the core has not answered yet. */
+  async function sending() {
+    const core = fakeCore();
+    const t = book(core);
+    await t.workers.start("p", params);
+    let answer!: (value: { ok: true; how: string; run: number } | { ok: false; reason: string }) => void;
+    core.hooks.send = () => new Promise((resolve) => { answer = resolve; });
+    const sent = t.workers.send("p", "T1", "more");
+    await Promise.resolve();
+    expect(core.log.sent).toEqual(["T1"]);
+    return { t, core, sent, answer: (value: Parameters<typeof answer>[0]) => answer(value) };
+  }
+
+  it("a cancel while a send is in flight is refused: nothing is stopped and the entry keeps its place and its mark", async () => {
+    const { t, core, sent, answer } = await sending();
+    await expect(t.workers.cancel("p", "T1")).rejects.toThrow(/being sent/);
+    expect(core.log.stopped).toEqual([]);
+    answer({ ok: true, how: "steered", run: 1 });
+    await sent;
+    expect(t.rows()[0]).toMatchObject({ open: true, stopped: false });
+    // Once the send has returned a cancel goes through as always.
+    await expect(t.workers.cancel("p", "T1")).resolves.toEqual({ stopped: true });
+    expect(core.log.stopped).toEqual(["T1"]);
+    expect(t.rows()[0]).toMatchObject({ open: false });
+  });
+
+  it("after a send that failed the cancel is possible again (the guard is not left on)", async () => {
+    const { t, core, sent, answer } = await sending();
+    answer({ ok: false, reason: "busy" });
+    await expect(sent).rejects.toThrow("busy");
+    await expect(t.workers.cancel("p", "T1")).resolves.toEqual({ stopped: true });
+    expect(core.log.stopped).toEqual(["T1"]);
+  });
+});
+
 describe("O05 item 3: a send does not start a run that drops the report the bot is still owed", () => {
   it("refused while the core says the bot has not taken the last report; nothing is sent and the entry is not reopened", async () => {
     const core = fakeCore();
