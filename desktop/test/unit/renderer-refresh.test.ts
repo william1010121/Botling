@@ -6,6 +6,7 @@ import { runInNewContext } from "node:vm";
 const script = resolve("build-renderer.mjs");
 // Runtime import of the same ESM module used by both build entry points.
 const { buildRenderer, watchRenderer } = await import(script);
+const MIN_FE_FILE = "desktop/src/server/botlingd-start.ts";
 const roots: string[] = [], stops: (() => void)[] = [];
 afterEach(() => { for (const stop of stops.splice(0)) stop(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function fixture() {
@@ -29,6 +30,8 @@ function fixture() {
   put("desktop/builtin-plugins/botling.catchup/catchup.css", '.catchup-head { color: red; }');
   put("desktop/builtin-plugins/botling.board/src/web.ts", 'export const version = "board-one";');
   put("desktop/builtin-plugins/botling.board/src/board.css", '.board-grid { display: grid; }');
+  // A real build refuses a tree without exactly one MIN_FE_VERSION under desktop/src (M7-10c, fe-build-manifest.mjs): the scratch tree carries one like the real tree.
+  put(MIN_FE_FILE, 'export const MIN_FE_VERSION = "9.9.9-fixture";');
   put("desktop/out/main/main.cjs", 'main must stay running');
   put("desktop/out/core/main.cjs", 'core must stay running');
   put("desktop/out/preload/preload.cjs", 'preload must stay unchanged');
@@ -44,6 +47,8 @@ it("renderer-only publication keeps main/core/preload output and retains success
   expect(production.mode).toBe("production");
   expect(f.read("chat.js")).toContain("chat-one");
   expect(f.read("styles.css")).toContain("--token: red");
+  // The build wrote the fixture's constant into the FE manifest.
+  expect(JSON.parse(f.read("fe-build-manifest.json")).shell.minFeVersion).toBe("9.9.9-fixture");
   // The desktop's chat page loads ccb-latex from out/builtin-plugins like any plugin; only Botling Web bundles it.
   expect(f.read("chat.js")).not.toContain("latex-one");
   expect(f.read("chat.js")).not.toContain("extras-one");
@@ -73,6 +78,22 @@ it("renderer-only publication keeps main/core/preload output and retains success
   for (const [path, text] of [["main/main.cjs", "main must stay running"], ["core/main.cjs", "core must stay running"], ["preload/preload.cjs", "preload must stay unchanged"]])
     expect(readFileSync(join(f.root, "out", path), "utf8")).toBe(text);
 });
+it("a build without exactly one MIN_FE_VERSION is refused and keeps the last successful output", async () => {
+  const f = fixture(); await buildRenderer(f);
+  const before = [f.read("renderer.js"), f.read("fe-build-manifest.json")];
+  f.put("desktop/src/renderer/main.tsx", 'globalThis.shellVersion = "shell-after-refusal";');
+  f.put(MIN_FE_FILE, "export const OTHER = 1;");
+  await expect(buildRenderer(f)).rejects.toThrow(/MIN_FE_VERSION is not defined exactly once/);
+  f.put(MIN_FE_FILE, 'export const MIN_FE_VERSION = "1";');
+  f.put("desktop/src/server/again.ts", 'export const MIN_FE_VERSION = "2";');
+  await expect(buildRenderer(f)).rejects.toThrow(/MIN_FE_VERSION is not defined exactly once/);
+  expect([f.read("renderer.js"), f.read("fe-build-manifest.json")]).toEqual(before);
+  rmSync(join(f.root, "src/server/again.ts"));
+  await buildRenderer(f);
+  expect(f.read("renderer.js")).toContain("shell-after-refusal");
+  expect(JSON.parse(f.read("fe-build-manifest.json")).shell.minFeVersion).toBe("1");
+});
+
 it("one watcher publishes TS, HTML, token CSS and chat changes, then recovers from a syntax error", async () => {
   const f = fixture(), builds: string[] = [], errors: Error[] = [];
   stops.push(await watchRenderer({ ...f, interval: 25, onBuild: (dir: string) => builds.push(dir), onError: (error: Error) => errors.push(error) }));
