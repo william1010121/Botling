@@ -449,7 +449,8 @@ describe("D0: a redraw of the state the log already holds is not stored", () => 
 describe("only log-store.ts reads or writes entries.body", () => {
   const SRC = join(__dirname, "..", "..", "src");
   // Known readers that decode by hand; each is to switch to readEntries (plan db-compaction D1, with bot/v3-slow-restart).
-  const KNOWN = new Set(["server/replica/summary.ts"]);
+  // store/compaction.ts: the one-time prune sizes rows and scans the whole `srv:` bot.updated / settings.updated bodies (always stored whole).
+  const KNOWN = new Set(["server/replica/summary.ts", "server/store/compaction.ts"]);
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);

@@ -12,10 +12,11 @@ import type { BotView } from "../../src/contract";
 import { settingsView } from "../../src/core/settings";
 import { GENESIS_HASH, type StreamId } from "../../src/protocol";
 import { appendEntries, ensureStream, LogHub, readEntries, readSnap, readStream, verifyStream, type AppendItem } from "../../src/server/log";
+import { REBASE_HANGING_SQL } from "../../src/server/log/log-store";
 import { Botlingd } from "../../src/server/botlingd";
 import type { BotlingdOptions } from "../../src/server/botlingd-cluster";
 import { pruneInBackground, PRUNED_KEY, runStartupVacuum, startBackgroundPrune, VACUUMED_KEY, type CompactionOptions, type PruneDeps, type PruneReport } from "../../src/server/store/compaction";
-import { migrate, openServerStore, Writer, type Db, type WriterOptions } from "../../src/server/store";
+import { LATEST_SCHEMA_VERSION, migrate, openServerStore, Writer, type Db, type WriterOptions } from "../../src/server/store";
 import { openDb } from "../../src/server/store/sqlite";
 import { botlingdEnv, testRoot } from "../botlingd-harness";
 import { desktop, until } from "../helpers";
@@ -74,6 +75,15 @@ function fillBot(db: Db, stream: StreamId, count: number): void {
       appendEntries(db, stream, [line(botId, id, `${BIG}${i}`, i < 7 ? "message.added" : "message.updated")]);
     }
   });
+}
+
+/**
+ * What a v14 file looks like (before diff storage): no `okey`/`base`, schemaVersion 14. The bodies of the rows are not
+ * read by the tests that use this, so a stream may hold diffs from the fill (they are never decoded).
+ */
+function downgradeTo14(db: Db): void {
+  db.exec("DROP INDEX entries_by_okey; ALTER TABLE entries DROP COLUMN okey; ALTER TABLE entries DROP COLUMN base;");
+  db.prepare("UPDATE meta SET value = '14' WHERE key = 'schemaVersion'").run();
 }
 
 const SMALL: CompactionOptions = { minDbBytes: 0, keepEntries: 20, keepBytes: 1e9, minKeepEntries: 5, minReclaimBytes: 1, headroomBytes: 0, freeBytes: () => 1e12 };
@@ -473,10 +483,10 @@ describe("when it runs at all", () => {
     expect(db.prepare("SELECT 1 FROM meta WHERE key LIKE 'compaction.%'").get()).toBeUndefined();
   });
 
-  it("is not done on a schema whose bodies may be differences", async () => {
+  it("is not done on a schema newer than this build knows", async () => {
     const { db } = open();
     fillBot(db, A, 80);
-    db.prepare("UPDATE meta SET value = '15' WHERE key = 'schemaVersion'").run();
+    db.prepare("UPDATE meta SET value = ? WHERE key = 'schemaVersion'").run(String(LATEST_SCHEMA_VERSION + 1));
     const { report } = await prune(db);
     expect(report).toMatchObject({ ran: false, skipped: "schema" });
     expect(readStream(db, A)!.tail).toBe(0);
@@ -486,8 +496,7 @@ describe("when it runs at all", () => {
   it("openServerStore does not prune and does not VACUUM while the prune is still to do, and opens at once", async () => {
     const { dir, db } = open();
     fillBot(db, A, 400);
-    db.exec("DROP TABLE slot_results");
-    db.prepare("UPDATE meta SET value = '13' WHERE key = 'schemaVersion'").run(); // one migration (v14) to apply
+    downgradeTo14(db); // one migration (v15) to apply
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     db.close();
     const lines: string[] = [];
@@ -495,7 +504,7 @@ describe("when it runs at all", () => {
     const store = await openServerStore(dir, { compaction: { ...SMALL, log: (text) => lines.push(text) } });
     try {
       expect(performance.now() - started).toBeLessThan(5_000);
-      expect(store.migrated).toEqual([14]);
+      expect(store.migrated).toEqual([15]);
       expect(store.meta(PRUNED_KEY)).toBeUndefined();
       expect(store.meta(VACUUMED_KEY)).toBeUndefined();
       const reader = store.openReader();
@@ -513,13 +522,12 @@ describe("when it runs at all", () => {
     const { dir, db } = open();
     fillBot(db, A, 400);
     await prune(db, { keepEntries: 10 });
-    db.exec("DROP TABLE slot_results");
-    db.prepare("UPDATE meta SET value = '13' WHERE key = 'schemaVersion'").run();
+    downgradeTo14(db);
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     db.close();
     const store = await openServerStore(dir, { compaction: SMALL });
     try {
-      expect(store.migrated).toEqual([14]);
+      expect(store.migrated).toEqual([15]);
       expect(store.meta(VACUUMED_KEY)).toBeDefined();
       const reader = store.openReader();
       try {
@@ -535,6 +543,117 @@ describe("when it runs at all", () => {
     const young = await openServerStore(fresh, { compaction: SMALL });
     expect(young.meta(PRUNED_KEY)).toBeUndefined();
     await young.close();
+  });
+});
+
+describe("a v14 file upgraded to v15 (diff storage): the prune still runs and what it keeps reads back the same", () => {
+  it("prunes after the upgrade; the chain verifies, kept entries read back exactly as before, diff rows were rebased", async () => {
+    const { dir, db } = open();
+    // A real v14 file: whole bodies (short ones, never diffs), no okey/base columns.
+    const short = (id: string, i: number): AppendItem => line("alpha", id, `v14 ${i}`, i < 7 ? "message.added" : "message.updated");
+    tx(db, () => {
+      ensureStream(db, A, "s1");
+      for (let i = 0; i < 60; i++) appendEntries(db, A, [short(`l${i % 7}`, i)]);
+      db.prepare("INSERT INTO bots (botId) VALUES ('B1'), ('B2')").run();
+      ensureStream(db, SRV, "s1");
+      appendEntries(db, SRV, [botUpdated("B2", 7), { kind: "settings.updated", body: { settings: settingsView({}) } }]);
+      for (let i = 0; i < 40; i++) appendEntries(db, SRV, [botUpdated("B1", i)]);
+    });
+    downgradeTo14(db);
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+
+    const store = await openServerStore(dir, { compaction: false });
+    try {
+      expect(store.migrated).toEqual([15]);
+      // After the upgrade the same objects are written again, now as diffs (the bodies are big and change a little).
+      await store.submit((tx2) => {
+        for (let i = 0; i < 60; i++) appendEntries(tx2, A, [line("alpha", `l${i % 7}`, `${BIG}${i}`)]);
+        for (let i = 40; i < 44; i++) appendEntries(tx2, SRV, [botUpdated("B1", i)]);
+      });
+      const reader = store.openReader();
+      let before: ReturnType<typeof readEntries>["entries"];
+      let messagesBefore: unknown[];
+      try {
+        expect(Number(reader.prepare("SELECT count(*) AS n FROM entries WHERE stream = ? AND base IS NOT NULL").get(A)!.n)).toBeGreaterThan(10);
+        expect(Number(reader.prepare("SELECT count(*) AS n FROM entries WHERE stream = ? AND base IS NOT NULL").get(SRV)!.n)).toBe(0); // srv: stays whole
+        before = readEntries(reader, A, 1, { maxEntries: 500, maxBytes: 1e9 }).entries;
+        messagesBefore = table(reader, "messages");
+      } finally { reader.close(); }
+      expect(before).toHaveLength(120);
+
+      const report = await pruneInBackground({ ...SMALL, batchEntries: 25, scanSpan: 10, pause: noPause, submit: (command) => store.submit(command) });
+      expect(report).toMatchObject({ ran: true, failed: [], stopped: false });
+      expect(store.meta(PRUNED_KEY)).toBeDefined();
+      expect(report.commands).toBeGreaterThan(8);
+
+      const after = store.openReader();
+      try {
+        const row = readStream(after, A)!;
+        expect(row).toMatchObject({ head: 120, tail: 100 });
+        expect(verifyStream(after, A).ok).toBe(true);
+        const kept = readEntries(after, A, 101, { maxEntries: 500, maxBytes: 1e9 });
+        expect(kept.unreadable).toBeUndefined();
+        expect(kept.entries).toEqual(before.slice(100)); // bodies, hashes, hlc: all as before the prune
+        // Diff rows are still there above the cut, and each object's first kept row is a baseline now.
+        const rows = after.prepare("SELECT okey, base, seq FROM entries WHERE stream = ? ORDER BY seq").all(A);
+        expect(rows.some((r) => r.base !== null)).toBe(true);
+        const first = new Map<string, unknown>();
+        for (const r of rows) if (!first.has(String(r.okey))) first.set(String(r.okey), r.base);
+        expect([...first.values()].every((base) => base === null)).toBe(true);
+        expect(table(after, "messages")).toEqual(messagesBefore);
+        // The srv: stream keeps the latest bot.updated of each bot and settings.updated.
+        expect(verifyStream(after, SRV).ok).toBe(true);
+        const kinds = after.prepare("SELECT kind, json_extract(body, '$.bot.id') AS id FROM entries WHERE stream = ? ORDER BY seq").all(SRV);
+        expect(kinds.some((k) => k.kind === "bot.updated" && k.id === "B2")).toBe(true);
+        expect(kinds.some((k) => k.kind === "settings.updated")).toBe(true);
+        expect(kinds.filter((k) => k.id === "B1").length).toBeGreaterThan(0);
+        // The one stream row each: the log keeps appending on the pruned chain.
+        await store.submit((tx2) => appendEntries(tx2, A, [line("alpha", "l1", `${BIG}after`)]));
+      } finally { after.close(); }
+    } finally {
+      await store.close();
+    }
+
+    // The next start VACUUMs the pruned file; the chains are still whole and the bodies read back.
+    const again = await openServerStore(dir, { compaction: SMALL });
+    try {
+      expect(again.meta(VACUUMED_KEY)).toBeDefined();
+      const reader = again.openReader();
+      try {
+        expect(verifyStream(reader, A).ok).toBe(true);
+        expect(verifyStream(reader, SRV).ok).toBe(true);
+        expect(readEntries(reader, A, 101, { maxEntries: 500, maxBytes: 1e9 }).unreadable).toBeUndefined();
+        expect(reader.pragma("integrity_check")).toBe("ok");
+      } finally { reader.close(); }
+    } finally {
+      await again.close();
+    }
+  });
+
+  it("a srv: stream with a bot.updated stored as a diff is left as it is (never loses state silently)", async () => {
+    const { db } = open();
+    fillBot(db, A, 80);
+    tx(db, () => {
+      db.prepare("INSERT INTO bots (botId) VALUES ('B1')").run();
+      ensureStream(db, SRV, "s1");
+      for (let i = 0; i < 60; i++) appendEntries(db, SRV, [botUpdated("B1", i)]);
+    });
+    db.prepare("UPDATE entries SET okey = 'b:B1', base = 1 WHERE stream = ? AND seq = 50").run(SRV); // a row no writer would make
+    const lines: string[] = [];
+    const { report } = await prune(db, { log: (text) => lines.push(text) });
+    expect(report.failed).toEqual([SRV]);
+    expect(lines.some((text) => /stored as diffs/.test(text))).toBe(true);
+    expect(readStream(db, SRV)!.tail).toBe(0);
+    expect(readStream(db, A)!.tail).toBe(60); // the others went on
+    expect(marked(db, PRUNED_KEY)).toBe(false);
+  });
+
+  it("the rebase query uses the partial index, so a batch does not walk the stream's old rows", () => {
+    const { db } = open();
+    fillBot(db, A, 20);
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${REBASE_HANGING_SQL}`).all("bot:alpha", 5, 5).map((row) => String(row.detail)).join("\n");
+    expect(plan).toMatch(/entries_by_okey/);
   });
 });
 

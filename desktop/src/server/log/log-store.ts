@@ -480,14 +480,21 @@ export function evictEntries(db: Db, stream: string, upTo: number): number {
 }
 
 /**
+ * The diffs that stay but hang on a baseline that goes (parameters: stream, to, to). `okey IS NOT NULL` is redundant
+ * (every diff has an okey) but lets the planner use the partial index `entries_by_okey`, which holds only the rows
+ * written since schema 15: without it the query reads every row above `to`, and the background prune (store/compaction.ts)
+ * evicts a stream in many steps, each of which would walk the whole old part of the stream.
+ */
+export const REBASE_HANGING_SQL =
+  "SELECT okey, base, min(seq) AS first FROM entries WHERE stream = ? AND okey IS NOT NULL AND seq > ? AND base IS NOT NULL AND base <= ? GROUP BY okey, base";
+
+/**
  * Before the entries up to `to` go: a diff that stays but hangs on a baseline that goes becomes a baseline itself (the
  * first kept row of each such object is rewritten whole, the rows after it hang on it). A chain that does not rebuild
  * or hash right is left as it is: readers meet it as `unreadable` and get a snap, never a wrong body.
  */
 function rebaseKept(db: Db, stream: string, to: number): void {
-  const hanging = db.prepare(
-    "SELECT okey, base, min(seq) AS first FROM entries WHERE stream = ? AND seq > ? AND base IS NOT NULL AND base <= ? GROUP BY okey, base",
-  ).all(stream, to, to);
+  const hanging = db.prepare(REBASE_HANGING_SQL).all(stream, to, to);
   for (const item of hanging) {
     const okey = String(item.okey);
     const first = Number(item.first);

@@ -32,20 +32,32 @@
 //
 // Run once: `meta` keys `compaction.pruned` and `compaction.vacuumed` (JSON: when and what). A VACUUM skipped for lack
 // of disk is tried again at the next start. A file under `minDbBytes` (1 GiB) is left alone and gets no marker: this
-// is for the one old oversized file, not for the normal history of a young one. Only the schemas up to
-// PRUNE_MAX_SCHEMA are pruned: later ones may store bodies as differences and need the decoding reads of log-store.
+// is for the one old oversized file, not for the normal history of a young one.
+//
+// Schema 15 (snapshot bodies as diffs, log/log-store.ts) changes nothing in the rule:
+//   * The old entries (written before v15) have `okey` and `base` NULL: whole bodies, evicted as before. A stream
+//     written after v15 may hold diffs (`base` = the seq of the baseline a patch hangs on). `evictEntries` rewrites the
+//     first kept row of every object whose baseline goes into a whole body (`rebaseKept`) before it deletes, so the kept
+//     rows read back (`readEntries`) exactly as before the prune; this file never decodes a diff itself.
+//   * The `srv:` stream is always stored whole (`storedWhole`), so its `bot.updated` / `settings.updated` bodies are
+//     read here with json_extract as before, and only rows with `base` NULL. If such a row were ever a diff the stream
+//     is left as it is (a failure, not a silent loss of state). The carried bodies are read through `readEntries`.
+//   * `length(body)` for `keepBytes` is the stored size (a diff counts as the small row it is).
+//   Reading `entries.body` here is the one exception to the rule that only log-store.ts does (server-log-diffstore test).
+//   The per-batch `rebaseKept` query must not scan the stream's old rows: it is written to use the partial index
+//   (`entries_by_okey`), which holds only rows written after v15.
 import { statfsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
-import { appendEntries, evictEntries, readStream, type AppendItem } from "../log/log-store";
-import { schemaVersion } from "./schema";
+import { appendEntries, evictEntries, readEntries, readStream, type AppendItem } from "../log/log-store";
+import { LATEST_SCHEMA_VERSION, schemaVersion } from "./schema";
 import type { Db } from "./sqlite";
 import { WriterClosedError } from "./writer";
 
 export const PRUNED_KEY = "compaction.pruned";
 export const VACUUMED_KEY = "compaction.vacuumed";
-/** The last schema whose `entries.body` is always the whole body (v15 and later may hold differences). */
-export const PRUNE_MAX_SCHEMA = 14;
+/** A file whose schema is newer than this build's is left alone (openServerStore refuses it anyway). */
+const knownSchema = (version: number): boolean => version >= 2 && version <= LATEST_SCHEMA_VERSION;
 /** The background prune starts this long after botlingd listens (the window attaches and `healthy` is written first). */
 export const PRUNE_DELAY_MS = 60_000;
 const MIB = 1024 * 1024;
@@ -130,7 +142,7 @@ const emptyState = (): LatestState => ({ bots: new Map(), settings: null });
 function scanLatestState(db: Db, stream: string, from: number, to: number, into: LatestState): void {
   const rows = db.prepare(
     "SELECT seq, kind, json_extract(body, '$.bot.id') AS id, json_extract(body, '$.settings') IS NOT NULL AS has FROM entries " +
-    "WHERE stream = ? AND seq >= ? AND seq <= ? AND kind IN ('bot.updated', 'settings.updated') AND json_valid(body) ORDER BY seq",
+    "WHERE stream = ? AND seq >= ? AND seq <= ? AND kind IN ('bot.updated', 'settings.updated') AND base IS NULL AND json_valid(body) ORDER BY seq",
   ).all(stream, from, to);
   for (const row of rows) {
     if (row.kind === "bot.updated") { if (row.id != null) into.bots.set(String(row.id), Number(row.seq)); }
@@ -155,8 +167,8 @@ function carryLatestState(db: Db, stream: string, cut: number, latest: LatestSta
   if (latest.settings !== null && latest.settings <= cut && newer.settings === null) picks.push({ seq: latest.settings, kind: "settings.updated" });
   const items: AppendItem[] = [];
   for (const pick of picks.sort((x, y) => x.seq - y.seq)) {
-    const row = db.prepare("SELECT body FROM entries WHERE stream = ? AND seq = ?").get(stream, pick.seq);
-    if (row) items.push({ kind: pick.kind, body: JSON.parse(String(row.body)) as Record<string, unknown> });
+    const read = readEntries(db, stream, pick.seq, { maxEntries: 1, maxBytes: Number.MAX_SAFE_INTEGER }).entries[0];
+    if (read && read.seq === pick.seq && read.kind === pick.kind) items.push({ kind: read.kind, body: read.body as Record<string, unknown> });
   }
   if (items.length) appendEntries(db, stream, items);
   return items.length;
@@ -205,7 +217,7 @@ export function runStartupVacuum(db: Db, options: CompactionOptions = {}): Vacuu
   const log = options.log ?? (() => undefined);
   const none: VacuumReport = { vacuum: null, bytesBefore: 0, bytesAfter: 0 };
   const version = schemaVersion(db);
-  if (version < 2 || version > PRUNE_MAX_SCHEMA) return none;
+  if (!knownSchema(version)) return none;
   if (marker(db, PRUNED_KEY) === null || marker(db, VACUUMED_KEY) !== null) return none;
   const bytesBefore = fileBytes(db);
   const outcome = vacuum(db, options, log);
@@ -253,7 +265,7 @@ export async function pruneInBackground(deps: PruneDeps): Promise<PruneReport> {
   try {
     const gate = await run((db) => {
       const version = schemaVersion(db);
-      if (version < 2 || version > PRUNE_MAX_SCHEMA) return { skip: "schema", streams: [] as string[] };
+      if (!knownSchema(version)) return { skip: "schema", streams: [] as string[] };
       if (marker(db, PRUNED_KEY) !== null) return { skip: "done", streams: [] as string[] };
       if (!bigEnough(db, deps)) return { skip: "small", streams: [] as string[] };
       const streams = db.prepare("SELECT stream FROM streams WHERE state IN ('active', 'archived') ORDER BY stream").all().map((row) => String(row.stream));
@@ -305,6 +317,9 @@ async function pruneStream(deps: PruneDeps, run: <T>(command: (db: Db) => T) => 
   let carried = 0;
   if (stream.startsWith("srv:")) {
     if (plan.state !== "active") throw new Error(`${stream} is ${plan.state}: its latest state entries cannot be written again`);
+    // The scan below reads whole bodies only. `okey IS NOT NULL` keeps this on the partial index (rows written after v15).
+    const diffs = await run((db) => db.prepare("SELECT 1 FROM entries WHERE stream = ? AND okey IS NOT NULL AND base IS NOT NULL AND kind = 'bot.updated' LIMIT 1").get(stream));
+    if (diffs) throw new Error(`${stream} holds bot.updated entries stored as diffs: not pruned`);
     const latest = emptyState();
     for (let from = plan.tail + 1; from <= plan.cut; from += span) {
       if (stopped()) return { result: { stream, evicted: 0, kept: kept(0), carried: 0 }, stopped: true };
