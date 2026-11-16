@@ -167,6 +167,30 @@ describe("snapshot entries stored as diffs", () => {
   });
 });
 
+describe("size effect on a synthetic stream", () => {
+  it("a sub-agent view with a rolling window of 500 steps and a growing reply stores far less than whole bodies", async () => {
+    const store = await setup(A);
+    const step = (i: number) => ({ id: `st${i}`, kind: "tool", tool: "Bash", title: `run command ${i}`, detail: `detail of step ${i} `.repeat(20), output: `output of step ${i} `.repeat(30), failed: false, done: true });
+    let steps: ReturnType<typeof step>[] = [];
+    let full = 0;
+    await store.submit((db) => {
+      for (let i = 0; i < 700; i++) {
+        steps = [...steps, step(i)].slice(-500);
+        const subagent = { id: "sa1", title: "Reviewer", owner: "alpha", status: "running", type: null, model: null, outputTokens: i * 11, prompt: "review this change", steps, result: i > 600 ? "result text ".repeat(i - 600) : null, startedAt: TIME, endedAt: null };
+        const [entry] = appendEntries(db, A, [{ kind: "subagent.updated", body: { botId: "alpha", subagent } }]);
+        full += canonicalJson(entry.body).length;
+      }
+    });
+    const stored = Number(store.db.prepare("SELECT sum(length(body)) AS n FROM entries WHERE stream = ?").get(A)!.n);
+    console.log(`size effect: whole bodies ${full} bytes, stored ${stored} bytes (${(100 * stored / full).toFixed(2)}%)`);
+    expect(stored * 20).toBeLessThan(full);
+    const read = readAll(store.db, A);
+    expect(read.unreadable).toBeUndefined();
+    expect(read.entries).toHaveLength(700);
+    expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
+  });
+});
+
 describe("eviction across a baseline", () => {
   it("the first kept row of an object becomes a baseline, and nothing reads wrong afterwards", async () => {
     const store = await setup(A);
