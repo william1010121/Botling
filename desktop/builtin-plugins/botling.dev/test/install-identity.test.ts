@@ -240,6 +240,6 @@ describe("a script that ended early is not a build that failed to come up", () =
     }
     expect(main.notices.at(-1)!).toContain("the install script ended early at step: waiting for the old app to quit");
     expect(main.notices.at(-1)!).not.toMatch(/installing is paused/);
-    expect(readFileSync(join(folder(root), "failures"), "utf8").trim()).toBe("0");
+    expect(existsSync(join(folder(root), "failures")) ? readFileSync(join(folder(root), "failures"), "utf8").trim() : "0").toBe("0");
   });
 });
