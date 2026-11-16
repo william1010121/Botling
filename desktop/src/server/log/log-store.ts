@@ -189,12 +189,25 @@ function hashesRight(stream: string, row: SqlRow, body: unknown, prevHash: strin
 const ROW_COLUMNS = "seq, logId, hlc, kind, body, slot, hash, okey, base";
 
 /**
+ * Lookups by object key (okey). Each pins the partial index `entries_by_okey` (it holds only the rows written since schema
+ * 15) with `INDEXED BY`, and says `okey IS NOT NULL` so SQLite accepts the pin. Without it the planner takes the primary
+ * key (stream) and tests `okey` on every row of the stream, reading each huge `body`: with all okey NULL (a database
+ * migrated to v15) every first-seen object scanned the whole stream (~21 s on a 93k-row stream) on the writer's thread.
+ */
+export const CURRENT_STATE_SQL =
+  "SELECT seq, base FROM entries INDEXED BY entries_by_okey WHERE stream = ? AND okey IS NOT NULL AND okey = ? ORDER BY seq DESC LIMIT 1";
+export const LOAD_CHAIN_SQL =
+  `SELECT ${ROW_COLUMNS} FROM entries INDEXED BY entries_by_okey WHERE stream = ? AND okey IS NOT NULL AND okey = ? AND seq >= ? AND seq < ? ORDER BY seq`;
+export const REBASE_UPDATE_SQL =
+  "UPDATE entries INDEXED BY entries_by_okey SET base = ? WHERE stream = ? AND okey IS NOT NULL AND okey = ? AND base = ? AND seq > ?";
+
+/**
  * Walks the object's rows from its baseline `base` up to (not including) `before`, or to its newest row when `before` is
  * null; null when the chain does not hold together (a missing baseline, a patch that does not fit, a wrong hash at the
  * end). The result is the object's state after the last row it walked.
  */
 function loadChain(db: Db, stream: string, okey: string, base: number, before: number | null): ObjState | null {
-  const rows = db.prepare(`SELECT ${ROW_COLUMNS} FROM entries WHERE stream = ? AND okey = ? AND seq >= ? AND seq < ? ORDER BY seq`)
+  const rows = db.prepare(LOAD_CHAIN_SQL)
     .all(stream, okey, base, before ?? Number.MAX_SAFE_INTEGER);
   if (!rows.length || Number(rows[0].seq) !== base || rows[0].base !== null) return null;
   let state: ObjState | null = null;
@@ -244,7 +257,7 @@ function currentState(db: Db, stream: string, okey: string): ObjState | null {
     const row = db.prepare("SELECT hash FROM entries WHERE stream = ? AND seq = ?").get(stream, cached.seq);
     if (row && String(row.hash) === cached.hash) return cached;
   }
-  const last = db.prepare("SELECT seq, base FROM entries WHERE stream = ? AND okey = ? ORDER BY seq DESC LIMIT 1").get(stream, okey);
+  const last = db.prepare(CURRENT_STATE_SQL).get(stream, okey);
   if (!last) return null;
   const state = loadChain(db, stream, okey, last.base == null ? Number(last.seq) : Number(last.base), null);
   if (state) remember(db, key, state);
@@ -502,7 +515,7 @@ function rebaseKept(db: Db, stream: string, to: number): void {
     if (!state || state.seq !== first) continue; // not provable: leave it (see above)
     const body = canonicalJson(valueOf(state));
     db.prepare("UPDATE entries SET body = ?, base = NULL WHERE stream = ? AND seq = ?").run(body, stream, first);
-    db.prepare("UPDATE entries SET base = ? WHERE stream = ? AND okey = ? AND base = ? AND seq > ?").run(first, stream, okey, Number(item.base), first);
+    db.prepare(REBASE_UPDATE_SQL).run(first, stream, okey, Number(item.base), first);
     cacheOf(db).delete(`${stream}\u0000${okey}`);
   }
 }
