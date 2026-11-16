@@ -119,7 +119,7 @@ describe("contributes.menus[\"chat/link\"]", () => {
 
 describe("plugin API 2.7 and the check", () => {
   it("names the API each contribution needs", () => {
-    expect(API_VERSION).toEqual({ major: 2, minor: 7 });
+    expect(API_VERSION).toEqual({ major: 2, minor: 8 });
     const { contributions } = readContributions("coach", {
       commands: [{ id: "coach.go", title: "Go" }],
       views: [{ id: "coach.tab", title: "T", where: "mainTab", forRole: "marked", chat: "float" }, { id: "coach.side", title: "S" }],

@@ -48,7 +48,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict", "workerReport"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -113,4 +113,13 @@ const ContentFetchParams = z.object({
 /** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
 const DECORATION_BYTES = 1_000_000;
 
-export { NotifyParams, NotifyMore, SendParams, BotParams, NoteWriteParams, NoteAssetParams, NoteRefsParams, NoteLocalizeParams, NoteParseParams, NoteOutlineParams, NoteModeParams, NoteCardsParams, NoteRunParams, WakeParams, PickParams, InputParams, EmitParams, EMIT_MAX, ViewParams, TakeoverParams, ShowTabParams, SettingParams, SecretGetParams, SecretSetParams, KeyParams, StatusParams, ApprovalParams, RunParams, ComponentParams, RoutineParams, CreateParams, PluginOnly, AgyUsageParams, AgyWorkerParams, RoutinesListParams, RoutinesChangeParams, CardsStates, CardsRun, CardsAsk, CardsNotes, ChatDataParams, CHAT_DATA_BYTES, TasksParams, HistoryParams, ResultsParams, IgnoreParams, FaceParams, ChatParams, DecorateParams, FolderParams, FoldersParams, EngineParams, ContentReadParams, ContentFetchParams, DECORATION_BYTES };
+/** `workers.*` (M7-O03a): strict, so a param that would give a worker more (machine, role, isolated_git, subagent_type) is refused, not ignored. */
+const WORKER_TEXT_MAX = 64_000;
+const WorkerStartParams = z.object({
+  plugin: str(214), bot: str(64), instructions: z.string().min(1).max(WORKER_TEXT_MAX), name: str(200).optional(), group: str(80).optional(),
+  engine: z.literal("claude").optional(), model: z.string().regex(/^[A-Za-z0-9._[\]-]{1,60}$/).optional(), effort: str(20).optional(),
+}).strict();
+const WorkerSendParams = z.object({ plugin: str(214), taskId: str(100).min(1), message: z.string().min(1).max(WORKER_TEXT_MAX) }).strict();
+const WorkerCancelParams = z.object({ plugin: str(214), taskId: str(100).min(1) }).strict();
+
+export { WorkerStartParams, WorkerSendParams, WorkerCancelParams, NotifyParams, NotifyMore, SendParams, BotParams, NoteWriteParams, NoteAssetParams, NoteRefsParams, NoteLocalizeParams, NoteParseParams, NoteOutlineParams, NoteModeParams, NoteCardsParams, NoteRunParams, WakeParams, PickParams, InputParams, EmitParams, EMIT_MAX, ViewParams, TakeoverParams, ShowTabParams, SettingParams, SecretGetParams, SecretSetParams, KeyParams, StatusParams, ApprovalParams, RunParams, ComponentParams, RoutineParams, CreateParams, PluginOnly, AgyUsageParams, AgyWorkerParams, RoutinesListParams, RoutinesChangeParams, CardsStates, CardsRun, CardsAsk, CardsNotes, ChatDataParams, CHAT_DATA_BYTES, TasksParams, HistoryParams, ResultsParams, IgnoreParams, FaceParams, ChatParams, DecorateParams, FolderParams, FoldersParams, EngineParams, ContentReadParams, ContentFetchParams, DECORATION_BYTES };

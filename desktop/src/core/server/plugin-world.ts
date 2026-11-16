@@ -8,6 +8,7 @@ import { PROTOCOL_VERSION } from "../../contract";
 import { notePath } from "../bot-note";
 import { devWorkRoot, installAndQuit } from "../self-update";
 import { readSettings, settingsView } from "../settings";
+import { specWriters } from "../spec-guard";
 import { Layout } from "../store/workspace";
 import { usageView } from "../usage";
 import type { Plugins } from "../plugins";
@@ -197,6 +198,19 @@ export class CorePluginWorld {
         },
         // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
         get studio() { return self.studioNow(); },
+        // The worker primitives (orchestration/plugin-workers.ts): a bot's Claude-process workers, started for a plugin (`startFor`: fewer rights).
+        orchestration: {
+          granted: (name) => options.pluginCapability?.(name, "orchestrate") === true,
+          workers: (botId) => {
+            const bot = this.pluginBot(botId);
+            if (!bot) return "No such bot.";
+            if (bot.engine !== "claude" || !bot.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
+            const host = bot.ensureClaudeWorkers();
+            return { id: botId, start: (args) => host.startFor(args), send: async (id, text) => host.sendToWorker(id, text), stop: (id) => host.stopWorker(id) };
+          },
+          ...(options.orchestrateQuota ? { quota: options.orchestrateQuota } : {}),
+          specWriters: () => specWriters(readSettings(Layout.settings(options.dataDir))),
+        },
         sessionMoved: (botId, reason) => this.bots.get(botId)?.folderMoved(reason),
         sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== this.maintainerId && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,

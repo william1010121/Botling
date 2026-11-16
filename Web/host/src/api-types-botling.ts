@@ -168,6 +168,15 @@ export interface BotlingApi {
      */
     emit(event: string, data: JSONValue, opts?: { botId?: string }): void;
   };
+  /** Needs "orchestrate", "exec", "files" and "bots" in package.json AND the user's OK for this plugin (API 2.8, `engines` "^2.8.0"). A quota applies; a plugin a bot wrote asks the user for every worker. */
+  workers: {
+    /** Starts a Claude worker for a bot: it has no more rights than this plugin (no spec/, the bot's approval cards). `model` that may change spec/ is refused. */
+    start(opts: { bot: string; instructions: string; name?: string; group?: string; engine?: "claude"; model?: string; effort?: string }): Promise<{ taskId: string; run: number }>;
+    /** Words for a worker this plugin started (it joins the run under way, or starts the next one). */
+    send(taskId: string, message: string): Promise<{ run: number; how: string }>;
+    /** Stops a worker this plugin started; no report follows. */
+    cancel(taskId: string): Promise<{ stopped: boolean }>;
+  };
   events: {
     on<E extends PluginEventName>(event: E, fn: (data: PluginEvents[E]) => void): Dispose;
   };
