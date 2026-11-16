@@ -43,7 +43,7 @@ describe("snapshot entries stored as diffs", () => {
     const store = await setup(A);
     const sent: Entry[] = [];
     await store.submit((db) => {
-      for (let i = 0; i < 30; i++) sent.push(...appendEntries(db, A, [upd("m1", `step ${i} `.repeat(i + 1), { turnId: `t${i % 3}` })]));
+      for (let i = 0; i < 30; i++) sent.push(...appendEntries(db, A, [upd("m1", "word ".repeat(i + 1), { turnId: `t${i % 3}` })]));
       sent.push(...appendEntries(db, A, [{ kind: "turn.started", body: { botId: "alpha", turnId: "t9", messageId: "m1" } }]));
     });
     const rows = raw(store.db, A);
@@ -62,7 +62,7 @@ describe("snapshot entries stored as diffs", () => {
   it("reads from the middle of a chain, with small pages, and from a fresh connection", async () => {
     const store = await setup(A);
     const sent: Entry[] = [];
-    await store.submit((db) => { for (let i = 0; i < 40; i++) sent.push(...appendEntries(db, A, [upd(i % 2 ? "m1" : "m2", `${i} `.repeat(i + 1))])); });
+    await store.submit((db) => { for (let i = 0; i < 40; i++) sent.push(...appendEntries(db, A, [upd(i % 2 ? "m1" : "m2", "word ".repeat(Math.floor(i / 2) + 1))])); });
     const reader = store.openReader();
     for (const from of [1, 2, 7, 20, 33, 40]) {
       expect(readAll(reader, A, from).entries).toEqual(sent.slice(from - 1));
@@ -149,7 +149,7 @@ describe("snapshot entries stored as diffs", () => {
 
   it("a restart (a cold cache) continues the chain from the table", async () => {
     const store = await setup(A);
-    await store.submit((db) => { for (let i = 0; i < 5; i++) appendEntries(db, A, [upd("m1", `t${i} `.repeat(i + 1))]); });
+    await store.submit((db) => { for (let i = 0; i < 5; i++) appendEntries(db, A, [upd("m1", "word ".repeat(i + 1))]); });
     const baseBefore = raw(store.db, A).at(-1)!.base;
     // A second connection has no cache: a writer that reopened the file.
     const file = store.db.path;
@@ -157,7 +157,7 @@ describe("snapshot entries stored as diffs", () => {
     db2.exec("PRAGMA busy_timeout = 5000");
     try {
       db2.exec("BEGIN IMMEDIATE");
-      appendEntries(db2, A, [upd("m1", "t0 ".repeat(9))]);
+      appendEntries(db2, A, [upd("m1", "word ".repeat(9))]);
       db2.exec("COMMIT");
     } finally { db2.close(); }
     const rows = raw(store.db, A);
@@ -170,7 +170,7 @@ describe("snapshot entries stored as diffs", () => {
 describe("size effect on a synthetic stream", () => {
   it("a sub-agent view with a rolling window of 500 steps and a growing reply stores far less than whole bodies", async () => {
     const store = await setup(A);
-    const step = (i: number) => ({ id: `st${i}`, kind: "tool", tool: "Bash", title: `run command ${i}`, detail: `detail of step ${i} `.repeat(20), output: `output of step ${i} `.repeat(30), failed: false, done: true });
+    const step = (i: number) => ({ id: `st${i}`, kind: "tool", tool: "Bash", title: `run command ${i}`, detail: `detail of step ${i} `.repeat(3), output: `output of step ${i} `.repeat(6), failed: false, done: true });
     let steps: ReturnType<typeof step>[] = [];
     let full = 0;
     await store.submit((db) => {
@@ -196,7 +196,7 @@ describe("eviction across a baseline", () => {
     const store = await setup(A);
     const sent: Entry[] = [];
     await store.submit((db) => {
-      for (let i = 0; i < 12; i++) sent.push(...appendEntries(db, A, [upd("m1", `a${i} `.repeat(i + 1)), upd("m2", `b${i} `.repeat(i + 1))]));
+      for (let i = 0; i < 12; i++) sent.push(...appendEntries(db, A, [upd("m1", "wa ".repeat(i + 1)), upd("m2", "wb ".repeat(i + 1))]));
     });
     const before = raw(store.db, A);
     expect(before.find((r) => r.seq === 11)!.base).not.toBeNull(); // hangs on a baseline that goes
@@ -234,7 +234,7 @@ describe("a corrupt diff", () => {
   async function filled() {
     const store = await setup(A);
     const sent: Entry[] = [];
-    await store.submit((db) => { for (let i = 0; i < 8; i++) sent.push(...appendEntries(db, A, [upd("m1", `w${i} `.repeat(i + 1))])); });
+    await store.submit((db) => { for (let i = 0; i < 8; i++) sent.push(...appendEntries(db, A, [upd("m1", "word ".repeat(i + 1))])); });
     return { store, sent };
   }
   const diffSeq = (store: QuickStore, n: number) => Number(raw(store.db, A).filter((r) => r.base !== null)[n].seq);
@@ -342,7 +342,8 @@ describe("D0: a redraw of the state the log already holds is not stored", () => 
     return { store, scope, tap, stored };
   }
   const botView = (overrides: Record<string, unknown> = {}) => ({
-    id: "alpha", name: "Alpha", kind: "chat", state: "idle", unread: 0, ...overrides,
+    id: "alpha", name: "Bot alpha", role: "manager", avatar: "circle", folder: "/work/projects/alpha", phase: "awake", working: false,
+    approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [], ...overrides,
   });
   const subagent = (overrides: Record<string, unknown> = {}) => ({
     id: "sa1", title: "Reviewer", owner: "alpha", status: "running", type: null, model: null, prompt: "go", steps: [], result: null,
