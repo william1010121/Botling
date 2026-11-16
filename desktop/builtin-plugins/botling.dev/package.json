@@ -9,6 +9,10 @@
     "ccb": "^2.0.0"
   },
   "ccb": {
+    "kernel": 1,
+    "provides": { "services": [], "slots": [] },
+    "requires": { "services": [] },
+    "uses": { "services": [] },
     "permissions": [
       "app",
       "files"

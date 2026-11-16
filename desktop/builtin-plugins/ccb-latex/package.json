@@ -6,6 +6,10 @@
   "license": "GPL-3.0-or-later",
   "engines": { "ccb": "^2.0.0" },
   "ccb": {
+    "kernel": 1,
+    "provides": { "services": [], "slots": [] },
+    "requires": { "services": [] },
+    "uses": { "services": [] },
     "permissions": ["composer", "messages"],
     "web": "dist/web.js",
     "styles": ["dist/katex.min.css"],

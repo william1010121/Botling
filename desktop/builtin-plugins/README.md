@@ -12,6 +12,8 @@ newer one Botling ships; the Plugins page shows which copy runs and when a libra
 is the source of truth for every plugin here: a change tried out in a library copy is brought back into
 `builtin-plugins/` (and its version bumped) before it ships.
 
+**Kernel block.** Every plugin here declares its dependencies to the plugin kernel in its `ccb` field (`kernel: 1`, `provides` / `requires` / `uses`, read by `readKernelFields`; the Plugin dependencies board, `botling.deps`, draws them). An empty block means it offers and needs no kernel service. Declare only what the code does: a `uses` for a service a plugin calls (the Note's `composer.insertQuote`, the Pins' `studio.specButton`) and a `provides` for one it offers (the studio's `studio.specButton`); `desktop/test/unit/dep-board.test.ts` keeps a piece of evidence in the code for each. The core enforces none of it yet (nothing refuses a plugin for a `requires`; none here declares one), so a block is a statement the board and the tests check, not a switch. The plugin API itself (`api.*` calls into the core, `ccb.*` page parts) is not a kernel service and is not listed.
+
 | Plugin | What it brings |
 |---|---|
 | `ccb-latex` | KaTeX in messages and the input box (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`), Mod+Shift+M. Botling Web (the phone, which runs no plugins) bundles its web part into the chat page instead. |

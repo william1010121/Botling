@@ -1,11 +1,12 @@
 // The plugin dependency board's data (core/plugins/dep-board.ts, behind the `plugins.deps` request and botling.deps): plugins in,
 // nodes / arrows / missing providers / slot fills out. The pure function first, then the registry read (kernel fields of built-in
 // plugins only, enabled plugins' slots), then the plugins that ship with the app.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { desktop, tempDir } from "../helpers";
 import { APP_PROVIDERS, buildDepBoard, readDepBoard, type DepInput } from "../../src/core/plugins/dep-board";
+import { readKernelFields } from "../../src/core/plugins/manifest";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { CHAT_SLOTS, INSERT_QUOTE } from "../../src/renderer/chat-names";
@@ -145,17 +146,72 @@ describe("readDepBoard", () => {
 });
 
 describe("the plugins that ship with the app", () => {
-  it("the Note may use the chat's quote service (an arrow, nothing missing), and the board itself fills its Settings page", async () => {
+  const SOURCES = join(desktop, "builtin-plugins");
+  const shipped = () => readdirSync(SOURCES).filter((name) => !name.includes(".md") && !name.startsWith(".")).sort();
+  const manifest = (name: string) => JSON.parse(readFileSync(join(SOURCES, name, "package.json"), "utf8")) as Record<string, unknown>;
+
+  it("every built-in plugin declares a kernel block, read without a problem (an empty one when it depends on and offers nothing)", () => {
+    const names = shipped();
+    expect(names.length).toBeGreaterThanOrEqual(17);
+    for (const name of names) {
+      const { fields, problems } = readKernelFields(manifest(name), true);
+      expect(problems, name).toEqual([]);
+      expect(fields, `${name} has no kernel block`).not.toBeNull();
+      // Nothing the kernel could refuse a plugin for: no hard requirement is declared by any built-in plugin.
+      expect(fields!.requires.services, name).toEqual([]);
+    }
+  });
+
+  /** What each declared service is, in the code: who calls it (`users`) and who offers it, so a declaration is never a guess. */
+  const EVIDENCE: Record<string, { provider: string; providerFile?: string; providerText?: string; users: { plugin: string; file: string; text: string }[] }> = {
+    // The chat page's service (renderer/plugins/chat): the Note quotes a block into the input box with it.
+    "composer.insertQuote": { provider: "botling.chat", users: [{ plugin: "botling.note", file: "src/ui-cards.js", text: "comp.insertQuote(" }] },
+    // The component studio's chips ask `draw.pinButton`, which fills the head of a built component with the buttons other plugins registered; the Pins add theirs.
+    "studio.specButton": {
+      provider: "botling.component-studio", providerFile: "src/chips.ts", providerText: "draw.pinButton(",
+      users: [{ plugin: "botling.board", file: "src/web.ts", text: "ccb.studio.specButton(" }],
+    },
+  };
+
+  it("each declared service is real: a plugin that uses it calls it in its code, and its provider offers it (the app's own ones are the list in dep-board.ts)", () => {
+    const used = new Map<string, Set<string>>();
+    const offered = new Map<string, Set<string>>();
+    for (const name of shipped()) {
+      const fields = readKernelFields(manifest(name), true).fields!;
+      for (const service of [...fields.requires.services, ...fields.uses.services]) used.set(service, (used.get(service) ?? new Set()).add(name));
+      for (const service of fields.provides.services) offered.set(service, (offered.get(service) ?? new Set()).add(name));
+    }
+    const declared = new Set([...used.keys(), ...offered.keys()]);
+    // A new declaration has to bring its evidence here: no service is declared without one.
+    expect([...declared].sort()).toEqual(Object.keys(EVIDENCE).sort());
+    for (const [service, evidence] of Object.entries(EVIDENCE)) {
+      expect([...(used.get(service) ?? [])].sort(), service).toEqual(evidence.users.map((user) => user.plugin).sort());
+      for (const user of evidence.users) expect(readFileSync(join(SOURCES, user.plugin, user.file), "utf8"), `${user.plugin} calls ${service}`).toContain(user.text);
+      const app = APP_PROVIDERS.find((provider) => provider.name === evidence.provider);
+      if (app) { expect(app.services, service).toContain(service); expect(offered.has(service), `${service} is the app's, no plugin offers it`).toBe(false); continue; }
+      expect([...(offered.get(service) ?? [])], service).toEqual([evidence.provider]);
+      expect(readFileSync(join(SOURCES, evidence.provider, evidence.providerFile!), "utf8"), `${evidence.provider} offers ${service}`).toContain(evidence.providerText!);
+    }
+  });
+
+  it("the real built-in set: the Note uses the chat's quote and the Pins use the studio's spec button (dashed arrows), and no required provider is missing", async () => {
     const { buildBuiltinPlugins } = await import(join(desktop, "build-builtin-plugins.mjs"));
     const built = await buildBuiltinPlugins({ outdir: join(tempDir("dep-board-builtin"), "builtin-plugins") });
     const dir = tempDir("dep-board-shipped");
     const registry = new PluginRegistry(join(dir, "plugins"), join(dir, "plugins.json"), new MemorySecretStore(), built);
     registry.rescan(true);
     const board = readDepBoard(registry, registry.contributions());
-    expect(board.edges).toEqual([{ from: "botling.note", to: "botling.chat", service: INSERT_QUOTE, kind: "uses", live: true }]);
+    expect(board.edges).toEqual([
+      { from: "botling.board", to: "botling.component-studio", service: "studio.specButton", kind: "uses", live: true },
+      { from: "botling.note", to: "botling.chat", service: INSERT_QUOTE, kind: "uses", live: true },
+    ]);
     expect(board.missing).toEqual([]);
+    // Every plugin that ships reads as declared (the board shows "Declares nothing" only for installed ones), on, and none is failed.
+    const real = board.plugins.filter((plugin) => !plugin.app);
+    expect(real.length).toBeGreaterThanOrEqual(17);
+    expect(real.filter((plugin) => !plugin.declared).map((plugin) => plugin.name)).toEqual([]);
+    expect(real.filter((plugin) => plugin.failure !== null).map((plugin) => plugin.name)).toEqual([]);
     expect(board.plugins.find((plugin) => plugin.name === "botling.deps")).toMatchObject({ builtIn: true, enabled: true, fills: ["settings/section"] });
     expect(board.slots.find((row) => row.slot === "settings/section")!.fills).toContain("botling.deps");
-    expect(board.plugins.filter((plugin) => !plugin.app).length).toBeGreaterThanOrEqual(16);
   }, 60_000);
 });
