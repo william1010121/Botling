@@ -1,5 +1,7 @@
 # Margin comments (旁註) in the Note tab: design
 
+(Kept in `src/` so the build leaves it behind: only `dist/`, `package.json` and `skills/` ship.)
+
 User's words (2026-11-16): they want to answer *inside* the Note, but not really *in* it, "something like a comment".
 Settled design (design duel `.bot/design-duel/20261116-38d1fa`, A-v2): select a passage or a cell and ask; the box opens
 beside the passage; the bot's answer is a comment card in a right-hand margin column tied to the passage by a thin
@@ -35,8 +37,9 @@ Plugin storage key `margin:<botId>` = `{ seq, threads[] }`; `margin:bots` = bots
 still hears the answer). Not note.md, not note.db cells (the Note's text is never touched by a question or an answer;
 a test pins that no `write` happens). A thread: `id` (`c-0001`, never reused), `anchor` `{ cell, label, kind: text|lines|cell,
 scope: selection|cell|note, quote }`, `turns[]` `{ rid, q, a|null, qAt, aAt, seenAt, messageId }`, `folded`.
-Limits: 200 threads per bot, 50 turns per thread, question 4 000 and quote 4 000 characters, answer 30 000; control
-characters are dropped; ids from outside are checked (`c-\d{4,}`, request id `[A-Za-z0-9_-]{1,64}`) and looked up in an
+Limits: 200 threads per bot, 50 turns per thread, question 4 000 and quote 4 000 characters, answer 30 000; no new question
+once the bot's book is past 1 MB (UTF-8 JSON) or 10 questions wait (storage.json is one file rewritten on every save); control
+characters are dropped (answers too); ids from outside are checked (`c-\d{4,}`, request id `[A-Za-z0-9_-]{1,64}`) and looked up in an
 array, never used as keys.
 
 Safety: a request id makes a retry (double tap, repeated call) answer with the same thread and send nothing again; a

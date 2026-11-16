@@ -3,7 +3,7 @@
 // The question goes to the bot as a message of this plugin (api.bots.send without `as: "user"`: it needs no permission, the
 // chat shows it as the Note's message and the bot answers there as usual); the answer is read back from the bot's reply
 // (turnFinished) by the id the bot names on its first line, 〔回答 c-0001〕, else by the only question that was waiting.
-// Design and limits: MARGIN.md next to this plugin's package.json.
+// Design and limits: src/MARGIN.md (in src/ so the build does not ship it).
 import type { BotlingApi } from "../../../../Web/host/src/api";
 
 export const MAX_THREADS = 200;
