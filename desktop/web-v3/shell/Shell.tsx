@@ -18,6 +18,7 @@ import { SwBridge } from "./sw-bridge";
 import { safeBotId } from "../push-sw";
 import { disablePushNotifications, enablePushNotifications, PUSH_ENABLED_PREF, pushSupport, syncPushOnAttach, type PushPrefs } from "./push";
 import { PageUploads } from "./uploads";
+import { FramePages } from "./frame-pages";
 import { NOT_A_PAIR_LINK, SIGNIN_LEAD } from "./signin-text";
 import { clearContentCache, ContentCache, CONTENT_CACHE_CAP } from "./content-cache";
 import { pathOfPage } from "../player";
@@ -185,11 +186,15 @@ function Workspace({ device, onForget }: { device: DeviceRecord; onForget: () =>
     setDeviceServers(device.servers ?? []);
   }, [device]);
 
+  // M7-07d: the pages of the plugins' frames (the Note tab, a settings block): made here, drawn in the server's `frame-host.html`.
+  const framePages = useMemo(() => new FramePages(document, location.href), []);
+  useEffect(() => framePages.start(), [framePages]);
   const capabilities = useMemo<Omit<PageCapabilities, "uploads">>(() => ({
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer"); },
     narrow: phoneWidth,
     scopes: device.scope as DeviceScope[],
-  }), [device]);
+    framePage: (html, panel) => framePages.make(html, panel),
+  }), [device, framePages]);
 
   const forget = useCallback(async () => {
     mounted.current?.unmount();

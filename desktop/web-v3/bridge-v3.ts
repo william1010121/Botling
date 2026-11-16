@@ -9,6 +9,10 @@
 //   - commands that need the desktop on this machine (`admin`, machine-security settings);
 //   - reads a remote front end may not ask for (protocol/scopes.ts REMOTE_READS);
 //   - commands this device's scopes do not cover (its Add's `scope`).
+// M7-07d: `PageCapabilities` is also the page's `needsShell` list (`pageNeedsShell`): a plugin contribution that needs a shell function the page
+// does not offer (`openFile`: open or reveal a file on the machine) is left out of the page or says "Not available on this device"
+// (renderer/shell/KernelSlot.tsx), while the desktop window, which has them all, draws it. The frames of plugins run here too: their
+// `card.page` is answered by the page itself (`framePage`, shell/frame-pages.ts), their source is the `plugins.panel` read.
 // Per-viewer layout settings (the left column folded, pinned bots…) are kept in this page's memory, as the 2.x page kept
 // them in its browser, so the phone never changes the desktop's layout.
 import { createElement } from "react";
@@ -21,6 +25,7 @@ import { commandScope, REMOTE_READS, remoteCmdRefusal, type DeviceScope } from "
 import type { Clock } from "../src/fe-link";
 import { READ_COMMANDS, RendererAdapter, RequestViaSchema, type LinkPort } from "../src/main-v3/renderer-adapter";
 import { App, type WebChrome } from "../src/renderer/App";
+import { ShellCapabilitiesProvider } from "../src/renderer/shell/KernelSlot";
 import { configureShellStorage } from "../src/renderer/shell/storage";
 import { createWebShellStorageBackend } from "./shell/device-store";
 import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
@@ -32,7 +37,7 @@ import { phoneLayout } from "../mobile/layout";
 import type { PendingFileView } from "../src/contract";
 import type { PageUploadsPort } from "./shell/uploads";
 
-/** What the page offers the renderer (the future `needsShell` list). One plain object, given to `mountRenderer`. */
+/** What the page offers the renderer (its `needsShell` list, `pageNeedsShell`). One plain object, given to `mountRenderer`. */
 export interface PageCapabilities {
   /** Opens an http(s) link outside the page (a new tab). */
   openLink(url: string): void;
@@ -47,6 +52,25 @@ export interface PageCapabilities {
    * files, `files.remove` of one is answered here, and a `chat.send` takes them as `files` (hash-named uploads).
    */
   uploads?: PageUploadsPort;
+  /**
+   * M7-07d: makes the url a plugin frame loads for the html a `card.page` carries (`panel`: a plugin panel's page). Without it the page cannot
+   * show plugin frames: `card.page` is answered "not available" (the desktop's main process serves those pages; a browser has no such scheme).
+   */
+  framePage?(html: string, panel: boolean): string;
+}
+
+/**
+ * The shell functions a plugin contribution may list in `needsShell` (its manifest's list, plan-change §4.3 check 6), and which of them this page has:
+ * `openLink` (a new tab, always), `uploads` (attachments: only when the page has its port), `framePage` (plugin frames: only when the page serves
+ * them). `openFile` (open or reveal a file on the machine; the desktop's) is never here: a page cannot do it, so what needs it is not drawn.
+ */
+export const SHELL_FUNCTIONS = ["openFile", "openLink", "uploads", "framePage"] as const;
+export type ShellFunction = typeof SHELL_FUNCTIONS[number];
+export function pageNeedsShell(capabilities: Pick<PageCapabilities, "uploads" | "framePage">): ReadonlySet<ShellFunction> {
+  const offered = new Set<ShellFunction>(["openLink"]);
+  if (capabilities.uploads) offered.add("uploads");
+  if (typeof capabilities.framePage === "function") offered.add("framePage");
+  return offered;
 }
 
 /** Layout settings this page keeps for itself. */
@@ -153,6 +177,12 @@ export class BridgeV3 implements Bridge {
       uploads.remove(cmd.botId, cmd.id);
       return okResponse(id, { files: this.pendingOf(cmd.botId) });
     }
+    // A plugin frame's page: made here (the page's own `frame-host.html`), never by the server. Without the capability: "not available".
+    if (cmd.type === "card.page") {
+      const framePage = this.capabilities.framePage;
+      if (!framePage) return errorResponse(id, { code: "forbidden", message: NOT_AVAILABLE });
+      try { return okResponse(id, { url: framePage(cmd.html, cmd.panel === true) }); } catch { return errorResponse(id, { code: "bad_request", message: "The page could not be made." }); }
+    }
     const refusal = pageRefusal(cmd, this.capabilities);
     if (refusal) return errorResponse(id, { code: "forbidden", message: refusal });
     let taken: Awaited<ReturnType<PageUploadsPort["take"]>> = [];
@@ -243,7 +273,8 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   const offRows = followRows(rowLoader, options.link as unknown as RowsLink);
   const offOutcomes = followOutcomes(rowLoader, options.link as unknown as OutcomeLink);
   const reactRoot: Root = createRoot(root);
-  const render = (chrome: WebChrome) => reactRoot.render(createElement(App, { client, store, web: chrome }));
+  const offered = pageNeedsShell(options.capabilities);
+  const render = (chrome: WebChrome) => reactRoot.render(createElement(ShellCapabilitiesProvider, { value: offered }, createElement(App, { client, store, web: chrome })));
   render(options.chrome);
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
