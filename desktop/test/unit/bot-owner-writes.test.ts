@@ -109,8 +109,10 @@ describe("HeadEvents: the report of a worker that owns a hand-off goes back as t
     const turn: any = { ended: [], conducted: false, handoffId: null };
     vi.spyOn(b, "backgroundTurn").mockReturnValue(turn);
     vi.spyOn(b.workers, "relayIfCallInWork").mockImplementation(() => {});
+    const head = {} as any;
+    b.headRun.head = head;
     setup(b.workers);
-    b.onItem({} as any, { kind: "backgroundTurn", taskId });
+    b.onItem(head, { kind: "backgroundTurn", taskId });
     return { turn, w: b.workers as Bot["workers"] };
   }
 
