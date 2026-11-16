@@ -865,5 +865,12 @@ describe("M5-14a: plugin.grant command and owner-side apply", () => {
     await send({ type: "plugin.grant", plugin: "plain", codeHash: HASH_1, tier: "none", reads: [], requests: [] });
     expect(readGrantAudits(s.db(), s.serverStream).map((row) => row.body.reason)).toEqual(["tier request", "tier none"]);
     expect(rowOf("plain").grants[HASH_1]).toBeUndefined();
+
+    // Fix round (review F5): an unmodified library copy of a built-in (author user) keeps the built-in's record at its hash
+    // but is not installed; the user's card is applied and writes a user record over it.
+    await seedPlugin(s, "builtin.copy", { ...samplePluginRow({ tier: "write" }), author: "user", grants: { [HASH_1]: builtinGrant } });
+    const installCopy = await send({ type: "plugin.grant", plugin: "builtin.copy", codeHash: HASH_1, tier: "write", reads: [], requests: [] });
+    expect(installCopy).toMatchObject({ status: "result", message: { outcome: { kind: "applied" } } });
+    expect(rowOf("builtin.copy").grants[HASH_1]).toMatchObject({ grantedBy: "user", tier: "write" });
   });
 });

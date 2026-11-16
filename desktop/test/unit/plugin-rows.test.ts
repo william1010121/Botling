@@ -280,7 +280,7 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
       b.db.close();
     });
 
-    it("review: migrate skips a bot write in this very sync, a 2.x import row, and a plugin whose newest grant audit is a revoke", async () => {
+    it("review: migrate skips a bot write in this very sync and a plugin whose newest grant audit is a revoke; a 2.x import row is installed", async () => {
       const BOT_ID = "6A0B0000-0000-4000-8000-000000000002";
       const migrated = async (prefix: string, prepare: (t: ReturnType<typeof setup>, prev: PluginRow) => Promise<void>, bot = false) => {
         const t = setup(prefix);
@@ -298,12 +298,30 @@ describe("M5-13b: reconcilePluginRows and pluginsDigestOf", () => {
       // control: an ordinary row is migrated
       expect(await migrated("trust-ctl", async () => {})).toBe(true);
       expect(await migrated("trust-botnow", async () => {}, true)).toBe(false);
-      expect(await migrated("trust-import", async (t, prev) => { await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:old.tool", { ...prev, author: "import" })); })).toBe(false);
+      // user decision 2026-11-16 ("先都放"): a 2.x import row still waiting for its card is installed at the upgrade
+      expect(await migrated("trust-import", async (t, prev) => { await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:old.tool", { ...prev, author: "import" })); })).toBe(true);
       expect(await migrated("trust-revoked", async (t) => { await audit(t, "a1", "tier write"); await audit(t, "a2", "tier none"); })).toBe(false);
       // the newest audit decides: a grant after the revoke (its record later pruned) is migrated
       expect(await migrated("trust-regranted", async (t) => { await audit(t, "a1", "tier none"); await audit(t, "a2", "tier write"); })).toBe(true);
       // another plugin's revoke says nothing about this one
       expect(await migrated("trust-other", async (t) => { await t.writer.submit((tx) => putRow(tx, t.stream, "audit:grant:z", { act: "plugin.grant", at: 1, member: BOT_ID, name: "other.tool", hash: "h", reason: "tier none" })); })).toBe(true);
+    });
+
+    it("fix round (M05): a bot-written row whose files changed since (no writtenBy, so this sync's author is user) is not migrated", async () => {
+      const t = setup("plugin-rows-trust-bot-rehash");
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 1_000));
+      const prev = readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow;
+      await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:old.tool", { ...prev, author: "bot" }));
+      writeFileSync(join(t.folder, "dist", "web.js"), "export function activate() { return 'changed'; }\n");
+      await t.writer.submit((tx) => reconcilePluginRows(tx, t.stream, t.installed(), 2_000, { trust: "migrate" }));
+      const after = readRowBody(t.db, t.stream, "plugin:old.tool") as PluginRow;
+      // the hash moved, so the author is the input's (user): only the previous row's bot author keeps it from being trusted
+      expect(after.codeHash).not.toBe(prev.codeHash);
+      expect(after.author).toBe("user");
+      expect(pluginApproved(after)).toBe(false);
+      expect(t.metaFlag()).toBeDefined();
+      await t.writer.close();
+      t.db.close();
     });
 
     it("mark: uses the pass up without trusting anything; no option and an empty list change nothing", async () => {
@@ -503,6 +521,41 @@ describe("M5-13b fix (a): stat signature cache avoids repeated folderHash and 60
       expect(MachineRow.parse(updatedRows.machine?.body).pluginsDigest).not.toBe(beforeDigest);
     } finally {
       setIntervalSpy.mockRestore();
+      await daemon?.stop();
+    }
+  }, 60_000);
+
+  it("fix round (M13): botlingd's own plugin sync runs the trust migration: a row from before it, without a record, is installed at start", async () => {
+    const dir = testRoot("trust-start");
+    createdDirs.push(dir);
+    writePlugin(join(dir, "plugins"), "before.trust", { permissions: ["files"] });
+    const env = botlingdEnv(dir, { BOTLING_SERVER_PORT: "off", BOTLING_SERVER_BACKUP_CHECK_MS: "0" });
+    // First start: the row is new, so it gets no record (and the pass is used up).
+    let daemon: Botlingd | null = await Botlingd.start({ env, outDir: join(desktop, "out") });
+    const stream = `srv:${daemon.serverId}`;
+    try {
+      const first = await until(() => liveRows({ dataDir: dir }, stream)["plugin:before.trust"] ?? null, { timeout: 5_000, every: 50, what: "first row" });
+      expect(pluginApproved(PluginRow.parse(first.body))).toBe(false);
+    } finally {
+      await daemon.stop();
+      daemon = null;
+    }
+    // A server.db from before the trust model: the row is there, the meta flag is not.
+    const db = new DatabaseSync(join(dir, "server.db"));
+    try {
+      expect(db.prepare("SELECT 1 AS x FROM meta WHERE key = 'plugin.trust.v1'").get()).toBeDefined();
+      db.prepare("DELETE FROM meta WHERE key = 'plugin.trust.v1'").run();
+    } finally {
+      db.close();
+    }
+    try {
+      daemon = await Botlingd.start({ env, outDir: join(desktop, "out") });
+      const row = await until(() => {
+        const body = liveRows({ dataDir: dir }, stream)["plugin:before.trust"]?.body;
+        return body && pluginApproved(PluginRow.parse(body)) ? PluginRow.parse(body) : null;
+      }, { timeout: 5_000, every: 50, what: "row installed by the start's migration" });
+      expect(row.grants[row.codeHash]?.grantedBy).toBe("user");
+    } finally {
       await daemon?.stop();
     }
   }, 60_000);

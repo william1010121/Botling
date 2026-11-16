@@ -82,13 +82,15 @@ export function pluginApproved(row: PluginRow | null): boolean {
 }
 
 /**
- * What the window and the CLI list shows for a plugin: the tier recorded at the row's current code hash when there is one
- * (own key only, L-003), `"write"` for an installed plugin whose record is at an older hash, `"none"` for one not
- * installed. Display only: `grantAllows` does not read the tier.
+ * What the window and the CLI list shows for a plugin: `"none"` for one not installed (checked first, so a built-in's
+ * `builtin` record at the hash of an unmodified library copy does not show that copy as installed, review F5), else the
+ * tier recorded at the row's current code hash when there is one (own key only, L-003), else `"write"` (an installed
+ * plugin whose record is at an older hash). Display only: `grantAllows` does not read the tier.
  */
 export function grantTierOf(row: PluginRow): "none" | Tier {
+  if (!pluginApproved(row)) return "none";
   if (Object.hasOwn(row.grants, row.codeHash)) return row.grants[row.codeHash]!.tier;
-  return pluginApproved(row) ? "write" : "none";
+  return "write";
 }
 
 /**

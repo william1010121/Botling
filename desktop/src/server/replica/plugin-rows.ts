@@ -59,7 +59,9 @@ export interface ReconcilePluginRowsOptions {
   /**
    * The one-time pass of the trust model of 2026-11-16 ("what is installed needs no managing"), once per server.db (meta
    * `plugin.trust.v1`). `"migrate"` (the server's own sync): every plugin that already has a row and no approval record
-   * (a bot-written one, a 2.x import and one whose last grant was a revoke excepted: they still need the card) is installed, with one `user` record at its current hash.
+   * (a bot-written one and one whose last grant was a revoke excepted: they still need the card) is installed, with one
+   * `user` record at its current hash; a 2.x import row still waiting for its card is installed too (the user's decision
+   * of 2026-11-16: "先都放", every plugin of theirs is open source).
    * `"mark"` (the 2.x import): nothing is migrated, but the pass is used up, so what an import writes waits for the user's
    * card (B-20(a)). A plugin whose row appears later gets no record until the card either way.
    */
@@ -400,9 +402,10 @@ export function reconcilePluginRows(
       }
     }
     // One-time: a plugin installed before the trust model of 2026-11-16 is installed (no approval record yet, not built in).
-    // Not: a bot's write (this sync's or the row's), a 2.x import waiting for its card (B-20(a)), or a plugin whose last
-    // `plugin.grant` was a revoke (made before this pass, or after it on a server.db whose meta was lost).
-    if (trustPass && options.trust === "migrate" && author !== "builtin" && author !== "bot" && prev && prev.author !== "bot" && prev.author !== "import"
+    // Not: a bot's write (this sync's, or the row's even when the files changed since), or a plugin whose last
+    // `plugin.grant` was a revoke (made before this pass, or after it on a server.db whose meta was lost). A 2.x import row
+    // waiting for its card is installed like any other (user decision 2026-11-16).
+    if (trustPass && options.trust === "migrate" && author !== "builtin" && author !== "bot" && prev && prev.author !== "bot"
       && !pluginApproved({ ...(prev as PluginRow), grants: rawGrants }) && !lastGrantRevoked(tx, stream, plugin.name)) {
       rawGrants[plugin.codeHash] = { tier: plugin.manifest.tier, reads: [], requests: [], grantedBy: "user", at: now };
       options.log?.(`plugin ${plugin.name}: installed before the trust model, recorded as installed`);

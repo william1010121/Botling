@@ -212,7 +212,9 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
     throw new SlotRefusal("changed", `codeHash ${cmd.codeHash} is not known for plugin ${cmd.plugin}`);
   }
   // Built-ins keep their grants in 3.0 (§14.4): the user neither revokes nor changes one (reconcile would restore it).
-  if (row.grants[cmd.codeHash]?.grantedBy === "builtin") {
+  // Only a built-in row: a library copy of a built-in (author user) left with the built-in's record at its hash is not
+  // installed until this card, which writes a user record over that one (review F5).
+  if (row.author === "builtin" && row.grants[cmd.codeHash]?.grantedBy === "builtin") {
     throw new SlotRefusal("invalid", "built-in");
   }
   // A plugin is never given the power to grant (D54): `plugin.grant` is a user act only.

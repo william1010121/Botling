@@ -176,6 +176,14 @@ describe("2026-11-16 trust model: pluginApproved / grantTierOf", () => {
     expect(grantTierOf(row({ grants: {} }))).toBe("none");
     expect(grantTierOf(row({ codeHash: "constructor", grants: { [H1]: grant("write") } }))).toBe("write");
   });
+
+  it("fix round (review F5): an unmodified library copy of a built-in (author user, only the built-in's record at its hash) shows 'none', so its card is offered", () => {
+    const copy = row({ grants: { [H1]: { ...grant("write"), grantedBy: "builtin" } } });
+    expect(pluginApproved(copy)).toBe(false);
+    expect(grantTierOf(copy)).toBe("none");
+    // the built-in row itself is installed and shows its record's tier
+    expect(grantTierOf({ ...copy, author: "builtin" } as PluginRow)).toBe("write");
+  });
 });
 
 interface Server { store: ServerStore; roster: RosterStore; runtime: IntentRuntime; serverId: string; stream: StreamId; inc(): string; valid: Set<string> }
