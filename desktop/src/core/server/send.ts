@@ -11,6 +11,7 @@ import { botName } from "../projects";
 import { ContractError, type ResultOf } from "../../contract";
 import { Bot, type PresetTurnIds } from "../bot";
 import type { Engine, Heads } from "../heads";
+import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts } from "../prompts";
 import { readJSON } from "../store/bot-store";
 import { Layout, type BotProfile } from "../store/workspace";
@@ -147,12 +148,17 @@ export class CoreSend {
     return savedLanguage(settings.language) ?? preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
   }
 
+  /** The orchestration rules every prompt is built from: core's own defaults, the one seam a plugin's rules plug into later (M7-O04). */
+  orchestrationRules(): OrchestrationRules { return DEFAULT_ORCHESTRATION_RULES; }
+
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
   /** `workingFolder`: the app worktree the session starts in, when there is one. */
   prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null, workingFolder: string | null = null): BotPrompts {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
+    const rules = this.orchestrationRules();
     return desktopPrompts(botPrompts({
+      rules,
       profile: { ...profile, instructions: profile.instructions ?? null },
       language: savedLanguage(settings.language) ?? preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
@@ -160,7 +166,7 @@ export class CoreSend {
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
       parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()));
+    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()), rules);
   }
 
   /** The prompt sections plugins give, each that names a command with that command's line and guide (none without one). */
