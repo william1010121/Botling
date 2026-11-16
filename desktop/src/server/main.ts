@@ -68,6 +68,7 @@ import { join } from "node:path";
 import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, readLockHolder } from "../core/store/data-dir-lock";
 import { Botlingd, BOTLINGD_VERSION, DataDirInUseError, pairingPageUrl, PLACEHOLDER_TAILNET_ORIGIN, tailnetOrigin } from "./botlingd";
 import { LISTEN_FILE, LISTEN_HOST, listenPort, readRelaySetting, RELAY_URL_ENV, RelaySettingError, tailscaleServeCommand, writeRelaySetting } from "./net";
+import { dailyBackupsOn } from "./backup-schedule";
 import { newestAnyBackup, serverNotes, type ServerNote } from "./notes";
 import { machinesLines, peerNotes, readForwardQueue, readMachines, type ForwardQueueReport, type MachinesReport } from "./machines";
 import { dropInheritedImport } from "./inherited-env";
@@ -217,7 +218,7 @@ async function status(dataDir: string, socket: string): Promise<Status> {
     machines: { self: null, peers: [] }, forwardQueue: { rows: 0, cancels: 0, oldestHeldAt: null, owners: [] },
   };
   const file = join(dataDir, "server.db");
-  if (!existsSync(file)) { result.notes = serverNotes(dataDir, null); result.machines = readMachines(dataDir, null, pid); return result; }
+  if (!existsSync(file)) { result.notes = serverNotes(dataDir, null, Date.now(), process.platform, dailyBackupsOn(process.env)); result.machines = readMachines(dataDir, null, pid); return result; }
   const db = openReaderDb(file);
   try {
     result.bots = Number(db.prepare("SELECT count(*) AS n FROM bots").get()?.n ?? 0);
@@ -230,7 +231,7 @@ async function status(dataDir: string, socket: string): Promise<Status> {
       }));
     result.machines = readMachines(dataDir, db, pid);
     result.forwardQueue = readForwardQueue(db);
-    result.notes = [...serverNotes(dataDir, db), ...peerNotes(result.machines, result.forwardQueue)];
+    result.notes = [...serverNotes(dataDir, db, Date.now(), process.platform, dailyBackupsOn(process.env)), ...peerNotes(result.machines, result.forwardQueue)];
   } finally {
     db.close();
   }

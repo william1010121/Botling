@@ -4,13 +4,15 @@
 //   every own stream a new logId listing the old one with the kept seq; restoredTo from backupAt, else the name's
 //   stamp, else the file time; backupAt not left in the live file; restoredAt / restoredFrom written;
 // - daily backups: due when there is none or the newest is a day old; one at a time; stop waits for it; keep 7;
-// - the Doctor notes: no backup, an old backup, an external disk, a restore.
+// - daily backups are OFF unless BOTLING_SERVER_BACKUP_CHECK_MS is a positive number (or BOTLING_SERVER_DAILY_BACKUP is on);
+//   a daily backup stamped in the future (a placeholder, a clock that jumped) is bogus: it never counts and is removed;
+// - the Doctor notes: no backup, an old backup (only when daily backups are on), an external disk, a restore.
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StreamId } from "../../src/protocol";
-import { backupCheckMs, DailyBackups, dailyBackupDue, DAY_MS } from "../../src/server/backup-schedule";
+import { backupCheckMs, DailyBackups, dailyBackupDue, DAY_MS, dailyBackupsOn, removeFutureDailyBackups } from "../../src/server/backup-schedule";
 import { appendEntries, ensureStream, listRetired, readStream } from "../../src/server/log";
 import { serverNotes } from "../../src/server/notes";
 import { inspectBackup, RestoreError, restoreBackup } from "../../src/server/restore";
@@ -150,9 +152,39 @@ describe("daily backups", () => {
     await takeBackup(store.file, store.backupsDir, "daily", new Date(now - DAY_MS + 60_000));
     expect(dailyBackupDue(store.backupsDir, now)).toBe(false);
     expect(dailyBackupDue(store.backupsDir, now + 60_000)).toBe(true);
-    expect(backupCheckMs({})).toEqual({ firstMs: 5 * 60_000, everyMs: 60 * 60_000 });
     expect(backupCheckMs({ BOTLING_SERVER_BACKUP_CHECK_MS: "250" })).toEqual({ firstMs: 250, everyMs: 250 });
     expect(backupCheckMs({ BOTLING_SERVER_BACKUP_CHECK_MS: "0" })).toBeNull();
+  });
+
+  it("is off by default; the env turns it on (a check interval, or BOTLING_SERVER_DAILY_BACKUP)", () => {
+    expect(backupCheckMs({})).toBeNull();
+    expect(backupCheckMs({ BOTLING_SERVER_BACKUP_CHECK_MS: "" })).toBeNull();
+    expect(backupCheckMs({ BOTLING_SERVER_BACKUP_CHECK_MS: "soon" })).toBeNull();
+    expect(backupCheckMs({ BOTLING_SERVER_BACKUP_CHECK_MS: "-5" })).toBeNull();
+    for (const on of ["1", "on", "true", "ON"]) expect(backupCheckMs({ BOTLING_SERVER_DAILY_BACKUP: on })).toEqual({ firstMs: 5 * 60_000, everyMs: 60 * 60_000 });
+    for (const off of ["", "0", "off", "false", "yes please"]) expect(backupCheckMs({ BOTLING_SERVER_DAILY_BACKUP: off })).toBeNull();
+    // The interval wins over the switch; "0" is an explicit off for both.
+    expect(backupCheckMs({ BOTLING_SERVER_DAILY_BACKUP: "1", BOTLING_SERVER_BACKUP_CHECK_MS: "250" })).toEqual({ firstMs: 250, everyMs: 250 });
+    expect(backupCheckMs({ BOTLING_SERVER_DAILY_BACKUP: "1", BOTLING_SERVER_BACKUP_CHECK_MS: "0" })).toBeNull();
+    expect(dailyBackupsOn({})).toBe(false);
+    expect(dailyBackupsOn({ BOTLING_SERVER_DAILY_BACKUP: "1" })).toBe(true);
+  });
+
+  it("a daily backup stamped in the future does not hold the next one back, and is removed", async () => {
+    const store = await storeWith(1);
+    const now = Date.UTC(2026, 10, 14, 12);
+    const future = await takeBackup(store.file, store.backupsDir, "daily", new Date(Date.UTC(2099, 11, 31)));
+    expect(dailyBackupDue(store.backupsDir, now)).toBe(true); // the placeholder is not "newest, taken just now"
+    const real = await takeBackup(store.file, store.backupsDir, "daily", new Date(now - 3_600_000));
+    const manualFuture = await takeBackup(store.file, store.backupsDir, "manual", new Date(Date.UTC(2099, 11, 31)));
+    const slightly = await takeBackup(store.file, store.backupsDir, "daily", new Date(now + 60_000)); // clock skew: kept
+    expect(removeFutureDailyBackups(store.backupsDir, now)).toEqual([future]);
+    expect(existsSync(future)).toBe(false);
+    expect(existsSync(real)).toBe(true);
+    expect(existsSync(slightly)).toBe(true);
+    expect(existsSync(manualFuture)).toBe(true); // only daily ones; a manual copy is the owner's
+    expect(removeFutureDailyBackups(store.backupsDir, now)).toEqual([]);
+    expect(removeFutureDailyBackups(join(store.dataDir, "no-such-folder"), now)).toEqual([]);
   });
 
   it("takes one when due, one at a time, keeps 7, and stop waits for one under way", async () => {
@@ -192,14 +224,26 @@ describe("daily backups", () => {
 });
 
 describe("Doctor notes", () => {
-  it("no backup, an old backup, an external disk", async () => {
+  it("no backup, an old backup, an external disk (backups on)", async () => {
     const store = await storeWith(1);
     const now = Date.UTC(2026, 10, 14);
-    expect(serverNotes(store.dataDir, null, now, "linux").map((note) => note.id)).toEqual(["no-backup"]);
+    expect(serverNotes(store.dataDir, null, now, "linux", true).map((note) => note.id)).toEqual(["no-backup"]);
     await takeBackup(store.file, store.backupsDir, "manual", new Date(now - 3 * DAY_MS));
-    expect(serverNotes(store.dataDir, null, now, "linux")).toEqual([expect.objectContaining({ id: "old-backup", text: expect.stringMatching(/3 days old/) })]);
+    expect(serverNotes(store.dataDir, null, now, "linux", true)).toEqual([expect.objectContaining({ id: "old-backup", text: expect.stringMatching(/3 days old/) })]);
     await takeBackup(store.file, store.backupsDir, "daily", new Date(now - 3_600_000));
     expect(notesOf(store.dataDir, now).filter((note) => note.id !== "external-disk")).toEqual([]);
-    expect(serverNotes("/Volumes/Some Disk/botling", null, now, "darwin").map((note) => note.id)).toEqual(["external-disk", "no-backup"]);
+    expect(serverNotes("/Volumes/Some Disk/botling", null, now, "darwin", true).map((note) => note.id)).toEqual(["external-disk", "no-backup"]);
+  });
+
+  it("daily backups off: no backup note, however old or missing the newest backup is (the default)", async () => {
+    const store = await storeWith(1);
+    const now = Date.UTC(2026, 10, 14);
+    expect(serverNotes(store.dataDir, null, now, "linux").map((note) => note.id)).toEqual([]);
+    expect(serverNotes(store.dataDir, null, now, "linux", false).map((note) => note.id)).toEqual([]);
+    await takeBackup(store.file, store.backupsDir, "pre-migration", new Date(now - 30 * DAY_MS));
+    expect(serverNotes(store.dataDir, null, now, "linux", false).map((note) => note.id)).toEqual([]);
+    expect(notesOf(store.dataDir, now)).toEqual([]);
+    // The other notes stay: an external disk is still said.
+    expect(serverNotes("/Volumes/Some Disk/botling", null, now, "darwin").map((note) => note.id)).toEqual(["external-disk"]);
   });
 });

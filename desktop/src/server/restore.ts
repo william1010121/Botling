@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, fsyncSync, openSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { retireOwnStreams } from "./log/log-store";
-import { BACKUP_AT_KEY, LATEST_SCHEMA_VERSION, openServerStore, schemaVersion, stampTime, takeBackup } from "./store";
+import { BACKUP_AT_KEY, CONVERSATIONS_ONLY_KEY, isConversationsBackup, LATEST_SCHEMA_VERSION, openServerStore, schemaVersion, stampTime, takeBackup } from "./store";
 import { openReaderDb } from "./store/connection";
 
 export interface RestoreResult {
@@ -55,8 +55,13 @@ function fsyncPath(path: string): void {
 /** Checks a backup file and says when it was taken. Throws RestoreError when it cannot be restored. */
 export function inspectBackup(backup: string): { takenAt: number; from: RestoreResult["restoredToFrom"]; schema: number } {
   if (!existsSync(backup)) throw new RestoreError(`No backup at ${backup}.`);
+  const conversationsOnly = (what: string) => new RestoreError(`${what} holds conversations only (the messages and bots of a server too big to copy whole before a migration), not a whole server.db; it cannot be restored.`);
+  if (isConversationsBackup(backup)) throw conversationsOnly(backup);
   const check = openReaderDb(backup);
   try {
+    // By content too: a conversations-only file renamed to look like a whole backup is still refused.
+    if (check.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get()
+      && check.prepare("SELECT 1 FROM meta WHERE key = ?").get(CONVERSATIONS_ONLY_KEY)) throw conversationsOnly(backup);
     const result = String(check.prepare("PRAGMA integrity_check").get()?.integrity_check ?? "");
     if (result !== "ok") throw new RestoreError(`The backup ${backup} is damaged (integrity_check: ${result.slice(0, 200)}).`);
     if (!check.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streams'").get()) throw new RestoreError(`${backup} is not a Botling server backup.`);
