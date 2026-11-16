@@ -32,7 +32,7 @@ import { Client, type Bridge, type RequestVia } from "../src/renderer/client";
 import { WorkspaceStore } from "../src/renderer/store";
 import { rendererKernel } from "../src/renderer/renderer-kernel";
 import { bundledInPagePlugin } from "../src/renderer/shell/inpage-bundled";
-import { RowLoader, followRows, ticketBundleFetcher, type BundleFetcher, type BundleTicketPort, type RowsLink } from "../src/renderer/shell/row-loader";
+import { RowLoader, followOutcomes, followRows, ticketBundleFetcher, type BundleFetcher, type BundleTicketPort, type OutcomeLink, type RowsLink } from "../src/renderer/shell/row-loader";
 import { phoneLayout } from "../mobile/layout";
 import type { PendingFileView } from "../src/contract";
 import type { PageUploadsPort } from "./shell/uploads";
@@ -271,6 +271,7 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   const noBundles: BundleFetcher = () => Promise.reject(new Error("this page cannot read web bundles"));
   const rowLoader = new RowLoader({ kernel: rendererKernel, fetch: bundles ?? noBundles, source: bundledInPagePlugin, log: (line) => options.audit?.(line) });
   const offRows = followRows(rowLoader, options.link as unknown as RowsLink);
+  const offOutcomes = followOutcomes(rowLoader, options.link as unknown as OutcomeLink);
   const reactRoot: Root = createRoot(root);
   const offered = pageNeedsShell(options.capabilities);
   const render = (chrome: WebChrome) => reactRoot.render(createElement(ShellCapabilitiesProvider, { value: offered }, createElement(App, { client, store, web: chrome })));
@@ -278,6 +279,6 @@ export function mountRenderer(root: HTMLElement, options: MountOptions): Mounted
   void store.resync().catch((error) => options.audit?.(`first snapshot: ${String((error as Error)?.message ?? error)}`));
   return {
     adapter, store, render, rowLoader,
-    unmount() { offChips(); offRows(); void rowLoader.stop(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
+    unmount() { offChips(); offRows(); offOutcomes(); void rowLoader.stop(); releaseStorage(); adapter.stop(); bridge?.close(); reactRoot.unmount(); },
   };
 }

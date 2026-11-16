@@ -333,5 +333,5 @@ describe("the plugin feed over seeded random view sequences", () => {
       expect(kernel.installed().sort(), `seed ${seed} declarations`).toEqual([CHAT, SETTINGS, SHELL]);
       expect(kernel.allContributions(), `seed ${seed} contributions`).toEqual([]);
     }
-  });
+  }, Math.max(30_000, envCount("PLUGIN_FEED_RUNS", 200) * 30)); // the run count is a variable: 10,000 runs need more than the default 30 s
 });

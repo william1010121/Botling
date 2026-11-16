@@ -471,6 +471,21 @@ export class BotWorkers {
     if (records.length) { this.saveSubagents(); this.persist(true); }
   }
 
+  /** What the constructor of `Bot` does about workers (M7-S60, moved from it in the same order): the ledger first, then the Claude workers. */
+  restoreAtStart() {
+    // Subagents that were running when the app went away went with their process. App-managed workers are their
+    // ledger's: shown as it says (one it still lists at work was cut off), until their core is up.
+    this.projectLedgerAtStart();
+    // A worker its ledger does not have yet (an old journal not imported until its core is up) stopped, as before.
+    if (this.subagents.stopRunning(undefined, (subagent) => this.workerViews.has(subagent.id))) this.saveSubagents();
+    // Claude workers in the ledger (or still only in claude-workers.json): restored (one at work when the app went away
+    // is interrupted), and a report that never reached this head is handed over again once the bot is up.
+    if (this.engine === "claude" && (existsSync(this.workerLedgerFile) || existsSync(claudeWorkersFile(this.store.directory)))) {
+      const workers = this.ensureClaudeWorkers();
+      setTimeout(() => { if (!this.shuttingDown) workers.redeliver(); }, 0).unref?.();
+    }
+  }
+
   /** This head's app-managed workers, whatever the engine (workers.ts): its Codex or Antigravity head, or its Claude workers. */
   get workerHost(): WorkerHost | null {
     if (this.engine === "claude") return this.claudeWorkerHost;

@@ -6,10 +6,10 @@
 // convention of `core/bot/context.ts`: the moved bodies are what they were in `Bot` and say `this.turn`, `this.records`,
 // `this.finishTurn(...)`; the BRIDGE BLOCK below is every name they borrow, one forwarder each. The names every part of a
 // bot shares go to `ctx`; the fields and methods of `Bot` itself go to `host`. `Bot` keeps a one-line delegate for every
-// name moved here (`monitorState` stays in `Bot`: monitor-policy.test.ts calls it on a bare object as `this`).
+// name moved here (`monitorState` is `monitorStateOf` below: monitor-policy.test.ts calls `Bot.prototype.monitorState` on a bare object as `this`).
 import { isAgyConversationGone } from "../agent/agy-acp";
 import type { CodexItem } from "../agent/codex";
-import type { CommandMonitor } from "../agent/monitors";
+import { monitorTask, type CommandMonitor } from "../agent/monitors";
 import type { HeadExit } from "../agent/head";
 import { commandEnded, ReplyText, type CommandState, type StreamItem } from "../agent/stream";
 import type { ApprovalAnswerer, HostFacts } from "../agent-registry";
@@ -631,4 +631,30 @@ export class HeadEvents {
     }
     this.updated();
   }
+}
+
+/**
+ * The monitor chip of a monitored command that changed (`Bot.monitorState`, moved here in M7-S60). A function of the host, not a
+ * method of HeadEvents: monitor-policy.test.ts and bot-private-names.test.ts call `Bot.prototype.monitorState` on a bare object as
+ * `this`, and a class instance cannot be made from one. Only app-owned coordinator records can update a coordinator's chip.
+ */
+export function monitorStateOf(host: Bot, monitor: CommandMonitor) {
+  if (monitor.owner.toLowerCase() !== host.session.sessionId.toLowerCase()) return;
+  const task = monitorTask(monitor);
+  if (!task) return;
+  // Correlate to its existing coordinator step, never to descendants or a later reply.
+  if (host.turn?.steps.some(step => step.id === monitor.id && step.tool === "Monitor")) {
+    const tasks = host.turn.tasks ??= [];
+    const index = tasks.findIndex(candidate => candidate.id === monitor.id);
+    if (index < 0) tasks.push(task); else tasks[index] = task;
+    host.emitSteps(host.turn);
+    return;
+  }
+  const record = host.records.findLast(record => record.engine === "codex" && record.steps?.some(step => step.id === monitor.id && step.tool === "Monitor"));
+  if (!record) return;
+  const tasks = Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : [];
+  const index = tasks.findIndex(candidate => candidate.id === monitor.id);
+  if (index < 0) tasks.push(task); else tasks[index] = task;
+  record.backgroundTasks = tasks;
+  host.changed(record);
 }

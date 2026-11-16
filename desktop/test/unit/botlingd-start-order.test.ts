@@ -20,6 +20,10 @@ const EXPECTED_START: string[] = [
   "interval 60000",
   "files +uploads",
   "log recovery",
+  // M7-09a (9d2c2160): the first read of the installed plugins (the machine row's digest, run by the summary reconcile)
+  // keeps each plugin's web part as a content bundle, which creates the folder. Nothing before it needs the folder, and
+  // the plugin rows (startContent) come after it, so every row names a bundle that is already kept.
+  "files +plugin-bundles",
   "log summary rows",
   "timeout 3600000",
   "files +children.json +plugin-data",
