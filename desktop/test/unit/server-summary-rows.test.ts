@@ -300,6 +300,19 @@ describe("summary rows: the start reads the srv: log only for what it lacks", ()
     const queries = await restartReading({ MAIN: view("MAIN", { role: "main" }) });
     expect(queries.filter((sql) => sql.includes("bot.updated"))).toHaveLength(1);
   });
+
+  it("the settings come back from the newest settings entry: a bot's face colour survives a restart", async () => {
+    const shared = memoryStore();
+    const clock = new FakeClock();
+    const a = await setup({ shared, clock, views: { B1: view("B1") } });
+    for (const color of ["#111111", "#AB12CD"]) emit(a, { type: "settings.updated", settings: { ...settingsView({}), botColors: { B1: { avatar: "circle", color } } } });
+    await a.settle();
+    a.close();
+    const b = await setup({ shared, clock, views: { B1: view("B1") } });
+    await b.settle();
+    expect(b.row("B1")?.face).toEqual({ avatar: "circle", color: "#AB12CD" });
+    b.close();
+  });
 });
 
 describe("summary rows: settings", () => {

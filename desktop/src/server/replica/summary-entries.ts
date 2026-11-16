@@ -2,8 +2,9 @@
 // `settings.updated`. The stream keeps every `bot.updated` ever stored (one per change of a bot: 16,654 entries, 897 MB
 // on a Mac after a day of use) and `entries` has no index on `kind`, so reading all of them to keep the last of each bot
 // made every start read the whole stream: 4 s to 33 s (an 8 GB server.db). This reads newest first and stops at what it
-// was asked for; asking for nothing reads nothing. Settings are a query of their own: filtering on `kind` does not
-// read a row's (large) body, so walking back to the newest settings entry costs little.
+// was asked for; asking for nothing reads nothing. Settings are a query of their own, newest first, and a server stores
+// `settings.updated` often (on the 8.4 GB server.db the newest was 400 entries back: 0.36 s). The walk still reads the
+// rows' pages, though: a stream with no readable settings entry is read to its start (18 s cold on that file), as before.
 import type { BotView } from "../../contract";
 import type { Db } from "../store";
 

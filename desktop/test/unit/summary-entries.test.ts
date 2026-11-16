@@ -45,6 +45,11 @@ describe("latestFromEntries", () => {
     expect(stats.rows).toBeLessThanOrEqual(64);
   });
 
+  it("several entries of one bot in one page: the newest wins, not the last one read", () => {
+    const { tx } = rig(Array.from({ length: 10 }, (_, i) => ({ seq: i + 1, kind: "bot.updated", body: view("B1", `v${i + 1}`) })));
+    expect(latestFromEntries(tx, "srv:x", new Set(["B1"]), false).bots.get("B1")).toEqual({ id: "B1", name: "v10" });
+  });
+
   it("a bot that never had an entry reads to the start and is simply absent", () => {
     const { tx, stats } = rig([{ seq: 1, kind: "bot.updated", body: view("B1", "a") }, { seq: 2, kind: "bot.updated", body: view("B2", "b") }]);
     const found = latestFromEntries(tx, "srv:x", new Set(["B1", "NOPE"]), false, 1);
