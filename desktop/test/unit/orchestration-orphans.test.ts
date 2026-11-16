@@ -444,7 +444,7 @@ describe("the book keeps the truth when things go wrong", () => {
     await t.workers.start("p", params);
     t.core.port.stop = async (id) => { t.workers.ended(id, 1, "completed", "done"); t.core.ledger.set(id, { run: 1, running: false, status: "completed", report: "done" }); return false; };
     expect(await t.workers.cancel("p", "T1")).toEqual({ stopped: false });
-    t.workers.ended("T1", 1, "completed", "done");
+    // No further end event comes: the end that arrived during the stop was ignored, so the cancel's look at the ledger is the only way it is told.
     expect(t.told).toEqual([expect.objectContaining({ taskId: "T1", run: 1, report: "done" })]);
     expect(t.rows()[0]).toMatchObject({ open: false, stopped: false });
   });
