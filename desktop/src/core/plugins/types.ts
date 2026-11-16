@@ -90,8 +90,11 @@ export interface LineContentRef { owner: string; id: string; entry: { stream: St
 
 export interface PluginWorld {
   bots(): BotInfo[];
-  /** A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not. */
-  send(botId: string, text: string, via: string | null): { messageId: string };
+  /**
+   * A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not.
+   * `from`: the plugin, when it is not shipped with Botling (M7-O05: it stays with the message, and the turn that answers it is checked as that plugin's).
+   */
+  send(botId: string, text: string, via: string | null, from?: string): { messageId: string };
   /** Stops every turn a bot has under way, as its stop button does (null: no such bot). */
   interrupt(botId: string): Promise<boolean | null>;
   /** A line in the main bot's chat; with `actions`, buttons under it. */

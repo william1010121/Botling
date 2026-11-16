@@ -301,11 +301,11 @@ export class BotRestart {
   swapEntries(cutOff: boolean): SwapEntry[] {
     const entries: SwapEntry[] = [];
     for (const bot of this.members) {
-      const queued = bot.queue.filter((turn) => turn.open && turn.origin !== "tidy").map((turn) => ({ words: turn.words, userId: turn.userId, origin: turn.origin }));
+      const queued = bot.queue.filter((turn) => turn.open && turn.origin !== "tidy").map((turn) => ({ words: turn.words, userId: turn.userId, origin: turn.origin, ...(turn.plugin ? { plugin: turn.plugin } : {}) }));
       const sessionId = bot.session.started ? bot.session.sessionId : null;
       if (!sessionId && !queued.length) continue;
       // Only a head that was at work is told to carry on.
-      entries.push({ botId: this.owner.id, engine: bot.engine, sessionId, continue: cutOff && !!sessionId && (bot.engine === this.engine || !!bot.head?.running), queued });
+      entries.push({ botId: this.owner.id, engine: bot.engine, sessionId, continue: cutOff && !!sessionId && (bot.engine === this.engine || !!bot.head?.running), queued, ...(bot.turn?.plugin ? { plugin: bot.turn.plugin } : {}) });
     }
     return entries;
   }
@@ -336,7 +336,7 @@ export class BotRestart {
       const claudeWorkers=bot.engine==="claude"?bot.subagents.running.filter(child=>ownProcessWorker(child.type)).map(child=>child.id):undefined;
       const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
       const active = !!turn?.open && turn.origin !== "tidy";
-      const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted}));
+      const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted,...(t.plugin?{plugin:t.plugin}:{})}));
       if (!active && !queued.length && !bot.managedPending && !bot.subagents.running.length) return [];
       const blocked = bot.readOnly ? "The conversation store is read-only."
         : bot.approvals.size ? "A permission decision was pending. Review the original request before continuing."
@@ -353,7 +353,7 @@ export class BotRestart {
         : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
       // Its workers are not written here: the member's ledger keeps what each needs to go on (`restartedAt` finds them).
       return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
-        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
+        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,...(turn?.plugin?{plugin:turn.plugin}:{}),
         blocked,restartedAt:Date.now(),providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
     });
   }
@@ -390,6 +390,7 @@ export class BotRestart {
         const userId = saved.userId && this.owner.records.some((record) => record.id === saved.userId) ? saved.userId : null;
         const turn = bot.newTurn(userId ? saved.origin as Origin : saved.origin === "user" ? "app" : saved.origin as Origin, saved.words, userId);
         turn.id = saved.turnId; turn.messageId = saved.messageId; turn.handoffId = saved.handoffId; turn.conducted = saved.conducted;
+        if (saved.plugin) turn.plugin = saved.plugin;
         bot.turns.enqueue(turn);
       }
       if (!bot.turn) bot.next();
@@ -410,6 +411,8 @@ export class BotRestart {
       const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(reconciled.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+reconciled.join(", ") : "")
         +(ownWorkers.length ? "\nApp worker task IDs interrupted by the restart (nothing was replayed; continue any that are still needed with app_send_message to the same task_id, do not create replacements): "+ownWorkers.join(", ") : ""),entry.userId??null);
       turn.handoffId=entry.handoffId??null;
+      // The turn that was cut off stems from the same plugin, if one (M7-O05).
+      if(entry.plugin)turn.plugin=entry.plugin;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
       bot.queue.push(turn);
@@ -418,6 +421,7 @@ export class BotRestart {
       if(!["user","app","background"].includes(saved.origin))throw Error("Queued work origin requires reconciliation.");
       const turn=bot.newTurn(saved.origin as Origin,saved.words,saved.userId);
       turn.id=saved.turnId;turn.messageId=saved.messageId;turn.handoffId=saved.handoffId;turn.conducted=saved.conducted;turn.retried=true;
+      if(saved.plugin)turn.plugin=saved.plugin;
       bot.queue.push(turn);
     }
     if(bot.queue.length)bot.next();
@@ -440,11 +444,11 @@ export class BotRestart {
         if (cut) bot.delivery.queueNote(cut);
         this.log(`core swap: ${entry.engine} resumes session ${entry.sessionId}${entry.continue ? " and carries on" : ""}`);
       }
-      if (entry.continue && entry.sessionId) this.deliverTo(entry.engine, CONTINUE_NOTE, null, { origin: "app" });
+      if (entry.continue && entry.sessionId) this.deliverTo(entry.engine, CONTINUE_NOTE, null, { origin: "app", ...(entry.plugin ? { plugin: entry.plugin } : {}) });
       for (const turn of entry.queued) {
         const origin = (["user", "app", "background"] as string[]).includes(turn.origin) ? turn.origin as Origin : "app";
         const userId = turn.userId && this.owner.records.some((record) => record.id === turn.userId) ? turn.userId : null;
-        this.deliverTo(entry.engine, turn.words, userId, { origin: userId ? origin : origin === "user" ? "app" : origin });
+        this.deliverTo(entry.engine, turn.words, userId, { origin: userId ? origin : origin === "user" ? "app" : origin, ...(turn.plugin ? { plugin: turn.plugin } : {}) });
       }
     }
   }

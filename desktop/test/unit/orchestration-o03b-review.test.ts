@@ -196,14 +196,10 @@ describe("through Plugins", () => {
     plugin(dir, "needy");
     const t = await stack(dir);
     await t.ask("workers.start", { ...start, code: t.plugins.codeOf("needy") });
-    t.plugins.origins.set("main", "needy");
-    t.plugins.origins.set("other", "needy");
     t.plugins.event("botRemoved", { botId: "elsewhere" });
     expect(t.readBook()[0]!.open).toBe(true);
     t.plugins.event("botRemoved", { botId: "main" });
     expect(t.readBook()[0]).toMatchObject({ open: false, handed: true });
-    // No plugin's message is remembered as having reached the removed bot (another bot's mark stays).
-    expect([...t.plugins.origins.keys()]).toEqual(["other"]);
   });
 
   it("(5) a request from older code than the plugin runs now is refused before any method sees it; the current code's is answered, and no method sees the field", async () => {

@@ -241,7 +241,9 @@ export class BotWorkers {
       note: (note, text) => this.host.workerNote(note, text),
       closeReason: () => (this.swapHold ? "restart" : "quit"),
       log: (line) => this.log(line),
-      admit: this.options.workerAdmit,
+      // M7-O05: the plugin the turn under way stems from (fixed when that turn was made), not the bot's last heard one.
+      ...(this.options.workerAdmit ? { admit: (kind, args, run) => this.options.workerAdmit!(kind, args, run, this.turn?.plugin) } : {}),
+      ...(this.options.workerGate ? { gateMessage: (taskId, words) => this.options.workerGate!(taskId, words, this.turn?.plugin) } : {}),
     });
     // Once the facade that asked for it is made (it may be made while this bot is).
     queueMicrotask(() => core.projectAll());
@@ -319,10 +321,19 @@ export class BotWorkers {
     };
   }
 
+  /**
+   * M7-O05: the plugin that stands behind worker `id` (the one that started it, or the bot started it for that plugin's message), as the extra of the turn that takes
+   * its report or note: that turn is checked as the plugin's, as the run it came from was. Nothing for a worker nobody's plugin started.
+   */
+  private pluginBehind(id: string | null | undefined): { plugin?: string } {
+    const plugin = id ? this.claudeWorkerHost?.core.get(id)?.startedBy?.plugin : undefined;
+    return plugin ? { plugin } : {};
+  }
+
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
   workerReport(text: string, workerId?: string): boolean {
     if (this.shuttingDown || this.problem || this.profile.problem) return false;
-    try { this.relayIfCallInWork((this.options.primary ?? this.host).deliverTo(this.engine, text, null, { origin: "app" }), workerId, "report"); return true; }
+    try { this.relayIfCallInWork((this.options.primary ?? this.host).deliverTo(this.engine, text, null, { origin: "app", ...this.pluginBehind(workerId) }), workerId, "report"); return true; }
     catch (error) { this.log(`claude worker report not delivered: ${(error as Error).message}`); return false; }
   }
 
@@ -366,7 +377,7 @@ export class BotWorkers {
     if (this.shuttingDown || this.problem || this.profile.problem || bot.shuttingDown) return false;
     try {
       bot.add({ id: newId(), role: "relay", text: workerNoteLine(note), date: toSwiftDate() });
-      this.relayIfCallInWork(bot.deliverTo(this.engine, text, null, { origin: "app" }), note.id, "note");
+      this.relayIfCallInWork(bot.deliverTo(this.engine, text, null, { origin: "app", ...this.pluginBehind(note.id) }), note.id, "note");
       return true;
     } catch (error) { this.log(`worker note not delivered: ${(error as Error).message}`); return false; }
   }

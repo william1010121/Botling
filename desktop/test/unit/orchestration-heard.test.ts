@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Core as RealCore } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
 import { ADMITTED, PluginWorkers, type OrchestrationWorld, type PluginFacts, type WorkerPort } from "../../src/core/orchestration/plugin-workers";
-import { CoreSend } from "../../src/core/server/send";
 import type { Core } from "../../src/core/server";
 import type { AppAnswer, AppQuestion } from "../../src/core/plugins";
 import { tempDir } from "../helpers";
@@ -222,45 +221,40 @@ function realCore(options: { grant?: boolean | undefined } = {}) {
   running.push(core);
   const bots = (core as unknown as { bots: Map<string, Bot> }).bots;
   const main = [...bots.values()].find((bot) => bot.profile.role === "main") ?? [...bots.values()][0]!;
-  vi.spyOn(main, "send").mockReturnValue({ messageId: "m", turnId: null } as never);
+  const sent = vi.spyOn(main, "send").mockReturnValue({ messageId: "m", turnId: null } as never);
   const routines = vi.spyOn(main, "addRoutine").mockReturnValue(true);
   const ask = (method: string, params: unknown) => (core.plugins as unknown as { requested(m: string, p: unknown): Promise<unknown> }).requested(method, params);
-  const admit = (kind: string, args: Record<string, unknown>) => {
+  /** What the bot's `app_handoff` does in a turn that stems from `plugin` (none: the user's, or the bot's own). */
+  const admit = (kind: string, args: Record<string, unknown>, plugin?: string) => {
     const ran = { n: 0 };
-    const result = (main as unknown as { options: { workerAdmit: (k: string, a: Record<string, unknown>, run: () => Promise<Handoff>) => Promise<Handoff> } }).options.workerAdmit(kind, args, async () => { ran.n += 1; return { task_id: "H", run: 1 }; });
+    const result = (main as unknown as { options: { workerAdmit: (k: string, a: Record<string, unknown>, run: () => Promise<Handoff>, plugin: string | undefined) => Promise<Handoff> } }).options.workerAdmit(kind, args, async () => { ran.n += 1; return { task_id: "H", run: 1 }; }, plugin);
     return { ran, result };
   };
-  return { core, main, ask, admit, routines, origin: () => core.plugins.origins.get(main.id) };
+  return { core, main, ask, admit, routines, sent };
 }
 
-describe("F6 in the real core: a message from a plugin that is not shipped marks the bot, and the user's own message clears it", () => {
-  it("bots.send, as the plugin or as the user, and bots.wake mark the bot with the plugin; a shipped plugin does not", async () => {
+describe("F6 in the real core: a message from a plugin that is not shipped carries the plugin, and the turn that answers it is checked as that plugin's", () => {
+  it("bots.send, as the plugin or as the user, and bots.wake send the message from the plugin; a shipped plugin's message carries none", async () => {
     const t = realCore();
+    const from = () => (t.sent.mock.calls.at(-1)![1] as { from?: string }).from;
     await t.ask("bots.send", { plugin: "shipped", bot: "main", text: "hi" });
-    expect(t.origin()).toBeUndefined();
+    expect(from()).toBeUndefined();
     await t.ask("bots.send", { plugin: "written", bot: "main", text: "hi" });
-    expect(t.origin()).toBe("written");
-    t.core.plugins.origins.clear();
+    expect(from()).toBe("written");
     await t.ask("bots.send", { plugin: "plain", bot: "main", text: "as me", as: "user" });
-    expect(t.origin()).toBe("plain");
-    t.core.plugins.origins.clear();
+    expect(from()).toBe("plain");
     await t.ask("bots.wake", { plugin: "written", bot: "main", prompt: "wake" });
-    expect(t.origin()).toBe("written");
+    expect(from()).toBe("written");
   });
 
-  it("a bot a plugin wrote to cannot start a worker without the grant; a bot nobody wrote to starts as before; the user's message clears the mark", async () => {
+  it("a turn that stems from a plugin cannot start a worker without the grant; a turn nobody's plugin made starts as before", async () => {
     const t = realCore();
     const free = t.admit("claude-process", { instructions: "mine" });
     await expect(free.result).resolves.toBeTruthy();
     expect(free.ran.n).toBe(1);
-    await t.ask("bots.send", { plugin: "written", bot: "main", text: "start workers for me" });
-    const refused = t.admit("claude-process", { instructions: "from the plugin" });
+    const refused = t.admit("claude-process", { instructions: "from the plugin" }, "written");
     await expect(refused.result).rejects.toThrow(/permission/);
     expect(refused.ran.n).toBe(0);
-    // The user writes to the bot (CoreSend.sendWith): the mark is gone and its own workers start again.
-    await (t.core as unknown as { coreSend: CoreSend }).coreSend.sendWith(t.main, "hello", { files: [] });
-    expect(t.origin()).toBeUndefined();
-    await expect(t.admit("claude-process", { instructions: "mine again" }).result).resolves.toBeTruthy();
   });
 
   it("routines.add: a shipped plugin adds one; a plugin that is not shipped never does, granted or not, written by a bot or not (decided)", async () => {
@@ -305,10 +299,10 @@ describe("the wire from the bot's own app_handoff to the book", () => {
   it("the bot's app_handoff, after a plugin's message, is refused through the real Claude workers of the bot (hook wired to WorkerCore); with no mark it goes on", async () => {
     const t = realCore();
     const workers = t.main.ensureClaudeWorkers();
-    t.core.plugins.origins.set(t.main.id, "written");
+    t.main.turn = { plugin: "written" } as never;
     await expect(workers.tool("app_handoff", { instructions: "from the plugin's message" })).rejects.toThrow(/permission/);
     // Not marked: the checks are not asked, the handoff goes on as before (and stops here only because this core has no agent).
-    t.core.plugins.origins.clear();
+    t.main.turn = null;
     await expect(workers.tool("app_handoff", { instructions: "mine" })).rejects.not.toThrow(/permission/);
   });
 

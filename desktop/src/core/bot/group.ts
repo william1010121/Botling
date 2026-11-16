@@ -111,10 +111,11 @@ export class BotGroup {
    * A message from the user; `replyTo`: a line of the chat it answers (a pick on a question, say).
    * `to`: with two heads, both (the usual) or one by name; `appNote` goes ahead of the words without
    * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only; `via`: a
-   * plugin sent it (its title, shown on the line).
+   * plugin sent it (its title, shown on the line); `from`: the plugin (not shipped) the message comes from, whose it
+   * stays for the turn it makes (M7-O05: `Turn.plugin`).
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via, onDelivery, ids }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; onDelivery?: (delivered: boolean) => void; ids?: PresetTurnIds } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via, onDelivery, ...(ids ? { ids } : {}) });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via, from, onDelivery, ids }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string; from?: string; onDelivery?: (delivered: boolean) => void; ids?: PresetTurnIds } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via, ...(from ? { from } : {}), onDelivery, ...(ids ? { ids } : {}) });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
@@ -145,16 +146,18 @@ export class BotGroup {
     if (kept.length) lines.push(attachmentList(kept.map((file) => file.path)));
     const message = lines.join("\n\n");
     if (!two) {
-      const turn = this.route(this.watchDelivery(this.host.newTurn("user", message, user.id, ids), onDelivery));
+      const made = this.host.newTurn("user", message, user.id, ids);
+      if (from) made.plugin = from;
+      const turn = this.route(this.watchDelivery(made, onDelivery));
       return { messageId: turn.messageId, turnId: turn.id };
     }
     this.conduct(this.conductor.userMessage(words));
     if (decisionOwner) {
       // A shared decision has one owner: no copy goes to the other head as context.
-      const turn = this.deliverTo(decisionOwner, message, user.id, { delivery: onDelivery, ids });
+      const turn = this.deliverTo(decisionOwner, message, user.id, { delivery: onDelivery, ids, ...(from ? { plugin: from } : {}) });
       return { messageId: turn.messageId, turnId: turn.id };
     }
-    const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery, ids });
+    const turn = this.deliverTo(target, message, user.id, { delivery: onDelivery, ids, ...(from ? { plugin: from } : {}) });
     return { messageId: turn.messageId, turnId: turn.id };
   }
 
@@ -198,12 +201,13 @@ export class BotGroup {
   }
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
-  deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released">> & { ids?: PresetTurnIds } = {}): Turn {
+  deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin" | "delivery" | "routine" | "released" | "plugin">> & { ids?: PresetTurnIds } = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
     this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head);
     if (!bot) throw new ContractError("conflict", "Requested engine could not be created; nothing was rerouted.");
     const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId, extra.ids);
+    if (extra.plugin) turn.plugin = extra.plugin;
     if (extra.routine) turn.routine = true;
     if (extra.released) turn.released = true;
     if (extra.conducted) turn.conducted = true;
@@ -379,8 +383,10 @@ export class BotGroup {
             this.notice("Requested collaboration route is unavailable; nothing was routed.");
             break;
           }
+          // M7-O05: work one head hands the other from a plugin's turn is the plugin's too (it would start workers with the bot's rights otherwise).
+          const plugin = this.botFor(this.conductor.records.find(record => record.id === action.handoffId)?.from ?? this.engine)?.turn?.plugin;
           this.deliverTo(action.head, action.text + this.decisionContext(action.handoffId ? this.handoffDecisions.get(action.handoffId) ?? new Set() : new Set()), null,
-            { origin: "app", conducted: !!action.handoffId, handoffId: action.handoffId });
+            { origin: "app", conducted: !!action.handoffId, handoffId: action.handoffId, ...(plugin ? { plugin } : {}) });
           break;
         case "line": {
           // The chat shows a hand-off's first line; the archive keeps all of it, for whoever reads the discussion later.

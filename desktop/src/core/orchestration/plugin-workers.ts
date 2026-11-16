@@ -11,8 +11,8 @@
 //      are strict), a model that would open spec/ is refused, and the worker itself starts without spec/ and without the
 //      bot's skip-the-cards modes (ClaudeWorkers.startFor).
 // M7-O04 (F6, G1, G2): a plugin that is not shipped cannot get a worker by having a bot start it either (`bots.send`, `bots.wake`): a worker
-// the bot starts in a turn that began with such a plugin's message goes through the same checks (`admitHeard`; the core remembers
-// that message in `Plugins.origins` until the user writes to the bot). A bot-written plugin also gets a card for every `workers.send`
+// the bot starts in a turn that began with such a plugin's message goes through the same checks (`admitHeard`; the plugin belongs to the
+// turn, made with the message and never changed: `Turn.plugin`, M7-O05). A bot-written plugin also gets a card for every `workers.send`
 // (a new instruction is a new worker's worth of trust), may only work on bots it made itself, and has one card open at a time.
 // No plugin gets Maintainer (the plugin library) as a target: the world refuses it (`workers`).
 // The owner of every worker is the bot it runs for; this book only remembers which plugin started it (quota, who may
@@ -259,6 +259,21 @@ export class PluginWorkers {
     let started: T | undefined;
     await this.launched(facts, port.id, params, async (by) => (started = await run(by)));
     return started!;
+  }
+
+  /**
+   * M7-O05 (item 5): `app_send_message` in a turn that began with `plugin`'s message. A new instruction for a worker is a plugin's only for its own worker (this book's
+   * entry, this very version of it) and while the user has it allowed to orchestrate; anything else is refused and nothing is sent. What is allowed is sent as the
+   * plugin's own `workers.send` (its card, its quota), so those checks stay in that one place.
+   */
+  async admitMessage(plugin: string, taskId: string, message: string): Promise<{ run: number; how: string }> {
+    try {
+      this.mine(plugin, taskId);
+      this.allowed(plugin);
+    } catch {
+      throw new Error("This turn began with a plugin's message: a message may only go to a worker that plugin started, while it is allowed to orchestrate. Nothing was sent.");
+    }
+    return this.send(plugin, taskId, message);
   }
 
   /**

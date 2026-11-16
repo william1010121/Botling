@@ -20,6 +20,7 @@ import type { ChatRecord, StepRecord } from "../store/records";
 import type { BotProfile } from "../store/workspace";
 import type { RemoteWorkerHost } from "../agent/claude-workers";
 import type { Bot, Status } from "../bot";
+import type { WorkerCoreOptions } from "../worker-core/core";
 
 export interface SessionStart {
   sessionId: string;
@@ -72,7 +73,10 @@ export interface BotOptions {
   /** The instructions for this bot's head (settings may change between wakes). */
   prompts: (engine: Engine, heads: Heads | null) => BotPrompts;
   orchestrationRules?: () => import("../orchestration/default-rules").OrchestrationRules;
-  workerAdmit?: import("../worker-core/core").WorkerCoreOptions["admit"];
+  /** M7-O05: the app_handoff hook, with the plugin the turn under way stems from (undefined: the user's, a shipped plugin's, or the bot's own). */
+  workerAdmit?(...args: [...Parameters<NonNullable<WorkerCoreOptions["admit"]>>, plugin: string | undefined]): ReturnType<NonNullable<WorkerCoreOptions["admit"]>>;
+  /** M7-O05 (item 5): the app_send_message hook, with the plugin the turn under way stems from. */
+  workerGate?(taskId: string, words: string, plugin: string | undefined): Promise<{ run: number; how: string } | undefined>;
   /** A partner's: the bot whose chat it speaks in (set only on the other head of a two-head bot). */
   primary?: Bot;
   /** The head a partner runs. */
@@ -245,6 +249,11 @@ export interface Turn {
   routine?: boolean;
   /** Already past `deferTurn` (released by the server, or never deferred). */
   released?: boolean;
+  /**
+   * M7-O05 (F6): the plugin (not shipped) this turn stems from: the sender of its message, or for a worker's report the plugin that stands behind the
+   * worker. Fixed when the turn is made and never changed (the user writing later does not clear it); every worker the turn starts is checked as that plugin's.
+   */
+  plugin?: string;
 }
 
 /** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */

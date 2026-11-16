@@ -716,17 +716,23 @@ export class Plugins {
     });
   }
 
-  /** F6 (M7-O04): the plugin (not shipped) whose message each bot last heard, by the bot's id; the user writing to the bot clears it (CoreSend.sendWith). */
-  readonly origins = new Map<string, string>();
+  /**
+   * F6 (M7-O04, M7-O05): what a message from `plugin` carries (`from`): its name when it is not shipped, else nothing (a shipped plugin is a deputy of the user's).
+   * The message keeps it, its turn is made with it and keeps it (`Turn.plugin`); nothing about the bot is remembered, so the user writing meanwhile changes no turn but its own.
+   */
+  heardFrom(plugin: string): string | undefined { return this.shipped(plugin) ? undefined : plugin; }
 
-  heard(botId: string, plugin: string) {
-    if (!this.shipped(plugin)) this.origins.set(this.options.world.botId?.(botId) ?? botId, plugin);
+  /**
+   * What `WorkerCore.handoff` asks (bot/workers.ts `admit`): a worker the bot starts in a turn that stems from `plugin` (the turn's, not the bot's) is checked as that
+   * plugin's, else it just starts. Fails closed.
+   */
+  async admitWorker<T extends { task_id: string; run: number }>(botId: string, kind: string, args: Record<string, unknown>, run: (startedBy?: StartedBy) => Promise<T>, plugin?: string): Promise<T> {
+    return plugin ? this.workers().admitHeard(plugin, botId, kind, args, run) : run();
   }
 
-  /** What `WorkerCore.handoff` asks (bot/workers.ts `admit`): a worker the bot starts after a plugin's message is checked as that plugin's, else it just starts. Fails closed. */
-  async admitWorker<T extends { task_id: string; run: number }>(botId: string, kind: string, args: Record<string, unknown>, run: (startedBy?: StartedBy) => Promise<T>): Promise<T> {
-    const plugin = this.origins.get(botId);
-    return plugin ? this.workers().admitHeard(plugin, botId, kind, args, run) : run();
+  /** What `WorkerCore.message` asks (app_send_message): in a turn that stems from `plugin`, only that plugin's own worker takes a new run, while it is allowed; else not gated (undefined). Fails closed. */
+  async gateWorkerMessage(plugin: string | undefined, taskId: string, words: string): Promise<{ run: number; how: string } | undefined> {
+    return plugin ? this.workers().admitMessage(plugin, taskId, words) : undefined;
   }
 
   /** The unload hook for workers (plugin-workers.ts `reconcile`); never throws into the host's sync. */
@@ -739,9 +745,8 @@ export class Plugins {
   /** The user changed what a plugin may do (its `orchestrate` grant): a plugin that no longer has it hands its workers back, as when it is switched off. */
   grantChanged() { this.workersReconcile(); }
 
-  /** A bot was removed: the plugin book closes its entries, and no plugin message is remembered as having reached it. */
+  /** A bot was removed: the plugin book closes its entries. */
   private botGone(botId: string) {
-    this.origins.delete(botId);
     try { if (this.options.world.orchestration) this.workers().botGone([botId]); } catch (error) { this.options.world.log(`plugin workers not closed for a removed bot: ${(error as Error).message}`); }
   }
 
