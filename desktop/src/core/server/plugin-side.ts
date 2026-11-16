@@ -82,8 +82,10 @@ export class CorePluginSide {
       const key = `${event.subagent.id}/${event.subagent.execution?.run ?? 0}`;
       if (event.subagent.status === "running") {
         if (this.workersAtWork.size < 2_000) this.workersAtWork.add(key);
-      } else if (this.workersAtWork.delete(key)) {
-        this.plugins.event("workerDone", { botId, workerId: event.subagent.id, status: event.subagent.status, report: event.subagent.result ?? "" });
+      } else {
+        // `workerReport` has its own book (a cursor per run), so it does not depend on the 2,000 above.
+        this.plugins.workerEnded(event.subagent.id, event.subagent.execution?.run ?? 0, event.subagent.status, event.subagent.result ?? "");
+        if (this.workersAtWork.delete(key)) this.plugins.event("workerDone", { botId, workerId: event.subagent.id, status: event.subagent.status, report: event.subagent.result ?? "" });
       }
     }
   }

@@ -10,7 +10,7 @@ import { RowKey, type AuditRow, type PluginGrant, type PluginRow, type Tier } fr
 import type { Db } from "../store";
 import { deleteRow, putRow, readRowBody } from "./tables";
 
-const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio"]);
+const WRITE_PERMISSIONS = new Set(["network", "files", "exec", "sessions", "routines", "cards", "app", "studio", "orchestrate"]);
 const REQUEST_PERMISSIONS = new Set(["composer", "bots", "claude"]);
 
 /** A command a plugin may request: every command except the server-scope ones (the row schema's type). */

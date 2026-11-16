@@ -146,7 +146,7 @@ describe("the regions as contributions", () => {
 
   it("the side region is botling.bot-panel's contribution to app/side: declared, there once the plugin is up, gone with it, back when it is back", async () => {
     expect(botPanelDeclaration.contributes?.slots).toEqual([REGION_SLOTS.side]);
-    expect(REGION_SLOTS).toEqual({ side: "app/side", bottom: "app/bottom" });
+    expect(REGION_SLOTS).toEqual({ main: "app/main", side: "app/side", bottom: "app/bottom" });
     expect(regionEntries("app/side")).toHaveLength(0);
     const one = botPanelHost();
     await one.start();

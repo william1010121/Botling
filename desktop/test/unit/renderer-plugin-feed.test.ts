@@ -208,7 +208,8 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     // No owner: the kernel refuses the contributions to the settings slots (the plugins' other rows are held as always).
     expect(feed.rows("view/settings.section")).toEqual([]);
     expect(feed.rows("view/quickSettings")).toEqual([]);
-    expect(feed.rows("view/mainTab")).toEqual(view.mainTabs);
+    // The main tabs are botling.chat's place now (M7-07a): refused here too, with no owner up.
+    expect(feed.rows("view/mainTab")).toEqual([]);
     const settingsOwners = new Set([...(view.settingsSections ?? []), ...(view.quickSettings ?? [])].map((row) => row.plugin));
     const quiet = view.plugins.map((plugin) => plugin.name).filter((name) => !settingsOwners.has(name));
     expect(quiet.length).toBeGreaterThan(2);
@@ -220,6 +221,10 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     expect(feed.rows("view/settings.section")).toEqual(view.settingsSections);
     expect(feed.rows("settings/quick")).toEqual(view.quickSettings);
     expect(new Set(events.slice(before).map((event) => event.plugin).filter((name) => quiet.includes(name)))).toEqual(new Set());
+    // The stand-in owner holds main/tab too, but the feed was not told: only the plugin the refresh above reloaded (zed.tools has settings rows) put its tab in; the rest come when it is told.
+    expect(feed.rows("view/mainTab").map((row) => (row as { plugin: string }).plugin)).toEqual(["zed.tools"]);
+    feed.refresh(["main/tab"]);
+    expect(feed.rows("view/mainTab")).toEqual(view.mainTabs);
     // A slot nobody here contributes to: no step at all.
     const steady = events.length;
     feed.refresh(["app/rail"]);
@@ -252,7 +257,8 @@ describe("the plugin feed holds the plugin list in the kernel", () => {
     await kernel.requestUnload(SHELL);
     // The plugins depend on the shell's slots: they go first.
     expect(kernel.state("zed.tools")).toBe("absent");
-    expect(feed.rows("view/mainTab")).toEqual([]);
+    // The tabs of plugins that have rows only in places another plugin owns stay (main/tab is botling.chat's, M7-07a; the stand-in owner is up).
+    expect(feed.rows("view/mainTab").map((row) => (row as { plugin: string }).plugin)).toEqual(["botling.note", "botling.whiteboard"]);
     expect(() => feed.reconcile(view)).not.toThrow();
     await kernel.load(SHELL);
     // Registration order (P2), exactly: a plugin whose rows are all in slots another plugin owns (the settings slots) did not wait for the shell,
@@ -327,5 +333,5 @@ describe("the plugin feed over seeded random view sequences", () => {
       expect(kernel.installed().sort(), `seed ${seed} declarations`).toEqual([CHAT, SETTINGS, SHELL]);
       expect(kernel.allContributions(), `seed ${seed} contributions`).toEqual([]);
     }
-  });
+  }, Math.max(30_000, envCount("PLUGIN_FEED_RUNS", 200) * 30)); // the run count is a variable: 10,000 runs need more than the default 30 s
 });

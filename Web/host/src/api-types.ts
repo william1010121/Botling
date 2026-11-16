@@ -48,11 +48,13 @@ export interface PluginEvents {
   noteCardChanged: { botId: string; key: string };
   /** An edit made in a bot's note.md (by hand, a bot's file edit, git) could not be taken into note.db (it changed an older copy of a cell); it is kept as `file` beside it and note.md is the database's again. */
   noteConflict: { botId: string; file: string; reason: string };
+  /** A worker this plugin started with `workers.start` finished a run (`run`); told to that plugin only, once per run. */
+  workerReport: { botId: string; taskId: string; run: number; status: string; report: string; startedBy: string };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict", "workerReport"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }

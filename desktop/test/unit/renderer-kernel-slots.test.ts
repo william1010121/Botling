@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 // The renderer kernel's slots (M7-02a): the `:shell` instance owns the five root slots, KernelSlot draws a slot's contributions in
-// registration order and drops one with its plugin (the kernel's undo), and ShellFrame holds the whole page as one contribution
-// to `app/main` while it is up. The page's DOM through ShellFrame is in app-dom-golden.test.ts.
+// registration order and drops one with its plugin (the kernel's undo), and ShellFrame draws the page as its own layout in `app/main`'s
+// place (no `:shell` contribution to `app/main` since M7-07a: the chat column is botling.chat's, chat-main-slot.test.ts). The page's DOM
+// through ShellFrame is in app-dom-golden.test.ts.
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ROOT_SLOTS } from "../../../Web/src/plugin-kernel";
 import type { Client } from "../../src/renderer/client";
-import { CHAT_SURFACE, rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
+import { rendererKernel, SHELL_SURFACE } from "../../src/renderer/renderer-kernel";
 import { KernelSlot } from "../../src/renderer/shell/KernelSlot";
-import { LEGACY_SLOT, ShellFrame } from "../../src/renderer/shell/ShellFrame";
+import { ShellFrame } from "../../src/renderer/shell/ShellFrame";
 
 const unmounts: (() => Promise<void>)[] = [];
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -42,11 +43,12 @@ function contributor(name: string, slot: string, texts: string[], extra: Record<
 }
 
 describe("the renderer kernel's own instances", () => {
-  it("has `:shell` owning the five root slots and `:chat` (loaded while App is up) as the only other instance it declares", () => {
-    // `:chat` is not loaded here (App loads it: composer-quote.ts); `:shell` is loaded from the start.
+  it("has `:shell` owning the five root slots and no other instance of its own (the `:chat` stand-in is gone: `botling.chat` provides composer.insertQuote, M7-07b)", () => {
+    // `:shell` is loaded from the start; the plugins come through the in-page host.
     expect(rendererKernel.plugins()).toEqual([SHELL_SURFACE]);
     expect(rendererKernel.declaredOwner("composer.insertQuote")).toBeNull();
-    expect(rendererKernel.state(CHAT_SURFACE)).toBe("absent");
+    expect(rendererKernel.declaration(":chat")).toBeUndefined();
+    expect(rendererKernel.state(":chat")).toBe("absent");
     expect(rendererKernel.state(SHELL_SURFACE)).toBe("active");
     for (const slot of ROOT_SLOTS) expect(rendererKernel.slotOwner(slot), slot).toBe(SHELL_SURFACE);
     // The three that are 2.x view places are those places.
@@ -100,27 +102,26 @@ describe("KernelSlot", () => {
 describe("ShellFrame", () => {
   const page = (text: string) => createElement("main", { className: "shell" }, text);
 
-  it("holds the page as one contribution of `:shell` to `app/main`, found under both names, and draws it with no wrapper", async () => {
+  it("draws the page with no wrapper and holds no `:shell` contribution to `app/main` for it (M7-07a: the legacy contribution is gone)", async () => {
     const shown = await mount(createElement(ShellFrame, { legacy: page("hello") }));
     expect(shown.host.innerHTML).toBe('<main class="shell">hello</main>');
-    const held = rendererKernel.entries(LEGACY_SLOT);
-    expect(held).toHaveLength(1);
-    expect(held[0]!.plugin).toBe(SHELL_SURFACE);
-    expect(rendererKernel.entries("view/main")).toHaveLength(1);
+    expect(rendererKernel.entries("app/main")).toEqual([]);
+    expect(rendererKernel.entries("view/main")).toEqual([]);
+    expect(rendererKernel.allContributions().filter(({ plugin, slot }) => plugin === SHELL_SURFACE && slot === "view/main")).toEqual([]);
   });
 
-  it("draws the page as it is now without registering again, and takes it back when it goes", async () => {
+  it("draws the page as it is now without registering again, and takes the frame's own claim back when it goes", async () => {
     const shown = await mount(createElement(ShellFrame, { legacy: page("one") }));
-    const first = rendererKernel.entries(LEGACY_SLOT)[0]!.registration.id;
+    const first = rendererKernel.entries("app/bottom")[0]!.registration.id;
     await shown.render(createElement(ShellFrame, { legacy: page("two") }));
     expect(shown.host.innerHTML).toBe('<main class="shell">two</main>');
-    expect(rendererKernel.entries(LEGACY_SLOT).map((one) => one.registration.id)).toEqual([first]);
+    expect(rendererKernel.entries("app/bottom").map((one) => one.registration.id)).toEqual([first]);
     // The page's own state is kept across draws (the element is not replaced).
     const node = shown.host.querySelector("main");
     await shown.render(createElement(ShellFrame, { legacy: page("three") }));
     expect(shown.host.querySelector("main")).toBe(node);
     await shown.unmount();
-    expect(rendererKernel.entries(LEGACY_SLOT)).toHaveLength(0);
+    expect(rendererKernel.entries("app/bottom")).toHaveLength(0);
     expect(rendererKernel.registrations(SHELL_SURFACE, "contribution")).toHaveLength(0);
   });
 
@@ -129,10 +130,10 @@ describe("ShellFrame", () => {
     const b = await mount(createElement(ShellFrame, { legacy: page("B") }));
     expect(a.host.textContent).toBe("A");
     expect(b.host.textContent).toBe("B");
-    expect(rendererKernel.entries(LEGACY_SLOT)).toHaveLength(2);
+    expect(rendererKernel.entries("app/bottom")).toHaveLength(2);
     await a.unmount();
     expect(b.host.textContent).toBe("B");
-    expect(rendererKernel.entries(LEGACY_SLOT)).toHaveLength(1);
+    expect(rendererKernel.entries("app/bottom")).toHaveLength(1);
   });
 
   it("draws the other root slots around the page in layout order, so a plugin in one of them shows", async () => {

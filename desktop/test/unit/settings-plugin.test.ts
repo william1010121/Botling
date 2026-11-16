@@ -146,7 +146,9 @@ describe("plugins' pages in the same slot", () => {
     reconcileView(view);
     // No owner yet: the kernel refused the plugins' settings rows (their other rows are held).
     expect(rows()).toEqual([]);
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    // (the main tabs are botling.chat's place since M7-07a: refused here too; a slot `:shell` keeps is the probe of what is held)
+    expect(pluginFeed.rows("view/mainTab")).toEqual([]);
+    expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     await host().start();
     expect(rows()).toEqual(view.settingsSections);
     expect(pluginFeed.rows(QUICK)).toEqual(view.quickSettings);
@@ -180,7 +182,7 @@ describe("plugins' pages in the same slot", () => {
     expect(rendererKernel.declaration(SETTINGS_PLUGIN)).toBeUndefined();
     // The plugins stay registered: they are loaded, and every row that does not need the settings slots is still there.
     for (const name of ["botling.git", "botling.usage", "zed.tools"]) expect(rendererKernel.state(name), name).toBe("active");
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     // (a menu :shell keeps for good, `app/palette`; `chat/link` is botling.chat's since M7-06a, `browser/tab` botling.browser-pane's since M7-06c)
     expect(pluginFeed.rows("app/palette")).toEqual(view.menus!.filter((row) => row.menu === "commandPalette"));
     expect(rows()).toEqual([]);

@@ -47,7 +47,8 @@ describe("ShellFrame and the plugin feed", () => {
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view }));
     expect(shown.host.innerHTML).toBe('<main class="shell">page</main>');
     expect(held()).toEqual(view.plugins.map((plugin) => plugin.name));
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    // `main/tab` is botling.chat's slot since M7-07a (the empty FE manifest below loads no plugins, so it has no owner and takes nothing; the probes of the tests that follow are `app/bottom`, the shell's).
+    expect(pluginFeed.rows("view/mainTab")).toEqual([]);
     // The command palette is a menu `:shell` keeps for good (`app/palette`, Q-M7-C9).
     expect(pluginFeed.rows("app/palette")).toEqual(view.menus!.filter((row) => row.menu === "commandPalette"));
     // `chat/link` is botling.chat's slot since M7-06a and `browser/tab` botling.browser-pane's since M7-06c (a test has an empty FE manifest, so the plugins are not loaded and those slots have no owner: they take nothing).
@@ -64,7 +65,7 @@ describe("ShellFrame and the plugin feed", () => {
     const off = Object.fromEntries(Object.entries(view).map(([key, value]) => [key, Array.isArray(value) ? (value as { plugin?: string; name?: string }[]).filter((row) => row.plugin !== "zed.tools" && row.name !== "zed.tools") : value])) as unknown as PluginsView;
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: off }));
     expect(held()).not.toContain("zed.tools");
-    expect(pluginFeed.rows("main/tab")).toEqual(off.mainTabs);
+    expect(pluginFeed.rows("app/bottom")).toEqual(off.bottomPanels);
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: null }));
     expect(held()).toEqual([]);
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: view }));
@@ -77,23 +78,22 @@ describe("ShellFrame and the plugin feed", () => {
   it("passes the plugins.web answer to the feed: a version change reloads that plugin only, and the first answer does not reorder the rows", async () => {
     const view = fixture();
     let version = "1";
-    const request = vi.fn(async (command: { type: string }) => (command.type === "plugins.web" ? { specs: [{ name: "botling.note", version }] } : null));
+    const request = vi.fn(async (command: { type: string }) => (command.type === "plugins.web" ? { specs: [{ name: "botling.terminal", version }] } : null));
     const client = { request } as unknown as Client;
-    const ids = (slot: string) => rendererKernel.entries<{ row: { plugin: string } }>(slot).map(({ entry, registration }) => [entry.row.plugin, registration.id]);
+    const ids = (slot: string) => rendererKernel.entries<{ kind: string; row: { plugin: string } }>(slot).filter(({ entry }) => entry.kind === "feed").map(({ entry, registration }) => [entry.row.plugin, registration.id]);
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
     expect(request).toHaveBeenCalledWith({ type: "plugins.web" });
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
-    const first = ids("view/mainTab");
+    expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
+    const first = ids("app/bottom");
     // The same answer for a new list object: nothing is touched.
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
-    expect(ids("view/mainTab")).toEqual(first);
-    // The note plugin's web part has a new version: it is loaded again, the others keep their registrations.
+    expect(ids("app/bottom")).toEqual(first);
+    // The terminal plugin's web part has a new version: it is loaded again, the others keep their registrations.
     version = "2";
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
-    const second = ids("view/mainTab");
+    const second = ids("app/bottom");
     const of = (list: unknown[][], plugin: string) => list.find(([name]) => name === plugin)![1];
-    expect(of(second, "botling.note")).not.toBe(of(first, "botling.note"));
-    expect(of(second, "botling.whiteboard")).toBe(of(first, "botling.whiteboard"));
+    expect(of(second, "botling.terminal")).not.toBe(of(first, "botling.terminal"));
     expect(of(second, "zed.tools")).toBe(of(first, "zed.tools"));
   });
 
@@ -101,7 +101,7 @@ describe("ShellFrame and the plugin feed", () => {
     const view = fixture();
     const failing = { request: vi.fn(async () => { throw new Error("no"); }) } as unknown as Client;
     const first = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client: failing }));
-    expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+    expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     await first.unmount();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -109,20 +109,20 @@ describe("ShellFrame and the plugin feed", () => {
       await mount(createElement(ShellFrame, { legacy: page, plugins: view, client: silent }));
       expect(held()).toEqual([]);
       await act(async () => { vi.advanceTimersByTime(FIRST_WEB_WAIT_MS); });
-      expect(pluginFeed.rows("view/mainTab")).toEqual(view.mainTabs);
+      expect(pluginFeed.rows("app/bottom")).toEqual(view.bottomPanels);
     } finally { vi.useRealTimers(); }
   });
 
   it("drops a plugins.web answer that comes after the list changed again (the newer answer stays)", async () => {
     const view = fixture();
     const answers: ((version: string) => void)[] = [];
-    const client = { request: vi.fn(() => new Promise((resolve) => { answers.push((version) => resolve({ specs: [{ name: "botling.note", version }] })); })) } as unknown as Client;
+    const client = { request: vi.fn(() => new Promise((resolve) => { answers.push((version) => resolve({ specs: [{ name: "botling.terminal", version }] })); })) } as unknown as Client;
     const shown = await mount(createElement(ShellFrame, { legacy: page, plugins: view, client }));
     await shown.render(createElement(ShellFrame, { legacy: page, plugins: { ...view }, client }));
     await act(async () => { answers[1]!("new"); });
-    const ids = () => rendererKernel.entries<{ row: { plugin: string } }>("view/mainTab").map(({ registration }) => registration.id);
+    const ids = () => rendererKernel.entries<{ kind: string }>("app/bottom").filter(({ entry }) => entry.kind === "feed").map(({ registration }) => registration.id);
     const before = ids();
-    expect(before.length).toBe(view.mainTabs!.length);
+    expect(before.length).toBe(view.bottomPanels!.length);
     await act(async () => { answers[0]!("old"); });
     expect(ids()).toEqual(before);
   });
