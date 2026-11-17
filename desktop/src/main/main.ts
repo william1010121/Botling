@@ -1112,6 +1112,8 @@ function serveApp() {
 function shotWindow(size: { width: number; height: number }): BrowserWindow {
   const window = new BrowserWindow({
     width: size.width, height: size.height, useContentSize: true, show: false, paintWhenInitiallyHidden: true, backgroundColor: "#0E0E10",
+    // The one window is resized per surface, and the tile page of `--sizes all` is about 3900px tall: not cut to the screen.
+    enableLargerThanScreen: true,
     webPreferences: { preload: join(preloadDir, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true },
   });
   appContents.add(window.webContents.id);

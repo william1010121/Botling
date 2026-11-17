@@ -228,6 +228,7 @@ describe("component shots (ComponentShot.swift)", () => {
     writeFileSync(join(plugin, "dist", "board.css"), ".pin{}");
     writeFileSync(join(plugin, "dist", "font.woff2"), "font");
     writeFileSync(join(plugin, "dist", "secret.txt"), "no");
+    writeFileSync(join(plugin, "root.woff2"), "font");
     writeFileSync(join(base, "outside.css"), "x{}");
     symlinkSync(join(base, "outside.css"), join(plugin, "dist", "link.woff2"));
     const specs = shotWebSpecs(base);
@@ -235,10 +236,45 @@ describe("component shots (ComponentShot.swift)", () => {
     expect(specs[0]).toMatchObject({ name: SHOT_PLUGIN, source: "export function activate(){}", builtIn: true, settings: {}, commands: [], styles: [`botling-chat://chat/plugin-files/${SHOT_PLUGIN}/dist/board.css`] });
     expect(shotPluginFile(base, SHOT_PLUGIN, "dist/board.css")).toMatchObject({ type: "text/css; charset=utf-8" });
     expect(shotPluginFile(base, SHOT_PLUGIN, "dist/font.woff2")).toMatchObject({ type: "font/woff2" });
-    for (const refused of ["dist/secret.txt", "dist/web.js", "../outside.css", "/etc/hosts", "dist/.hidden.woff2", "dist/link.woff2", "dist/missing.woff2"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
+    for (const refused of ["dist/secret.txt", "dist/web.js", "../outside.css", "/etc/hosts", "dist/.hidden.woff2", "dist/link.woff2", "dist/missing.woff2", "root.woff2"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
     expect(shotPluginFile(base, "botling.note", "dist/board.css")).toBeNull();
     // A build without the plugin: nothing (the shot then draws no pins and says so, never hangs).
     expect(shotWebSpecs(join(base, "none"))).toEqual([]);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("refuses what the first test's manifest cannot reach: a hidden file or an absolute path where a stylesheet sits at the folder's top, a web part that is a link out, a folder or outside the plugin", () => {
+    const base = tempDir("shots-plugins-top");
+    const plugin = join(base, SHOT_PLUGIN);
+    mkdirSync(join(plugin, "sub"), { recursive: true });
+    const manifest = (web: string) => writeFileSync(join(plugin, "package.json"), JSON.stringify({ name: SHOT_PLUGIN, version: "1.2.3", ccb: { web, styles: ["board.css"] } }));
+    manifest("web.js");
+    writeFileSync(join(plugin, "web.js"), "export const a = 1;");
+    writeFileSync(join(plugin, "board.css"), ".pin{}");
+    writeFileSync(join(plugin, "ok.woff2"), "font");
+    writeFileSync(join(plugin, "extra.css"), ".more{}");
+    writeFileSync(join(plugin, "sub", "ok.woff2"), "font");
+    writeFileSync(join(plugin, ".hidden.woff2"), "font");
+    writeFileSync(join(plugin, "sub", ".hidden.woff2"), "font");
+    writeFileSync(join(base, "outside.woff2"), "font");
+    writeFileSync(join(base, "outside.js"), "export const secret = 1;");
+    // A stylesheet at the top of the folder: any font or picture in the folder is "beside" it, except hidden ones and anything outside.
+    for (const served of ["board.css", "ok.woff2", "sub/ok.woff2", "./sub/../ok.woff2"]) expect(shotPluginFile(base, SHOT_PLUGIN, served), served).not.toBeNull();
+    for (const refused of [".hidden.woff2", "sub/.hidden.woff2", "/ok.woff2", "../outside.woff2", "sub/../../outside.woff2", "sub", "board.css/../.hidden.woff2", "extra.css"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
+    expect(shotWebSpecs(base)).toHaveLength(1);
+    // The web part must be a regular file inside the plugin: outside by "..", a link out, a folder, a missing file.
+    manifest("../outside.js");
+    expect(shotWebSpecs(base)).toEqual([]);
+    manifest("web-link.js");
+    symlinkSync(join(base, "outside.js"), join(plugin, "web-link.js"));
+    expect(shotWebSpecs(base)).toEqual([]);
+    manifest("sub");
+    expect(shotWebSpecs(base)).toEqual([]);
+    manifest("missing.js");
+    expect(shotWebSpecs(base)).toEqual([]);
+    writeFileSync(join(plugin, "package.json"), "{ not json");
+    expect(shotWebSpecs(base)).toEqual([]);
+    expect(shotPluginFile(base, SHOT_PLUGIN, "board.css")).toBeNull();
     rmSync(base, { recursive: true, force: true });
   });
 
@@ -265,6 +301,22 @@ describe("component shots (ComponentShot.swift)", () => {
     expect(h.heads[1]!.config.systemPrompt).not.toContain("Screenshots:");
     (h.workers as unknown as { adapter: { options: { shotCommand?: () => string | null } } }).adapter.options.shotCommand = () => null;
     await h.workers.startFor({ instructions: "no command" });
+    expect(h.heads[2]!.config.systemPrompt).not.toContain("Screenshots:");
+    await h.workers.close();
+  });
+
+  it("a plugin-started worker whose agent definition leaves Bash out gets no shot line (it could not run it); one that lists Bash gets it", async () => {
+    const command = "env -u ELECTRON_RUN_AS_NODE '/Apps/Botling.app/Contents/MacOS/Botling' --component-shot";
+    const h = claudeHarness();
+    (h.workers as unknown as { adapter: { options: { shotCommand?: () => string | null } } }).adapter.options.shotCommand = () => command;
+    mkdirSync(join(h.cwd, ".claude", "agents"), { recursive: true });
+    writeFileSync(join(h.cwd, ".claude", "agents", "reader.md"), "---\nname: reader\ndescription: Reads\ntools: Read, Grep\n---\nYou read.\n");
+    writeFileSync(join(h.cwd, ".claude", "agents", "runner.md"), "---\nname: runner\ndescription: Runs\ntools: Read, Bash\n---\nYou run.\n");
+    await h.workers.startFor({ instructions: "read", subagent_type: "reader" });
+    await h.workers.startFor({ instructions: "run", subagent_type: "runner" });
+    await h.workers.tool("app_handoff", { instructions: "the bot's own runner", subagent_type: "runner" });
+    expect(h.heads[0]!.config.systemPrompt).not.toContain("Screenshots:");
+    expect(h.heads[1]!.config.systemPrompt).toContain(shotWorkerRule(command));
     expect(h.heads[2]!.config.systemPrompt).not.toContain("Screenshots:");
     await h.workers.close();
   });
