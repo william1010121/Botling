@@ -126,14 +126,10 @@ describe("which cards appear", () => {
     expect(D.changedCards(b, { from }).map((row) => row.title).sort()).toEqual(["Answered", "Reported", "Rewritten"]);
   });
 
-  it("the user's own question in a card (no answer yet), and a line moved back to the chat, are not a change", () => {
+  it("the user's own question in a card (no answer yet) is not a change", () => {
     const b = book();
     const card = add(b, "Mine", "run", from - 60 * MIN);
     M.addTurn(card, "r1", "asked while away?", from + 10 * MIN);
-    const moved = M.addTurn(card, "r2", "moved", from - 5 * MIN);
-    moved.a = "answer";
-    moved.aAt = from + 15 * MIN;
-    moved.moved = true;
     expect(D.changedCards(b, { from })).toEqual([]);
   });
 

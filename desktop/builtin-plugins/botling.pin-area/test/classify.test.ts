@@ -132,7 +132,6 @@ describe("merging two cards", () => {
     expect(keep.from).toEqual(["w-1"]);
     expect(keep.live).toEqual(["w-1"]);
     expect(b.removed[0]).toMatchObject({ pin: { id: "p-0002" }, merged: { into: "p-0001", rids: ["r2"], from: ["w-1"] } });
-    expect(M.tracesOf(b)).toEqual([]);
     // it survives storage
     expect(M.readBook(JSON.parse(JSON.stringify(b))).removed[0]!.merged).toEqual({ into: "p-0001", rids: ["r2"], from: ["w-1"] });
     expect(M.restore(b, "p-0002", T0 + 9)).toBeTruthy();
