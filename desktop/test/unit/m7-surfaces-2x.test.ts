@@ -337,8 +337,10 @@ describe("Settings and the gear, drawn with every built-in plugin loaded", () =>
     await vi.waitFor(() => { expect(feedIds("view/settings.section")).toHaveLength(3); });
     const got: Record<string, string> = {};
     for (const id of [...pages, ...PLUGIN_PAGES]) { await mountSheet(view, id as SettingsSection); got[`page:${id}`] = navAndHeader(); }
-    for (const id of ["general", "botling.usage/botling.usage.settings", "plugins"] as const) { await mountSheet(view, id as SettingsSection); got[`dialog:${id}`] = ids(q(".settings")!.outerHTML); }
-    await act(async () => root.render(createElement(SidebarSettings, { client: client(), settings: settingsView({}), plugins: view, settingsOpen: false, onOpen() {} })));
+    // the Plugins list and the gear's count were re-recorded with all 20 plugins (d26e08bc); the settings pages stay the three of the 18-plugin record
+    const all: PluginsView = { ...full, settingsSections: view.settingsSections };
+    for (const id of ["general", "botling.usage/botling.usage.settings", "plugins"] as const) { await mountSheet(id === "plugins" ? all : view, id as SettingsSection); got[`dialog:${id}`] = ids(q(".settings")!.outerHTML); }
+    await act(async () => root.render(createElement(SidebarSettings, { client: client(), settings: settingsView({}), plugins: all, settingsOpen: false, onOpen() {} })));
     got["gear:closed"] = ids(q(".sidebar-settings")!.outerHTML);
     await act(async () => { (q('[aria-label="Quick settings"]') as HTMLButtonElement).click(); });
     await act(async () => { await Promise.resolve(); });
