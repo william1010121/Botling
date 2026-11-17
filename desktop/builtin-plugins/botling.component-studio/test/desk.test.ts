@@ -192,11 +192,13 @@ describe("anti-nag rules and Undo/Restore (ADR-006 M4)", () => {
 describe("a built component's command is allowed only on the app page's ApprovalSheet", () => {
   it("the built card's command asks for the command and its Detail command, and runs the one the card showed", async () => {
     const { studio, desk } = deskOver();
-    reply(studio, "Disk is 80% full.");
-    studio.component("disk-usage", "Shows how full the disk is.\nCommand: df -h\nDetail command: du -sh {path}\n");
-    await desk.suggest("disk-usage", "how full the disk is, from df -h", MAIN);
-    const id = specsOf(studio)[0].id;
+    const record = reply(studio, "Disk is 80% full.");
+    const id = await suggested(studio, desk, record, "Disk Usage", "how full the disk is, from df -h");
     await desk.press(id);
+    // Maintainer builds it with the command the reply's work ran; the library copy has it (and a Detail command) in its about.md.
+    await maintainerSays(studio, desk, id, { name: "disk-usage", about: "Shows how full the disk is", command: "df -h" }, "Built disk-usage.");
+    studio.component("disk-usage", "Shows how full the disk is.\nCommand: df -h\nDetail command: du -sh {path}\n");
+    await desk.finishBuilds();
     const folder = specsOf(studio)[0].folder;
     expect(await desk.runComponent(id, { command: "df -h", folder })).toEqual({ accepted: false, needsApproval: { command: "df -h", folder, detail: "du -sh {path}", card: "disk-usage" } });
     expect(await desk.runComponent(id, { command: "other", folder })).toEqual({ accepted: false });

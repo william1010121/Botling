@@ -157,29 +157,28 @@ describe("anti-nag rules and Undo/Restore (ADR-006 M4)", () => {
 describe("a built component's command is allowed only on the app page's ApprovalSheet (G2)", () => {
   it("the command asks what the sheet asks; a different command or folder is not accepted; the sheet's Allow (plugins.approve) lets it run", async () => {
     const dir = tempDir("specs-approve");
-    component(dir, "disk-usage", "Shows how full the disk is.\nCommand: printf '{\"used\": 80}'\n");
     const c = core(dir, { BOTLING_PLAIN_SHELL: "1" });
     await ready(c);
-    const bot = JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"));
-    writeFileSync(join(dir, "main", "bot.json"), JSON.stringify({ ...bot, components: [] }));
-    await c.kill("SIGTERM");
-    const again = core(dir, { BOTLING_PLAIN_SHELL: "1" });
-    await ready(again);
-    const { chip } = await pressedChip(again, `/say Disk is 80% full. <suggest-component name="disk-usage">how full the disk is</suggest-component>`, "Disk is 80% full.");
-    await act(again, "press", { id: chip.id });
-    await until(async () => { const found = (await again.chat()).decorations?.flatMap((d: any) => d.data?.specs ?? []).find((s: any) => s.id === chip.id); return found?.status === "done" ? found : null; });
+    const { chip } = await pressedChip(c, `/say Disk is 80% full. <suggest-component name="disk-usage">how full the disk is</suggest-component>`, "Disk is 80% full.");
+    await act(c, "press", { id: chip.id });
+    await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"), { timeout: 10_000, what: "the request" });
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    // Maintainer builds it with a command; the library copy has the same Command line.
+    await say(c, MAINTAINER, `/say Built disk-usage. <component-spec id="${chip.id}">{"name": "disk-usage", "about": "How full the disk is", "command": "printf '{\\"used\\": 80}'"}</component-spec>`);
+    component(dir, "disk-usage", "Shows how full the disk is.\nCommand: printf '{\"used\": 80}'\n");
+    await until(async () => { const found = (await c.chat()).decorations?.flatMap((d: any) => d.data?.specs ?? []).find((s: any) => s.id === chip.id); return found?.status === "done" ? found : null; }, { timeout: 15_000, what: "the built component" });
     const command = `printf '{"used": 80}'`;
     const folder = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0].folder;
-    expect(await act(again, "command", { id: chip.id, command, folder })).toEqual({ accepted: false, needsApproval: { command, folder, detail: null, card: "disk-usage" } });
+    expect(await act(c, "command", { id: chip.id, command, folder })).toEqual({ accepted: false, needsApproval: { command, folder, detail: null, card: "disk-usage" } });
     // What the sheet shows is the core's: a frame or web part asking about this folder is answered by the core, and nothing is allowed by asking.
-    expect(await again.call({ type: "plugins.approvalAsk", name: NAME, botId: MAIN, command, folder, card: "disk-usage", from: "chat" })).toEqual({ needsApproval: { command, folder, detail: null, card: "disk-usage" } });
+    expect(await c.call({ type: "plugins.approvalAsk", name: NAME, botId: MAIN, command, folder, card: "disk-usage", from: "chat" })).toEqual({ needsApproval: { command, folder, detail: null, card: "disk-usage" } });
     // Another plugin's web part may not ask from the chat page.
-    await expect(again.call({ type: "plugins.approvalAsk", name: "botling.git", botId: MAIN, command, folder, from: "chat" })).rejects.toThrow(/may not ask for approval/);
-    expect(await act(again, "command", { id: chip.id, command: "rm -rf /tmp/x", folder })).toEqual({ accepted: false });
-    expect(await act(again, "command", { id: chip.id, command, folder: "/tmp" })).toEqual({ accepted: false });
+    await expect(c.call({ type: "plugins.approvalAsk", name: "botling.git", botId: MAIN, command, folder, from: "chat" })).rejects.toThrow(/may not ask for approval/);
+    expect(await act(c, "command", { id: chip.id, command: "rm -rf /tmp/x", folder })).toEqual({ accepted: false });
+    expect(await act(c, "command", { id: chip.id, command, folder: "/tmp" })).toEqual({ accepted: false });
     expect(existsSync(join(dir, "approved-commands.json"))).toBe(false);
-    // Only the sheet's Allow records it (it sends plugins.approve with the core's command and folder); then the card asks again.
-    expect(await again.call({ type: "plugins.approve", name: NAME, botId: MAIN, command, folder })).toEqual({ accepted: true });
-    expect(await act(again, "command", { id: chip.id, command, folder })).toEqual({ accepted: true });
+    // Only the sheet's Allow records it (it sends plugins.approve with the core's command and folder); then the card asks c.
+    expect(await c.call({ type: "plugins.approve", name: NAME, botId: MAIN, command, folder })).toEqual({ accepted: true });
+    expect(await act(c, "command", { id: chip.id, command, folder })).toEqual({ accepted: true });
   });
 });

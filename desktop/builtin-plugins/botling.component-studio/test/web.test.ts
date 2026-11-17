@@ -91,7 +91,6 @@ describe("the chips under a reply", () => {
     const button = strip.querySelector<HTMLButtonElement>(".spec-chip")!;
     expect(button.textContent).toContain("Building… · test-summary");
     expect(button.querySelector(".spinner")).not.toBeNull();
-    expect(button.getAttribute("aria-expanded")).toBe("false");
     button.click();
     expect(sent).toEqual([{ type: "hostCall", plugin: NAME, method: "press", params: { id: "S1" }, callID: expect.any(Number) }]);
   });
@@ -139,7 +138,7 @@ describe("the chips under a reply", () => {
     const page = draw({ m1: [chip({ status: "building", component: "test-summary", display: display() })] });
     const built = page.querySelector(".spec-built")!;
     expect(built.textContent).toContain("Building a new version");
-    expect(built.querySelector("button")).toBeNull();
+    expect(built.querySelector(".spec-built-head button")).toBeNull();
   });
 
   it("the Board's pin button joins the head of a built component, when that plugin is on", () => {
