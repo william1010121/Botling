@@ -4,8 +4,9 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { AGY_SUMMARY_UNAVAILABLE, claudeSummarizer, claudeSummaryArguments, engineSummarizer, catchUpSettings, parseClaudeResult, SETTING, SummaryFailure, type Summarizer } from "../src/catchup";
+import { AGY_SUMMARY_UNAVAILABLE, claudeSummarizer, claudeSummaryArguments, engineSummarizer, catchUpSettings, DEFAULT_SUMMARY_ENGINE, DEFAULT_SUMMARY_MODEL, parseClaudeResult, SETTING, SummaryFailure, type Summarizer } from "../src/catchup";
 import { legacySettings } from "../src/migrate";
+import manifest from "../package.json";
 
 const dir = mkdtempSync(join(tmpdir(), "botling-fake-claude-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -40,9 +41,22 @@ const from = (values: Record<string, unknown>) => (key: string) => values[key];
 
 describe("the saved summary model", () => {
   it("nothing saved is Codex's default; an older Codex id stays Codex", () => {
+    expect(catchUpSettings(from({}))).toMatchObject({ engine: DEFAULT_SUMMARY_ENGINE, model: DEFAULT_SUMMARY_MODEL });
     expect(catchUpSettings(from({}))).toMatchObject({ engine: "codex", model: "gpt-6-luna" });
     expect(catchUpSettings(from(legacySettings({ catchUpModelChoice: "gpt-5-old" })))).toMatchObject({ engine: "codex", model: "gpt-5-old" });
     expect(catchUpSettings(from({ [SETTING.engine]: "claude", [SETTING.model]: "  " }))).toMatchObject({ engine: "codex", model: "gpt-6-luna" });
+  });
+
+  it("the default is the plugin's one named default, and package.json's setting default says the same (no second, stale copy)", () => {
+    const settings = manifest.ccb.contributes.settings as Record<string, { default: unknown }>;
+    expect(settings[SETTING.model]!.default).toBe(DEFAULT_SUMMARY_MODEL);
+    expect(settings[SETTING.engine]!.default).toBe(DEFAULT_SUMMARY_ENGINE);
+  });
+
+  it("a chosen model of any engine is used as chosen, a Claude full id included; only a missing model falls back to the default", () => {
+    expect(catchUpSettings(from({ [SETTING.engine]: "claude", [SETTING.model]: "claude-fable-5-2" }))).toMatchObject({ engine: "claude", model: "claude-fable-5-2" });
+    expect(catchUpSettings(from({ [SETTING.engine]: "agy", [SETTING.model]: "gemini-x" }))).toMatchObject({ engine: "agy", model: "gemini-x" });
+    expect(catchUpSettings(from({ [SETTING.model]: "gpt-9" }))).toMatchObject({ engine: DEFAULT_SUMMARY_ENGINE, model: "gpt-9" });
   });
 
   it("engine and model come from the settings; 1.x's keys are taken over once", () => {

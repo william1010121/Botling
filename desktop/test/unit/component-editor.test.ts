@@ -71,6 +71,18 @@ describe("app-created Maintainer editor binding", () => {
     expect(harmless[harmless.indexOf("--tools") + 1]).toBe("Read");
   });
 
+  it.each(["claude-fable-5-2", "opus"])("takes a definition whose model is %s: any full Claude id or an alias", (model) => {
+    const b = binding();
+    writeFileSync(b.file, b.definition(model));
+    expect(b.bind(b.owner, b.session)!.launch).toMatchObject({ model });
+  });
+
+  it.each(["gpt-6-luna", "", "claude-"])("refuses a definition whose model is %j, and substitutes nothing", (model) => {
+    const b = binding();
+    writeFileSync(b.file, b.definition(model));
+    expect(b.bind(b.owner, b.session)).toMatchObject({ error: expect.stringContaining("no supported explicit Claude model") });
+  });
+
   it.each([false, true])("propagates Claude bypass=%s through the app-managed editor without widening tools", (bypassPermissions) => {
     const b = binding();
     b.parent.bypassPermissions = bypassPermissions;

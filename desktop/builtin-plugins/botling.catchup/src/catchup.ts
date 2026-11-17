@@ -54,8 +54,13 @@ export const DEFAULT_THRESHOLD = 3;
 export const PROMPT_LIMIT = 12_000;
 const MESSAGE_LIMIT = 2_000;
 export const SUMMARY_TIMEOUT_MS = 60_000;
-/** PromiseCheck.judgeModel: the model 1.x summarizes with unless settings name another. */
-export const JUDGE_MODEL = "gpt-6-luna";
+/**
+ * The model summaries are written with when none is chosen (1.x's PromiseCheck.judgeModel). It belongs to the default
+ * engine (Codex) and is only a default: `botling.catchup.engine` and `botling.catchup.model` name any other. The same
+ * value is the `botling.catchup.model` default in package.json (a test keeps the two equal).
+ */
+export const DEFAULT_SUMMARY_ENGINE: SummaryEngine = "codex";
+export const DEFAULT_SUMMARY_MODEL = "gpt-6-luna";
 
 export const effectiveWritingPrompt = (value: string | null | undefined) => (value && value.trim() ? value : DEFAULT_WRITING_PROMPT);
 export const clampedThreshold = (value: number) => Math.min(50, Math.max(1, Math.round(value)));
@@ -353,11 +358,16 @@ export const SETTING = {
   prompt: "botling.catchup.prompt",
 } as const;
 
-/** The summary model as engine + model; with no model chosen, Codex's default (1.x saved only a Codex model). */
+/**
+ * The summary model as engine + model; with no model chosen, the default engine's default model (1.x saved only a
+ * Codex model). It does not follow a bot's main engine: the setting is global, the plugin is not told which engine a
+ * chat's head uses when it reads its settings, and the default model is the default engine's own, so another engine
+ * would need its own default pick; a user who wants Claude sets the engine and model (Settings → Chat summaries).
+ */
 export function savedSummaryModel(engine: unknown, model: unknown): { engine: SummaryEngine; model: string } {
   const chosen = typeof model === "string" && model.trim() ? model.trim() : null;
-  if (!chosen) return { engine: "codex", model: JUDGE_MODEL };
-  return { engine: engine === "claude" || engine === "agy" ? engine : "codex", model: chosen };
+  if (!chosen) return { engine: DEFAULT_SUMMARY_ENGINE, model: DEFAULT_SUMMARY_MODEL };
+  return { engine: engine === "claude" || engine === "agy" ? engine : DEFAULT_SUMMARY_ENGINE, model: chosen };
 }
 
 /** The settings as the summaries use them, from `api.settings.get`. */

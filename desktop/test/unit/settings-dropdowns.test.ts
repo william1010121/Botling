@@ -108,7 +108,7 @@ describe("Settings' model, effort and permission choices", () => {
     const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient(raw, sent, undefined, { claudeAutoCompactWindow: 300_000 }), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
     try {
       expect(host.querySelector('input[type="text"]')).toBeNull();
-      expect(options(select(host, "Claude workers model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Claude workers model"))).toEqual(["", "haiku", "sonnet", "opus", "__custom__"]);
       expect(radios(host, "Claude workers effort").map((radio) => radio.textContent)).toEqual(["Same", "Low", "Medium", "High", "Extra high", "Max"]);
       await pick(host, "Claude workers effort", "High");
       expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "subagentEffort", value: "high" } });
@@ -128,9 +128,53 @@ describe("Settings' model, effort and permission choices", () => {
       expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkers", value: { model: "gpt-6-sol", effort: "xhigh" } } });
       await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Codex workers fast mode"]')!.click());
       expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkers", value: { model: "gpt-6-sol", effort: "xhigh", fast: true } } });
-      expect(options(select(host, "Component editor's model"))).toEqual(["haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Component editor's model"))).toEqual(["haiku", "sonnet", "opus", "__custom__"]);
       await choose(select(host, "Component editor's model"), "opus");
       expect(sent.at(-1)).toMatchObject({ change: { key: "componentEditorModel", value: "opus" } });
+    } finally { await done(); }
+  });
+
+  it("Models & workers: any Claude model id can be typed in (workers, head, component editor); a bad one is refused and not sent", async () => {
+    const sent: any[] = [];
+    const type = async (input: HTMLInputElement, text: string, key: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+    };
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({ subagentModelDefault: "claude-fable-5-2" }, sent), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
+    try {
+      // A saved custom id shows as itself, beside the three quick picks.
+      const workers = select(host, "Claude workers model");
+      expect(workers.value).toBe("claude-fable-5-2");
+      expect(options(workers)).toEqual(["", "haiku", "sonnet", "opus", "claude-fable-5-2", "__custom__"]);
+      expect(host.querySelector('input[type="text"]')).toBeNull();
+      // "Custom model…" opens a box; a value that is not a Claude model is refused with the reason and nothing is sent.
+      const before = sent.length;
+      await choose(workers, "__custom__");
+      const box = () => host.querySelector<HTMLInputElement>('input[aria-label="Claude workers model: custom model id"]')!;
+      expect(box().value).toBe("claude-fable-5-2");
+      await type(box(), "gpt-6-luna", "Enter");
+      expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
+      expect(sent.slice(before).filter((cmd) => cmd.type === "settings.set")).toEqual([]);
+      // A full id is saved and the box closes, and the saved value is the list's selection.
+      await type(box(), "claude-haiku-5-5", "Enter");
+      expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "subagentModel", value: "claude-haiku-5-5" } });
+      expect(host.querySelector('input[type="text"]')).toBeNull();
+      expect(select(host, "Claude workers model").value).toBe("claude-haiku-5-5");
+      // Escape closes the box without saving.
+      const count = sent.length;
+      await choose(select(host, "Claude workers model"), "__custom__");
+      await type(box(), "claude-opus-5-5", "Escape");
+      expect(host.querySelector('input[type="text"]')).toBeNull();
+      expect(sent.length).toBe(count);
+      // The component editor's model takes one too.
+      await choose(select(host, "Component editor's model"), "__custom__");
+      await type(host.querySelector<HTMLInputElement>('input[aria-label="Component editor\'s model: custom model id"]')!, "claude-opus-5-5", "Enter");
+      expect(sent.at(-1)).toMatchObject({ change: { key: "componentEditorModel", value: "claude-opus-5-5" } });
+      // The guide and hints name no model version.
+      expect(host.textContent).not.toMatch(/Opus 5\.5|opus\[1m\]/);
     } finally { await done(); }
   });
 

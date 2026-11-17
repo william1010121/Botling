@@ -447,6 +447,23 @@ describe("agent definitions", () => {
     await h.workers.tool("app_handoff", { instructions: "Quick", subagent_type: "reviewer", model: "opus" });
     expect(h.heads[1]!.config.model).toBe("opus");
   });
+  it("takes any full Claude model id, not only the three aliases, and the refusal names no one model", async () => {
+    const h = harness();
+    await h.workers.tool("app_handoff", { instructions: "New model", model: "claude-fable-5-2" });
+    expect(h.heads[0]!.config.model).toBe("claude-fable-5-2");
+    // A definition may name one too.
+    mkdirSync(join(h.cwd, ".claude", "agents"), { recursive: true });
+    writeFileSync(join(h.cwd, ".claude", "agents", "fresh.md"), "---\nname: fresh\nmodel: claude-haiku-5-5\n---\nBe quick.\n");
+    await h.workers.tool("app_handoff", { instructions: "Fresh", subagent_type: "fresh" });
+    expect(h.heads[1]!.config.model).toBe("claude-haiku-5-5");
+    // Not a Claude model: refused, nothing started, and the message points at the general rule.
+    const before = h.heads.length;
+    await expect(h.workers.tool("app_handoff", { instructions: "Bad", model: "gpt-6-luna" })).rejects.toThrow(/Unknown model "gpt-6-luna".*full Claude model id/);
+    expect(h.heads).toHaveLength(before);
+    writeFileSync(join(h.cwd, ".claude", "agents", "odd.md"), "---\nname: odd\nmodel: gpt-6\n---\nx\n");
+    await expect(h.workers.tool("app_handoff", { instructions: "Odd", subagent_type: "odd" })).rejects.toThrow(/unknown model "gpt-6"/);
+    expect(h.heads).toHaveLength(before);
+  });
   it("takes an effort: the handoff's, else the definition's, else the bot's subagent effort, else the coordinator's (`--effort`)", async () => {
     const h = harness(undefined, { subagentEffort: "low" });
     mkdirSync(join(h.cwd, ".claude", "agents"), { recursive: true });

@@ -18,5 +18,6 @@ export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
 export * from "./views";
 export { AntigravityQuotaBucket, AntigravityQuotaView, BotSettingsView, BotView, ChatDecoration, HandoffView, HeadsView, HeldBotColor, ImportView, MachineView, MobileClusterView, MobileDeskView, MobilePairView, MobileRelayView, MobileRouteView, MobileV3Offer, MobileV3View, ReleaseView, RoutineView, RunningView, SettingsChange, SettingsView, UpdateView, UsageView } from "./views-settings";
 export type { RunView } from "./views-settings";
+export { CLAUDE_MODEL_ALIASES, CLAUDE_MODEL_HINT, claudeModelOrNull, isClaudeModel } from "./claude-model";
 export * from "./commands";
 export * from "./results";
