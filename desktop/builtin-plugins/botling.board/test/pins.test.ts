@@ -232,8 +232,14 @@ describe("the chips above the input box", () => {
     }
   });
 
-  it("no pins, no chips", () => {
+  it("no pins, no chips: the strip stays with only the add button", () => {
     setUp().update(state());
+    expect(document.querySelector<HTMLElement>(".pin-dock")!.hidden).toBe(false);
+    expect(document.querySelectorAll(".pin-chip:not(.add)")).toHaveLength(0);
+  });
+
+  it("a chat that cannot pin (a subagent watched) shows no strip at all", () => {
+    setUp().update(state({ subagent: true }));
     expect(document.querySelector<HTMLElement>(".pin-dock")!.hidden).toBe(true);
   });
 

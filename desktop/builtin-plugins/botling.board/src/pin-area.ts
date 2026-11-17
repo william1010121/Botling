@@ -300,6 +300,8 @@ export class PinArea {
   private readonly dock: HTMLElement;
   private readonly chipList: HTMLElement;
   private readonly addChip: HTMLButtonElement;
+  /** The words beside the +, shown only while nothing is pinned (the strip then holds just this button). */
+  private readonly addLabel: HTMLElement;
   private readonly sheet: HTMLElement;
   private openID: string | null = null;
   private sheetKey = "";
@@ -329,6 +331,9 @@ export class PinArea {
     this.chipList = document.createElement("div");
     this.chipList.className = "pin-chip-list";
     this.addChip = button("pin-chip add", t("pins.pinAComponent"), icons.plus, () => openPicker());
+    this.addLabel = document.createElement("span");
+    this.addLabel.className = "pin-chip-label";
+    this.addChip.append(this.addLabel);
     this.dock.append(this.chipList, this.addChip);
     this.row = document.createElement("div");
     this.row.className = "dock-row";
@@ -358,8 +363,6 @@ export class PinArea {
     if (this.wordsIn !== language()) {
       this.wordsIn = language();
       this.dock.setAttribute("aria-label", t("pins.dock"));
-      this.addChip.title = t("pins.pinAComponent");
-      this.addChip.setAttribute("aria-label", t("pins.pinAComponent"));
       this.sheetKey = this.dockKey = this.sheetHeadKey = "";
     }
     prime(state);
@@ -388,7 +391,15 @@ export class PinArea {
 
   private drawDock(): void {
     const pins = this.enabled ? current.pins : [];
-    this.dock.hidden = pins.length === 0;
+    // With nothing pinned the strip stays, holding only "+ Add component", so the first one can be added.
+    const empty = pins.length === 0;
+    this.dock.hidden = !this.enabled;
+    this.dock.classList.toggle("empty", empty);
+    this.addLabel.hidden = !empty;
+    this.addLabel.textContent = empty ? t("pins.addFirst") : "";
+    const addWords = empty ? t("pins.addFirst") : t("pins.pinAComponent");
+    this.addChip.title = addWords;
+    this.addChip.setAttribute("aria-label", addWords);
     const icon = (p: PinView) => [current.components[p.name]?.icon ?? null, current.components[p.name]?.iconImage ?? null];
     const key = JSON.stringify([pins.map((p) => [p.id, p.name, p.headline, p.chip ?? null, icon(p), p.display.status]), this.openID]);
     if (key === this.dockKey) return;
