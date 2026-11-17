@@ -71,7 +71,7 @@ describe("the guidance in the prompt", () => {
       expect(text).toContain(INLINE_BLOCK_GUIDANCE);
       expect(text).toContain("yours to use, no request needed");
       expect(text).toContain("A block is not a sentence");
-      expect(text).toContain("More than 3 blocks");
+      expect(text).toContain("a report page is the exception");
       expect(text).toContain("you need no usage lookup");
       // The main bot's results rule is its own line (it hands work over), without the list.
       if (role !== "main") {
