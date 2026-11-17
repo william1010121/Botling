@@ -151,7 +151,7 @@ export interface BotOptions {
   /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */
   lineExtras?: (bot: Bot, record: ChatRecord) => { component?: string };
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[]; workerExtraDirs?: readonly string[]; inlineBlockGuidance?: unknown };
+  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; cardWorkerModel?: string; componentsViaCards?: boolean; specWriters?: readonly string[]; workerExtraDirs?: readonly string[]; inlineBlockGuidance?: unknown };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
   agents?: AgentPort;
   /**

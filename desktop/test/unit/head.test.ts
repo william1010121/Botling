@@ -267,8 +267,9 @@ describe("a bot's head", () => {
     // The project list, then the chat.
     expect(woke).not.toMatch(/<team|[Tt]emporary team/);
     // …then its components (the app's own preview card, as 1.x gives every bot the built-ins), then the chat.
-    expect(woke).toContain(".bot/inbox.md\n\n(App: Components in the chat: 1 / 20 yours,");
-    expect(woke).toContain("JSON</show>` 叫出來。\n\n(App: The last messages in this chat, oldest first.");
+    // (A Claude bot is told the built-in components only; the others are reached through `<card>`.)
+    expect(woke).toContain(".bot/inbox.md\n\n(App: Components in the chat, one line each below.");
+    expect(woke).toContain("</component> still works.)\n\n(App: The last messages in this chat, oldest first.");
     expect(woke).toMatch(/\] User: hello\n\[[^\]]+\] You: You said: hello/);
     expect(woke).toMatch(/\(App: message_id of this message: [0-9A-F-]{36}\)\n\n\/resume$/);
   });

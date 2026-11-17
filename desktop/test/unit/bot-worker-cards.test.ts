@@ -43,7 +43,7 @@ async function waitFor(what: string, ok: () => unknown) {
   throw new Error(`gave up waiting for ${what}`);
 }
 
-function rig(engine: "claude" | "codex" = "claude") {
+function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unknown>, onRequests?: (bot: any, requests: any[]) => any[]) {
   const folder = tempDir("bot-worker-cards"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", heads: { engines: [engine], answerWith: engine, codexModel: "m" } }));
   const events: any[] = [];
@@ -51,6 +51,7 @@ function rig(engine: "claude" | "codex" = "claude") {
     headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: folder, allowedTools: [] }; },
     codexConfig(_p, c) { return { command: "/never-spawn", cwd: folder, threads: new CodexThreads(join(folder, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null } as any; },
     prompts: (e, heads) => botPrompts({ profile, engine: e, heads }),
+    ...(launch ? { launch: () => ({ subagentHourCache: false, ...launch }) as any } : {}), ...(onRequests ? { onRequests } : {}),
     emit(event) { events.push(event); }, log() {}, idleMs: 600000, approvalTimeoutMs: 1000, interruptGraceMs: 10, tidyTimeoutMs: 30 });
   bots.push(b);
   const peek = b as any;
@@ -87,7 +88,7 @@ describe("a reply with <card>: the worker starts", () => {
     expect(r.handoff).toHaveBeenCalledTimes(1);
     const [tool, args] = r.handoff.mock.calls[0]!;
     expect(tool).toBe("app_handoff");
-    expect(args).toMatchObject({ name: "Prices", group: "Prices" });
+    expect(args).toMatchObject({ name: "Prices", group: "Prices", model: "haiku" });
     expect(String(args.instructions)).toContain("Collect the prices of the three plans.");
     expect(record.workerCards![0]).toMatchObject({ title: "Prices", taskId: "T1", status: "running", run: 1, at: "Checking.\n".length });
   });
@@ -225,5 +226,58 @@ describe("a card follows its worker", () => {
     r.peek.workers.endStaleCards();
     expect(record.workerCards![0]).toMatchObject({ status: "failed", error: expect.stringMatching(/app went away/) });
     expect(r.handoff).not.toHaveBeenCalled();
+  });
+});
+
+describe("a card's worker is a small-model worker that Maintainer can be asked through", () => {
+  it("runs on haiku", async () => {
+    const plain = rig();
+    await answer(plain, '<card title="t">go</card>');
+    await waitFor("handoff", () => plain.handoff.mock.calls.length === 1);
+    expect(plain.handoff.mock.calls[0]![1]).toMatchObject({ model: "haiku" });
+  });
+
+  it("a launch setting `cardWorkerModel` is the model it is started on", async () => {
+    const r = rig("claude", { cardWorkerModel: "sonnet" });
+    await answer(r, '<card title="t">go</card>');
+    await waitFor("handoff", () => r.handoff.mock.calls.length === 1);
+    expect(r.handoff.mock.calls[0]![1]).toMatchObject({ model: "sonnet" });
+  });
+
+  it("a report that asks for a component passes the ask to Maintainer once, with the worker's task id; the same ask again is not passed on", async () => {
+    const asked: any[] = [];
+    const r = rig("claude", undefined, (_bot, requests) => { asked.push(...requests); return []; });
+    const record = await answer(r, '<card title="Charts">Show the GPU load.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const report = 'No component fits a gauge with history.\n<component name="gpu-gauge">A gauge with a 60 s history line; data {"load": 0-100}.</component>';
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: report }));
+    expect(record.workerCards![0]).toMatchObject({ wants: { name: "gpu-gauge" }, asked: true });
+    await waitFor("the ask", () => asked.length === 1);
+    expect(asked[0]).toMatchObject({ kind: "component", name: "gpu-gauge", card: "T1" });
+    expect(asked[0].request).toContain("A gauge with a 60 s history line");
+    expect(asked[0].request).toContain("card worker");
+    // Its next run repeats the ask: not passed on again.
+    r.peek.projectWorker(ledger({ status: "running", run: 2, text: report }));
+    r.peek.projectWorker(ledger({ status: "done", run: 2, text: report }));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(asked).toHaveLength(1);
+  });
+
+  it("a report read again at the app's start is shown on the card but its ask is not passed on (it was, or the app went away first)", async () => {
+    const asked: any[] = [];
+    const r = rig("claude", undefined, (_bot, requests) => { asked.push(...requests); return []; });
+    const record = await answer(r, '<card title="Charts">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'x <component name="gpu-gauge">a gauge</component>' }), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(record.workerCards![0]).toMatchObject({ wants: { name: "gpu-gauge" }, status: "done" });
+    expect(asked).toHaveLength(0);
+  });
+
+  it("tellCardWorker sends the words to the worker as app_send_message", async () => {
+    const r = rig();
+    r.peek.workers.tellCardWorker("T1", "gpu-gauge is ready.");
+    await waitFor("the message", () => r.handoff.mock.calls.some(([tool]) => tool === "app_send_message"));
+    expect(r.handoff.mock.calls.find(([tool]) => tool === "app_send_message")![1]).toEqual({ task_id: "T1", message: "gpu-gauge is ready." });
   });
 });

@@ -100,7 +100,7 @@ export class MaintainerDesk {
     for (const request of requests) {
       switch (request.kind) {
         case "component":
-          later.push(() => this.requestComponentChange(request.name, request.request, from.id === mainId ? "Main bot" : from.profile.name, from));
+          later.push(() => this.requestComponentChange(request.name, request.request, from.id === mainId ? "Main bot" : from.profile.name, from, [], request.card));
           break;
         case "plugin":
           if (!isMaintainer) later.push(() => this.handTo(`${from.id === mainId ? "Main bot" : from.profile.name}'s request for Botling: ${request.request}`));
@@ -176,7 +176,7 @@ export class MaintainerDesk {
   // Components
 
   /** Someone asked for a component change (`requestComponentChange`): Maintainer hands it to a component editor. */
-  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null, files: string[] = []) {
+  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null, files: string[] = [], card?: string) {
     const name = safeName(rawName);
     if (!name) return;
     const request = rawRequest.trim();
@@ -186,7 +186,7 @@ export class MaintainerDesk {
     const exists = this.deps.library.names.includes(name);
     const pictures = files.length ? ` (Attached: ${files.length === 1 ? "a picture" : `${files.length} pictures`} of how it looks now or should look.)` : "";
     // Which bot asked, and how full its own list is (the library has no cap).
-    const note = this.askNote(name, request, exists, bot);
+    const note = this.askNote(name, request, exists, bot, card);
     this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${pictures}${note}` : `${asker} wants a new component "${name}": ${said}${pictures}${note}`, files);
   }
 
@@ -229,14 +229,14 @@ export class MaintainerDesk {
   }
 
   /** What Maintainer is told about the bot that asked (`componentAskNote`), after giving it at once when the library has it. */
-  askNote(name: string, request: string, exists: boolean, bot: Bot | null): string {
+  askNote(name: string, request: string, exists: boolean, bot: Bot | null, card?: string): string {
     if (!bot || bot.components === null) return "";
     const own = bot.ownComponentNames;
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
       key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300),
-      stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name),
+      stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name), ...(card ? { card } : {}),
     };
     const answerBack = ` If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for ${botName}</component-declined>; the app passes it on to ${botName}.`;
     const full = ` (App: ${botName} already has ${countedComponents(own, this.deps.library.builtInNames()).length} / ${limit} components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from ${botName}'s list first, then <take-component bot="${botName}">that name</take-component>.)`;
@@ -270,6 +270,13 @@ export class MaintainerDesk {
     const instead = ask.name === name ? "" : ` in place of the "${ask.name}" you asked for`;
     const request = ask.request ? ` (your request: ${shortened(ask.request, 200)})` : "";
     const user = ask.userAsked ? ` The user had asked you: "${ask.userAsked}".` : "";
+    if (ask.card) {
+      // A card worker asked: the card is filled by that worker, not by the bot (worker-cards.ts).
+      const usage = library.catalog([name]);
+      bot.workers.tellCardWorker(ask.card, `(App: The component "${name}" is ready${instead}${changed ? " (changed as you asked)" : ""}. Its usage:\n${usage}\nFill the card now: end your report with exactly one <show name="${name}">…</show> as the usage says (a component with a Command: needs only <show name="${name}"></show>), and one sentence. Do not ask for it again.)`);
+      bot.appNotice(changed ? `${maker ?? "Maintainer"} changed ${shown} for a card of ${this.nameOf(bot)}.` : `${maker ?? "Maintainer"} added ${shown} for a card of ${this.nameOf(bot)}.`);
+      return;
+    }
     bot.appMessage(arrivalLead(name, changed) + `${instead}${request}.${user} Answer that now: draw it with <show name="${name}">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n${library.catalog([name])}`);
     bot.appNotice(changed ? `${maker ?? "Maintainer"} changed ${shown} as ${this.nameOf(bot)} asked.` : `${maker ?? "Maintainer"} added ${shown} to your components.`);
   }
@@ -316,6 +323,11 @@ export class MaintainerDesk {
     const reason = rawReason.trim();
     const said = reason ? ` Maintainer said: "${shortened(reason, 500)}".` : "";
     const user = ask.userAsked ? ` The user had asked you: "${ask.userAsked}".` : "";
+    if (ask.card) {
+      bot.workers.tellCardWorker(ask.card, `(App: Maintainer did not add the component "${ask.name}" you asked for.${said} Show the data another way: another component from your list, or a matplotlib picture, and say in one sentence what you did instead.)`);
+      bot.appNotice(`Maintainer did not add ${ask.name} for a card:` + (reason ? " " + shortened(firstLine(reason), 160) : ""));
+      return;
+    }
     bot.appMessage(`(App: Maintainer did not add the component "${ask.name}" you asked for${ask.changing ? " (or change it)" : ""}.${said}${user} Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)`);
     bot.appNotice((ask.changing ? `Maintainer did not change ${ask.name}:` : `Maintainer did not add ${ask.name}:`) + (reason ? " " + shortened(firstLine(reason), 160) : ""));
   }

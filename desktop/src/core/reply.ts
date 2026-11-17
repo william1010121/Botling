@@ -21,7 +21,7 @@ import { REACTION_PALETTE } from "./briefing";
 import { isGroupBlock, isMultiple, questionGroup, type Question } from "./questions";
 
 export type BotRequest =
-  | { kind: "component"; name: string; request: string }
+  | { kind: "component"; name: string; request: string; /** The task id of the card worker that asked (worker-cards.ts): the answer goes to it, not to the bot. */ card?: string }
   | { kind: "plugin"; request: string }
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }

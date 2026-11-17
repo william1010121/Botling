@@ -5,8 +5,11 @@
 // Kept in the reply's chat record (`ChatRecord.workerCards`, chat.json), so a card survives a restart: the worker's ledger is
 // projected onto it again when the bot starts (`BotWorkers.projectWorker`), a run that was at work shows as interrupted, and a
 // reply on it resumes the worker. Nothing here starts a worker: bot/workers.ts does, through the same `app_handoff` a bot's own
-// tool call takes (same limits, same admission). What a worker's report contains is never acted on: only its words and
-// components with their own JSON are drawn (no `command`, no request tag), as the report of a worker may carry web text.
+// tool call takes (same limits, same admission), on the card worker's model (settings.json `cardWorkerModel`, haiku). The worker is
+// given every component with its usage and picks one; its report is untrusted (it may carry web text): only its words and components
+// with their own JSON are drawn, a `command` only when it runs a script under .bot/card-scripts (and the user allows it as for any
+// card), and the one request it may make is a component for Maintainer (`wants`, passed on once by bot/workers.ts).
+import { isAbsolute, resolve } from "node:path";
 import { parseReply, type CardRequest } from "./reply";
 import type { ChatRecord } from "./store/records";
 import { chipStatus, type WorkerLedgerRecord } from "./worker-core";
@@ -21,8 +24,17 @@ export const CARD_SHOWS_MAX = 10;
 export type WorkerCardStatus = "starting" | "running" | "done" | "failed" | "stopped" | "interrupted";
 const STATUSES: ReadonlySet<string> = new Set<WorkerCardStatus>(["starting", "running", "done", "failed", "stopped", "interrupted"]);
 
-/** A component of a report: its name and the JSON it was given (never a command). */
-export interface CardShow { name: string; data: string; at?: number }
+/**
+ * A component of a report: its name and the JSON it was given. A `command` is kept only when it runs a script the worker kept under the
+ * bot's `.bot/card-scripts/` (`cardScriptCommand`) so the card can refresh; the user still allows it before it runs, as for any card.
+ */
+export interface CardShow { name: string; data: string; at?: number; command?: string; refresh?: number }
+
+/** What a report is checked against: where card scripts may live, the folder paths are read from, and whether a component fills itself from its own command. */
+export interface CardRules { scriptsDir: string; folder: string; hasCommand: (name: string) => boolean }
+
+/** A component the worker asks Maintainer for (its `<component name="…">request</component>`; the first one only). */
+export interface CardWant { name: string; request: string }
 
 /** One card, as chat.json keeps it. */
 export interface WorkerCardRecord {
@@ -43,6 +55,9 @@ export interface WorkerCardRecord {
   shows?: CardShow[];
   /** Why it did not start, or how its run ended badly. */
   error?: string;
+  /** The component its latest report asked Maintainer for, and whether that was passed on (once per ask). */
+  wants?: CardWant;
+  asked?: boolean;
 }
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -66,7 +81,11 @@ export function readCards(value: unknown): WorkerCardRecord[] {
     if (!isObject(each) || typeof each.id !== "string" || !ID.test(each.id) || typeof each.title !== "string" || typeof each.prompt !== "string") continue;
     if (typeof each.status !== "string" || !STATUSES.has(each.status) || typeof each.run !== "number" || !Number.isInteger(each.run) || each.run < 0) continue;
     const shows = Array.isArray(each.shows) ? each.shows.flatMap((show): CardShow[] => (isObject(show) && typeof show.name === "string" && typeof show.data === "string"
-      ? [{ name: show.name, data: show.data, ...(typeof show.at === "number" && Number.isInteger(show.at) && show.at >= 0 ? { at: show.at } : {}) }] : [])).slice(0, CARD_SHOWS_MAX) : [];
+      ? [{ name: show.name, data: show.data, ...(typeof show.at === "number" && Number.isInteger(show.at) && show.at >= 0 ? { at: show.at } : {}),
+        ...(typeof show.command === "string" && show.command && show.command.length <= 2_000 ? { command: show.command } : {}),
+        ...(typeof show.refresh === "number" && Number.isInteger(show.refresh) && show.refresh >= 1 && show.refresh <= 3600 ? { refresh: show.refresh } : {}) }] : [])).slice(0, CARD_SHOWS_MAX) : [];
+    const wants = isObject(each.wants) && typeof each.wants.name === "string" && typeof each.wants.request === "string" && each.wants.name && each.wants.request
+      ? { name: each.wants.name.slice(0, 100), request: each.wants.request.slice(0, 4_000) } : null;
     cards.push({
       id: each.id, title: each.title, prompt: each.prompt, status: each.status as WorkerCardStatus, run: each.run,
       ...(typeof each.at === "number" && Number.isInteger(each.at) && each.at >= 0 ? { at: each.at } : {}),
@@ -74,22 +93,73 @@ export function readCards(value: unknown): WorkerCardRecord[] {
       ...(typeof each.text === "string" ? { text: each.text } : {}),
       ...(shows.length ? { shows } : {}),
       ...(typeof each.error === "string" && each.error ? { error: each.error } : {}),
+      ...(wants ? { wants, ...(each.asked === true ? { asked: true } : {}) } : {}),
     });
   }
   return cards;
 }
 
-/** What the worker is told: the bot's prompt, and where its answer goes. */
-export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">): string {
-  return `${card.prompt}\n\n(App: your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it. Make it the finished result, not a status note.)`;
+/** What the worker of a card is given besides the bot's prompt: every component with its usage, and where its scripts go. */
+export interface CardBrief {
+  /** Each component the bot may use, with its whole usage (`ComponentLibrary.catalog`). */
+  components: string;
+  /** The rest of the library, one line each. */
+  others: string;
+  /** `<project>/.bot/card-scripts`. */
+  scriptsDir: string;
 }
 
-/** A report as the card keeps it: its words and its components with JSON, never a command or a request. */
-export function cardContent(report: string): { text: string; shows: CardShow[] } {
+/** The most characters of component usage the worker is given (the list is cut there, with a note). */
+export const CARD_BRIEF_MAX = 60_000;
+
+/** What the worker is told: the bot's prompt, the card it fills, the components it may pick from and the rules it keeps. */
+export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">, brief?: CardBrief): string {
+  const head = `${card.prompt}\n\n(App: Your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it: each reply comes to you, and you change the card. Make it the finished result, not a status note.)`;
+  if (!brief) return head;
+  const components = brief.components.length > CARD_BRIEF_MAX ? `${brief.components.slice(0, CARD_BRIEF_MAX)}\n(…cut: ask for the rest by name with a note to the owner)` : brief.components;
+  return `${head}
+
+(App: You are a card worker; you gather the data and choose how it is shown. Work like this:
+1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${brief.scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything.
+2. Pick the component that fits from the list below, and end your report with exactly one <show name="component">JSON as its usage says</show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${brief.scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
+3. If none fits and a new one is not worth it, draw a matplotlib picture saved in the project and put ![caption](file:///full/path.png) in your words.
+4. If a new component is worth it, end with <component name="short-english-name">what it shows, its data format, where the data comes from</component> instead of a <show>, and stop: the app tells you when it is built (or why not), and then you fill the card. Ask for one at most.
+5. Your words: one or two sentences on what the card shows, in the user's language.
+Components you may use, each with its usage:
+${components}${brief.others ? `\nAlso in the library, not on the bot's list (a <component name="name">add it to my list</component> asks Maintainer for one):\n${brief.others}` : ""})`;
+}
+
+/** The only commands a card keeps: a script under the card scripts folder, run by python3, node or bash with plain arguments. Null otherwise. */
+export function cardScriptCommand(command: string, rules: Pick<CardRules, "scriptsDir" | "folder">): string | null {
+  const text = command.trim();
+  // One line, spaces only (a line break or a tab would end the command for a shell).
+  if (!text || text.length > 2_000 || /[\u0000-\u001f\u007f]/.test(text)) return null;
+  const parsed = /^(python3?|node|bash|sh) +([^\s"'`;&|<>$()\\*?{}!#~]+)((?: +[A-Za-z0-9_./=:,@%+-]+)*)$/.exec(text);
+  if (!parsed) return null;
+  const path = parsed[2]!;
+  if (path.split("/").includes("..")) return null;
+  const full = resolve(isAbsolute(path) ? path : resolve(rules.folder, path));
+  const root = resolve(rules.scriptsDir);
+  return full.startsWith(`${root}/`) && !parsed[3]!.split(" ").some((arg) => arg.split("/").includes("..")) ? text : null;
+}
+
+/** A report as the card keeps it: its words, its components with their JSON (and a script command, see `cardScriptCommand`), and the component it asks for. Never another command or request. */
+export function cardContent(report: string, rules?: CardRules): { text: string; shows: CardShow[]; want?: CardWant } {
   const parsed = parseReply(report, []);
-  const shows = parsed.displays.filter((display) => display.data !== "null").slice(0, CARD_SHOWS_MAX)
-    .map((display): CardShow => ({ name: display.name.slice(0, 200), data: display.data, ...(typeof display.at === "number" ? { at: display.at } : {}) }));
-  return { text: parsed.body.slice(0, CARD_TEXT_MAX), shows };
+  const shows: CardShow[] = [];
+  for (const display of parsed.displays) {
+    const command = display.command && rules ? cardScriptCommand(display.command, rules) : null;
+    // No data and nothing to fill it from: nothing to draw. A component with a Command: of its own fills itself.
+    if (display.data === "null" && !command && !rules?.hasCommand(display.name)) continue;
+    shows.push({
+      name: display.name.slice(0, 200), data: display.data, ...(typeof display.at === "number" ? { at: display.at } : {}),
+      ...(command ? { command } : {}), ...(command && typeof display.refresh === "number" && Number.isInteger(display.refresh) && display.refresh >= 1 && display.refresh <= 3600 ? { refresh: display.refresh } : {}),
+    });
+    if (shows.length >= CARD_SHOWS_MAX) break;
+  }
+  const asked = parsed.requests.find((request) => request.kind === "component");
+  const want = asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) } : undefined;
+  return { text: parsed.body.slice(0, CARD_TEXT_MAX), shows, ...(want ? { want } : {}) };
 }
 
 const ENDED_BADLY: Partial<Record<WorkerCardStatus, string>> = { failed: "The worker failed without a report.", stopped: "The worker was stopped.", interrupted: "The app went away while the worker was at work." };
@@ -99,7 +169,7 @@ const CARD_STATUS: Record<ReturnType<typeof chipStatus>, WorkerCardStatus> = { r
  * The card follows its worker's ledger record. A running run keeps the words of the one before; a finished run replaces
  * them with its own report. Returns whether anything on the card changed.
  */
-export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord): boolean {
+export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord, rules?: CardRules): boolean {
   const before = JSON.stringify(card);
   const status = worker.status === "new" ? "running" : CARD_STATUS[chipStatus(worker)];
   card.status = status;
@@ -108,10 +178,13 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord)
   else {
     const report = worker.report.text ?? "";
     if (report) {
-      const content = cardContent(report);
+      const content = cardContent(report, rules);
       card.text = content.text;
       if (content.shows.length) card.shows = content.shows; else delete card.shows;
-    } else { delete card.text; delete card.shows; }
+      // A component asked for is passed on once; the same ask again (the next run repeats it) is not.
+      if (!content.want) { delete card.wants; delete card.asked; }
+      else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; }
+    } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; }
     // A run that ended badly and left no words says so on the card.
     const failure = report ? undefined : ENDED_BADLY[status];
     if (failure) card.error = failure; else delete card.error;
@@ -134,7 +207,7 @@ export function cardOfWorker(records: readonly ChatRecord[], taskId: string): { 
 }
 
 /** A worker's ledger record changed: the card bound to it follows. The chat record that changed, or null. */
-export function projectCard(records: readonly ChatRecord[], worker: WorkerLedgerRecord): ChatRecord | null {
+export function projectCard(records: readonly ChatRecord[], worker: WorkerLedgerRecord, rules?: CardRules): ChatRecord | null {
   const found = cardOfWorker(records, worker.id);
-  return found && followWorker(found.card, worker) ? found.record : null;
+  return found && followWorker(found.card, worker, rules) ? found.record : null;
 }

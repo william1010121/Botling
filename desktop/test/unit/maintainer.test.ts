@@ -77,6 +77,48 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(sent[1]).toBe("notice: Maintainer added todo to your components.");
   });
 
+  it("a component a card worker asked for goes back to that worker, not to the bot (a card's ask carries the worker's task id)", () => {
+    const root = tempDir("maintainer");
+    const folder = join(root, "plugins", "ccb-components", "components");
+    for (const name of ["status", "todo"]) {
+      mkdirSync(join(folder, name), { recursive: true });
+      writeFileSync(join(folder, name, "template.html"), `<div>${name}</div>`);
+      writeFileSync(join(folder, name, "about.md"), `A ${name} card.\nData: JSON {"items": []}\n`);
+    }
+    const library = new ComponentLibrary(() => [folder]);
+    let list: string[] = ["status"];
+    const sent: string[] = [], told: Array<[string, string]> = [];
+    const bot = {
+      id: MAIN, profile: { name: "Main bot" },
+      get components() { return list; },
+      get ownComponentNames() { return library.names.filter((name) => list.includes(name)); },
+      lastAsked: "",
+      setComponentList(names: string[]) { list = names; },
+      appMessage(text: string) { sent.push(text); },
+      appNotice(text: string) { sent.push(`notice: ${text}`); return "n"; },
+      workers: { tellCardWorker(task: string, text: string) { told.push([task, text]); } },
+    } as never;
+    const desk = new MaintainerDesk({ root, maintainer: () => null, mainBot: () => bot, bots: () => [bot], library, plugins: () => null, log: () => {} });
+    // In the library already: the bot's list gets it at once and the worker is told, with the usage; the bot itself is not woken.
+    desk.askNote("todo", "a todo list", true, bot, "TASK1");
+    expect(told).toHaveLength(1);
+    expect(told[0]![0]).toBe("TASK1");
+    expect(told[0]![1]).toContain('The component "todo" is ready');
+    expect(told[0]![1]).toContain('A todo card.');
+    expect(told[0]![1]).toContain('<show name="todo">');
+    expect(sent.some((line) => line.startsWith("(App:"))).toBe(false);
+    expect(sent).toEqual(["notice: Maintainer added todo for a card of Main bot."]);
+    // A new one: the ask is kept with the task id, and Maintainer's decline reaches the worker.
+    const note = desk.askNote("weather", "the weather", false, bot, "TASK2");
+    const key = /component-declined id="([0-9a-f]{8})"/.exec(note)![1]!;
+    desk.decline(key, "No data source.");
+    expect(told).toHaveLength(2);
+    expect(told[1]![0]).toBe("TASK2");
+    expect(told[1]![1]).toContain('did not add the component "weather"');
+    expect(told[1]![1]).toContain("No data source.");
+    expect(sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
+  });
+
   it("knows what a source is (PluginInstaller.classify)", () => {
     const root = tempDir("maintainer");
     expect(classifySource(root)).toEqual({ kind: "folder", path: root });

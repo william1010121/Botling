@@ -154,7 +154,7 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
   root.append(head);
   if (card.text || card.displays?.length) {
     const report: MessageView = {
-      ...message, id: `${message.id}/card-${index}`, role: "bot", text: card.text ?? "", displays: card.displays ?? null, display: null, workerCards: null,
+      ...message, id: `${message.id}:card-${index}`, role: "bot", text: card.text ?? "", displays: card.displays ?? null, display: null, workerCards: null,
       choices: null, chosen: null, answer: null, questions: null, picks: null, open: false, steps: null, previews: null, artifacts: null, attachments: null,
       openable: false, interrupted: null, fromSubagent: null, tasks: null, queued: false, replyTo: null, replyPreview: null, reactions: null, reactionEnabled: false, component: null,
     };
