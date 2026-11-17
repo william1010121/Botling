@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FRAME_LIMIT, type Slot } from "../../src/protocol";
 import { FeLink, MemoryFeStorage, type Dial, type FeLinkEvent, type FeStorage } from "../../src/fe-link";
+import type { Command } from "../../src/contract";
 import { wireError } from "../../src/main-v3/adapter-types";
 import { BOT, FakeClock, FakeServer, flush, react } from "./fe-link-harness";
 
@@ -13,7 +14,7 @@ afterEach(async () => { for (const link of links.splice(0)) await link.stop(); }
 let epochCounter = 0;
 const nextEpoch = () => (++epochCounter).toString(16).padStart(32, "0");
 
-const big = () => ({ type: "chat.feedback", botId: "b1", messageId: "m1", text: "not right", images: [], rect: null, screenshot: "A".repeat(FRAME_LIMIT + 1_000) }) as const;
+const big = (): Command => ({ type: "chat.feedback", botId: "b1", messageId: "m1", text: "not right", images: [], rect: null, screenshot: "A".repeat(FRAME_LIMIT + 1_000) });
 
 async function open(dial: Dial, storage: FeStorage, clock: FakeClock) {
   const link = await FeLink.open({ storage, dial, deviceId: "desktop", feVersion: "3.0.0", clock, newEpoch: nextEpoch, reconnectMinMs: 250, reconnectMaxMs: 5_000 });

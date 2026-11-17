@@ -175,7 +175,7 @@ describe("making an inline block pinnable", () => {
     expect(items).toContain("Report a problem…");
     click(document.querySelector(".pin-menu button"));
     expect(sent.filter((a) => a.type === "send")).toHaveLength(2);
-    expect((sent[1] as { text: string }).text).toContain('"title":"B"');
+    expect((sent[1] as unknown as { text: string }).text).toContain('"title":"B"');
   });
 
   it("with a command it is the Pin button, as before; pinned, a badge; a component that is not an inline block, no such button", () => {
