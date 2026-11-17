@@ -132,8 +132,11 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     // A list at the limit, and a bot with no list at all: neither stops the ask or turns it into 'ask the user which to remove'.
     for (const [list, own] of [[Array.from({ length: 20 }, (_, i) => `c${i}`), Array.from({ length: 20 }, (_, i) => `c${i}`)], [null, []]] as const) {
       const r = cardRig(list as string[] | null, own as string[]);
+      const handedTo: string[] = [];
+      (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
       r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK2");
-      const handed = r.logs.find((line) => line.includes("no Maintainer"))!;
+      expect(handedTo).toHaveLength(1);
+      const handed = handedTo[0]!;
       expect(handed).toContain('wants a new component "weather"');
       expect(handed).toContain("A card worker of Main bot asks for this");
       expect(handed).not.toContain("Add or build nothing");
