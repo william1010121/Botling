@@ -154,7 +154,7 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
 }
 .steps-toggle:hover { color: var(--text); }
 .steps-toggle svg { transition: transform 0.15s; flex-shrink: 0; }
-.steps.open > .steps-toggle svg, .steps-run.open > .steps-toggle svg { transform: rotate(90deg); }
+.steps.open > .steps-toggle svg, .steps-run.open > .steps-toggle svg, .worker-card-notes.open > .steps-toggle svg { transform: rotate(90deg); }
 /* The bot's own words between tool calls: folded with the calls to one line once the turn is done
    (in sight while it works); opened, quieter than the reply below, with each run of tool calls
    between them folded to a chip. A hairline sets the opened process off from the reply. */

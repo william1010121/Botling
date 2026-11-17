@@ -175,6 +175,58 @@ describe("a card starts one worker, whatever calls it", () => {
   });
 });
 
+describe("a card's worker reports to its card, never to the head", () => {
+  it("its report (done or failed) is taken without a message to the head; another worker's report still is delivered", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Prices">Go.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const sent = () => fixture.heads.reduce((n, head) => n + head.sent.length, 0);
+    const before = sent();
+    expect(r.peek.workers.workerReport("<app_task_result>Plans: A $5</app_task_result>", "T1")).toBe(true);
+    expect(r.peek.workers.workerReport("<app_task_result>The worker failed</app_task_result>", "T1")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent()).toBe(before);
+    // A control: the same call for a worker that no card started reaches the head.
+    expect(r.peek.workers.workerReport("<app_task_result>other</app_task_result>", "OTHER")).toBe(true);
+    await waitFor("the other report to reach the head", () => sent() > before);
+  });
+
+  it("a card far back in the chat is still its worker's card (its follow-up report stays off the head)", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Prices">Go.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    for (let i = 0; i < 450; i++) r.peek.records.push({ id: `x${i}`, role: "user", text: "later", date: 0 });
+    const before = fixture.heads.reduce((n, head) => n + head.sent.length, 0);
+    r.peek.workers.workerReport("<app_task_result>again</app_task_result>", "T1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fixture.heads.reduce((n, head) => n + head.sent.length, 0)).toBe(before);
+  });
+});
+
+describe("a card's worker's notes", () => {
+  it("an interim note (kind report) of a card's worker neither draws a relay line nor wakes the head; its question still does, and another worker's note is unchanged", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Prices">Go.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const sent = () => fixture.heads.reduce((n, head) => n + head.sent.length, 0);
+    const relays = () => r.peek.records.filter((line: any) => line.role === "relay").length;
+    const before = sent(), relaysBefore = relays();
+    const note = (id: string, kind: "report" | "question") => r.peek.workers.workerNote({ id, kind, name: "Prices", message: "halfway", files: [] }, `<app_worker_note task_id="${id}" run="1" kind="${kind}">\nhalfway\n</app_worker_note>`);
+    expect(note("T1", "report")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent()).toBe(before);
+    expect(relays()).toBe(relaysBefore);
+    // Controls: the card worker's question, and another worker's report note, reach the head as before.
+    expect(note("T1", "question")).toBe(true);
+    await waitFor("the question to reach the head", () => sent() > before);
+    expect(relays()).toBe(relaysBefore + 1);
+    const afterQuestion = sent();
+    expect(note("OTHER", "report")).toBe(true);
+    await waitFor("the other note to reach the head", () => sent() > afterQuestion || relays() === relaysBefore + 2);
+    expect(relays()).toBe(relaysBefore + 2);
+  });
+});
+
 describe("a card follows its worker", () => {
   it("a card bound to a worker the ledger does not have at the next start shows as interrupted, not at work for ever", async () => {
     const r = rig();
@@ -261,6 +313,25 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     r.peek.projectWorker(ledger({ status: "done", run: 2, text: report }));
     await new Promise((resolve) => setImmediate(resolve));
     expect(asked).toHaveLength(1);
+  });
+
+  it("the card's view says it waits for the component its worker asked for, and the worker's folded words and warning come apart", async () => {
+    const r = rig("claude", undefined, () => []);
+    const record = await answer(r, '<card title="Charts">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Words.\n<component name="gpu-gauge">a gauge</component>' }));
+    await waitFor("asked", () => record.workerCards![0]!.askedAt);
+    expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ waiting: "component", text: "Words." });
+    record.workerCards![0]!.askedAt = Date.now() - 31 * 60_000;
+    expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ waiting: "late" });
+    // The component came and the worker filled the card: no longer waiting.
+    r.peek.projectWorker(ledger({ status: "done", run: 2, text: 'Done.\n<show name="inline-chart">{"x":1}</show>' }));
+    expect(r.peek.messageView(record).workerCards[0].waiting).toBeUndefined();
+    // A rejected command: the warning is its own field, not in the words.
+    r.peek.projectWorker(ledger({ status: "done", run: 3, text: 'Words.\n<show name="git-log" command="python3 /elsewhere/g.py"></show>' }));
+    const view = r.peek.messageView(record).workerCards[0];
+    expect(view.warning).toMatch(/^⚠ the command/);
+    expect(view.text).toBe("Words.");
   });
 
   it("a report read again at the app's start is shown on the card but its ask is not passed on (it was, or the app went away first)", async () => {

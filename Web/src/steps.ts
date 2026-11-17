@@ -15,7 +15,7 @@ import { escapeHTML } from "./util";
 const openLists = new Set<string>();
 const openSteps = new Set<string>();
 
-const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
+export const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
 
 /**
  * The steps above a reply. With nothing said between tool calls: one folded "Worked · 5 steps"
