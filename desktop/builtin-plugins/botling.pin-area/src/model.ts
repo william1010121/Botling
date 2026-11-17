@@ -858,7 +858,7 @@ export function moveTo(book: Book, rid: string, to: string, now: number): boolea
 }
 
 /** What the chat draws for the lines the bot moved (`chat.decorate`): a one-line trace in place of the user's line, or, once moved back, the answer under it. */
-export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user"; /** The line is the bot's reply to a worker's report that went into the card (q: the report's first line). */ worker?: true }
+export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user" | "app"; /** The line is the bot's reply to a worker's report that went into the card (q: the report's first line). */ worker?: true }
 export const MAX_TRACES = 120;
 export function tracesOf(book: Book): { key: string; fold?: string[]; after?: string; data: TraceData }[] {
   const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
