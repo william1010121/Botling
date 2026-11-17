@@ -4,7 +4,10 @@
    place of the import. */
 :root {
   color-scheme: dark;
+  /* Text on an --orange fill: dark on the dark look's light orange, white on the light look's deeper one. */
+  --on-orange: #1A1206;
 }
+:root[data-theme="light"] { --on-orange: #fff; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
@@ -41,7 +44,7 @@ button { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11.5px; font-weight: 600; background: var(--blue); color: #fff;
 }
-.badge.waiting { background: var(--orange); color: #1A1206; }
+.badge.waiting { background: var(--orange); color: var(--on-orange); }
 
 /* The chat area: a slim header over the chat page. */
 .chat-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -158,7 +161,7 @@ button { font: inherit; color: inherit; }
 .plugins-banner svg { flex-shrink: 0; color: var(--orange); }
 .plugins-banner-text { flex: 1; min-width: 0; color: var(--text); }
 .plugins-banner-text b { font-weight: 600; color: var(--orange-text); }
-.plugins-banner-show { background: var(--orange); color: #1A1206; border: 0; border-radius: 8px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plugins-banner-show { background: var(--orange); color: var(--on-orange); border: 0; border-radius: 8px; padding: 3px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .plugins-bar { display: flex; align-items: center; gap: 12px; flex-shrink: 0; padding: 12px 20px; border-bottom: 1px solid var(--line); }
 .plugins-bar .plugins-tabs { margin: 0; }
 .plugins-tabs button { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 5px 16px; }
@@ -185,14 +188,14 @@ button { font: inherit; color: inherit; }
 .plugin-tile { width: 30px; height: 30px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--chip); color: var(--soft-text); font-size: 13px; font-weight: 600; }
 .plugin-tile.big { width: 44px; height: 44px; border-radius: 12px; font-size: 18px; }
 .plugin-tile.built-in { background: var(--accent-bg); color: var(--link); }
-.plugin-tile.allow { background: var(--orange); color: #1A1206; }
+.plugin-tile.allow { background: var(--orange); color: var(--on-orange); }
 .plugin-names { min-width: 0; display: flex; flex-direction: column; }
 .plugin-item .plugin-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plugin-item[data-enabled="0"] .plugin-title { color: var(--faint); }
 .plugin-sub { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plugin-sub.allow { color: var(--orange-text); font-weight: 600; }
 .plugin-sub.failure { color: var(--error); }
-.plugin-allow-open { flex-shrink: 0; background: var(--orange); color: #1A1206; border: 0; border-radius: 8px; padding: 2px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plugin-allow-open { flex-shrink: 0; background: var(--orange); color: var(--on-orange); border: 0; border-radius: 8px; padding: 2px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .plugin-allow-open:hover { filter: brightness(1.08); }
 .plugin-allow-open.big { padding: 6px 20px; font-size: 14px; }
 .plugin-update { flex-shrink: 0; background: var(--accent-bg); color: var(--link); border: 1px solid var(--accent-line); border-radius: 8px; padding: 1px 10px; font-size: 12px; cursor: pointer; }
