@@ -10,16 +10,14 @@ export const CONFIDENCE = 0.75;
 export const CONFIDENCE_MIN = 0.5;
 export const CONFIDENCE_MAX = 0.99;
 /**
- * The whole sort (reading the chat, asking for the CLI, the model) must be over before the core gives up on a `beforeSend` hook (5 s,
- * core/plugins/host-client.ts `DEFAULT_TIMING.hook`): after that the core has sent the line as it is, and nothing may be written for it.
+ * The sort runs AFTER the line was sent (nothing waits for it), so the model has time: the setting is its limit (measured: the small model takes 3.5–5.5 s).
+ * A verdict that comes later than this is never used.
  */
-export const SORT_DEADLINE_MS = 4_000;
-/** The model's own time limit (the setting) stays inside the deadline, with room left for reading the chat and starting the CLI. */
-export const TIMEOUT_MIN_MS = 500;
-export const TIMEOUT_MAX_MS = 3_500;
-export const TIMEOUT_DEFAULT_MS = 3_500;
-/** With less time than this left (a line that waited behind another) the model is not asked. */
-export const MIN_BUDGET_MS = 600;
+export const TIMEOUT_MIN_MS = 1_000;
+export const TIMEOUT_MAX_MS = 30_000;
+export const TIMEOUT_DEFAULT_MS = 10_000;
+/** Lines being sorted at once for one bot (each is a child process): a line sent when this many are still out is not sorted. */
+export const MAX_SORTING = 3;
 
 /** The engines a sorter model can come from. Only claude is wired for now (a Codex one would follow catchup's `codexSummarizer`). */
 export type SorterEngine = "claude";
@@ -35,7 +33,7 @@ export interface SorterSettings { enabled: boolean; engine: SorterEngine | null;
 /** A model name as it is passed to the CLI: letters, digits and . _ : - [ ], not starting with a dash (it must not read as a flag). */
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$/;
 /**
- * The sorter settings, each read back to a value that is safe to use: **off unless `enabled` is exactly true** (the manifest's default is false: the sort before the send is off, see DESIGN 4c); an engine that is not wired is `null` (the lines
+ * The sorter settings, each read back to a value that is safe to use: **off unless `enabled` is exactly true** (the manifest's default is false until the user tries it, see DESIGN 4c); an engine that is not wired is `null` (the lines
  * stay in the chat); a model name that is not a plain name, or a number that is not a number, falls back to its default; numbers are held to their range.
  */
 export function sorterSettings(get: (key: string) => unknown): SorterSettings {

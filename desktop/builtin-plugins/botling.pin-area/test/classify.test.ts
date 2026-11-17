@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The pure part of the line classifier (src/classify.ts) and its model call (src/sorter-call.ts): what is asked, how the answer is read and how it is
 // decided, and the isolated `claude -p` call against a fake CLI (a node script). No real model is called.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -42,11 +42,12 @@ describe("what the model is asked", () => {
 describe("the sorter settings (package.json contributes.settings)", () => {
   const from = (values: Record<string, unknown>) => C.sorterSettings((key) => values[key]);
 
-  it("nothing set gives the defaults: OFF (the sort before the send is off, review R1), claude, the default model, 0.75, the longest time that fits the deadline", () => {
-    expect(from({})).toEqual({ enabled: false, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 3_500 });
+  it("nothing set gives the defaults: OFF (until the user tries it), claude, the default model, 0.75, 10 s (the sort runs after the send, nothing waits for it)", () => {
+    expect(from({})).toEqual({ enabled: false, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 10_000 });
     expect(C.DEFAULT_SORTER_MODEL).toBe("claude-haiku-5-5");
-    expect(C.TIMEOUT_MAX_MS + 300).toBeLessThan(C.SORT_DEADLINE_MS);
-    expect(C.SORT_DEADLINE_MS).toBeLessThanOrEqual(4_000);
+    // the small model measured 3.5–5.5 s: the default limit is well over that, and the range is 1 s – 30 s
+    expect([C.TIMEOUT_MIN_MS, C.TIMEOUT_DEFAULT_MS, C.TIMEOUT_MAX_MS]).toEqual([1_000, 10_000, 30_000]);
+    expect(C.MAX_SORTING).toBe(3);
   });
 
   it("the model is any plain name the user sets (not written into the code); a name that could read as a flag or carries other characters falls back to the default", () => {
@@ -187,10 +188,48 @@ describe("the isolated model call", () => {
     await expect(askModel(fake("err", `process.stdin.resume(); process.stdin.on("end", () => process.stdout.write(JSON.stringify({ is_error: true, result: "boom" })));`), "q", call())).rejects.toThrow("answer");
     await expect(askModel(fake("exit", `process.stdin.resume(); process.stdin.on("end", () => process.exit(3));`), "q", call())).rejects.toThrow("exit");
     await expect(askModel({ file: join(folder, "does-not-exist"), args: [], env: {} }, "q", call())).rejects.toThrow("spawn");
+    // a signal (the host going away) ends the call at once: the child is killed, the call rejects with "abort"; one that is already aborted starts nothing
+    const controller = new AbortController();
+    const hanging = askModel(fake("hang", `process.stdin.resume(); setTimeout(() => {}, 30000);`), "q", call({ signal: controller.signal, timeoutMs: 20_000 }));
+    setTimeout(() => controller.abort(), 100);
+    await expect(hanging).rejects.toThrow("abort");
+    const gone = new AbortController();
+    gone.abort();
+    await expect(askModel(fake("hang2", `setTimeout(() => {}, 30000);`), "q", call({ signal: gone.signal }))).rejects.toThrow("abort");
     // an engine that is not wired is refused before anything is started
     await expect(askModel(fake("never", `process.exit(0);`), "q", call({ engine: "codex" as never }))).rejects.toThrow("engine");
+    // one that is already aborted spawns nothing at all (its script would have left a file)
+    const marker = join(folder, "spawned-marker");
+    const already = new AbortController();
+    already.abort();
+    await expect(askModel(fake("marks", `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "x");`), "q", call({ signal: already.signal }))).rejects.toThrow("abort");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(existsSync(marker)).toBe(false);
     const started = Date.now();
     await expect(askModel(fake("slow", `process.stdin.resume(); setTimeout(() => {}, 30000);`), "q", call({ timeoutMs: 300 }))).rejects.toThrow("timeout");
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  /** Whether a process is alive (signal 0). */
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  /** Runs a script that writes its pid and hangs; `end` ends the call; the pid comes back once the script is up. */
+  const hang = async (name: string, end: "timeout" | "abort") => {
+    const pidFile = join(folder, `${name}.pid`);
+    const cli = fake(name, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdin.resume(); setTimeout(() => {}, 30000);`);
+    const controller = new AbortController();
+    const running = askModel(cli, "q", call(end === "timeout" ? { timeoutMs: 3_000, signal: controller.signal } : { timeoutMs: 20_000, signal: controller.signal }));
+    const rejected = expect(running).rejects.toThrow(end);
+    for (let n = 0; n < 100 && !existsSync(pidFile); n++) await new Promise((resolve) => setTimeout(resolve, 50));
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(alive(pid)).toBe(true);
+    if (end === "abort") controller.abort();
+    await rejected;
+    for (let n = 0; n < 40 && alive(pid); n++) await new Promise((resolve) => setTimeout(resolve, 50));
+    return pid;
+  };
+
+  it("a call that times out, and a call that is aborted (the host quits), each end the child itself: no process is left running", async () => {
+    expect(alive(await hang("kill-timeout", "timeout"))).toBe(false);
+    expect(alive(await hang("kill-abort", "abort"))).toBe(false);
   });
 });

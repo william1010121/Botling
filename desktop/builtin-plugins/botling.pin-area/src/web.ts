@@ -25,7 +25,7 @@ export function traceOf(raw: unknown): TraceData | null {
   const d = raw as Record<string, unknown>;
   const text = (value: unknown) => typeof value === "string";
   if ((d.kind !== "moved" && d.kind !== "back") || !text(d.rid) || !text(d.pin) || !text(d.title) || !text(d.q) || (d.a !== undefined && !text(d.a))) return null;
-  return { kind: d.kind, rid: d.rid as string, pin: d.pin as string, title: d.title as string, q: d.q as string, by: d.by === "user" ? "user" : "bot", ...(typeof d.a === "string" ? { a: d.a } : {}), ...(d.worker === true ? { worker: true as const } : {}) };
+  return { kind: d.kind, rid: d.rid as string, pin: d.pin as string, title: d.title as string, q: d.q as string, by: d.by === "user" ? "user" : d.by === "app" ? "app" : "bot", ...(typeof d.a === "string" ? { a: d.a } : {}), ...(d.worker === true ? { worker: true as const } : {}) };
 }
 
 /**

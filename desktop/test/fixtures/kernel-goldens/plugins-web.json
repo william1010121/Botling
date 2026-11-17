@@ -102,7 +102,7 @@
       "botling.pin-area.sorter.engine": "claude",
       "botling.pin-area.sorter.model": "claude-haiku-5-5",
       "botling.pin-area.sorter.confidence": 0.75,
-      "botling.pin-area.sorter.timeoutMs": 3500
+      "botling.pin-area.sorter.timeoutMs": 10000
     },
     "builtIn": true,
     "commands": []

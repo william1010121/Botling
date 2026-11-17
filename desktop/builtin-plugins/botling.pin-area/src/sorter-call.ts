@@ -10,7 +10,7 @@ import { SYSTEM, type SorterEngine } from "./classify";
 /** The CLI as `api.engines.cli` gives it. */
 export interface Cli { file: string; args: string[]; env: Record<string, string> }
 /** What one call runs with: the engine, the model (a name the engine knows) and how long it may take. */
-export interface SorterCall { engine: SorterEngine; model: string; timeoutMs: number }
+export interface SorterCall { engine: SorterEngine; model: string; timeoutMs: number; /** Ends the call (the host is going away): the child is killed and the call rejects with "abort". */ signal?: AbortSignal }
 /** One question to the sorter model; resolves to what it answered (an object or its text), rejects on any failure. */
 export type Ask = (prompt: string, call: SorterCall) => Promise<unknown>;
 
@@ -44,6 +44,8 @@ function environment(extra: Record<string, string>): Record<string, string> {
 export function askModel(cli: Cli, prompt: string, call: SorterCall): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (call.engine !== "claude") { reject(new Error("engine")); return; }
+    // the host is already going away: nothing is started
+    if (call.signal?.aborted) { reject(new Error("abort")); return; }
     const folder = mkdtempSync(join(tmpdir(), "botling-pin-"));
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -51,6 +53,7 @@ export function askModel(cli: Cli, prompt: string, call: SorterCall): Promise<un
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      call.signal?.removeEventListener("abort", abort);
       rmSync(folder, { recursive: true, force: true });
       if (error) reject(error); else resolve(value);
     };
@@ -59,6 +62,8 @@ export function askModel(cli: Cli, prompt: string, call: SorterCall): Promise<un
     const kill = () => {
       try { if (child.pid && process.platform !== "win32") process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } }
     };
+    function abort() { kill(); done(new Error("abort")); }
+    call.signal?.addEventListener("abort", abort, { once: true });
     let output = "";
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (chunk: string) => { if (output.length < 1_000_000) output += chunk; });

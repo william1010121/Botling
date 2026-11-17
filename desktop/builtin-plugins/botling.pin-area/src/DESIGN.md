@@ -159,52 +159,49 @@ It runs when the page asks (`view`, `touch`), before a briefing (`beforeSend`), 
   (`applyUpdate` with source bot) or by a state other than run; a worker's news (source app) does not clear it. A failed / stopped worker makes no nudge (it already turned the card to 等你).
 Nothing here changes a card's words or state by itself: the program only closes (hour) and marks / tells (stale, nudge).
 
-### 4c. The user's plain lines are sorted by a small model, not by the head bot
+### 4c. The user's plain lines are sorted by a small model AFTER they are sent
 
-**Status (review R1, the user's decision 「先合併自動綁卡和自動收卡，分類先關掉，改成『先送出、事後再搬進卡片』重做」): the sort before the send is OFF by default and is being redone as classify AFTER send.**
-Measured with the real small model: 3.5–5.5 s per call, longer than the 4 s the send can give it, so every line waited ~4 s and was then sent as it was. `botling.pin-area.sorter.enabled` defaults to **false** in the manifest,
-and the code treats anything but exactly `true` as off. Off, `beforeSend` answers in the same call (no promise, no queue, no chat read, no model call, no waiting). Everything below (the call, the settings, the deadline, the order)
-stays in the code and is what the redo builds on (4c after-send: the line is sent first, the model sorts it afterwards and the app moves it into the card, with the same one-tap undo). The call no longer passes `--json-schema`
-(measured: it makes the CLI take 2–3 turns instead of 1); the system text asks for one JSON object and `parseVerdict` reads the result text strictly (a fenced or wrongly shaped answer is none).
+History: the first 4c sorted the line *before* it was sent (the send waited for the model). The real small model takes 3.5–5.5 s, longer than the 4 s a `beforeSend` hook can give it (the core gives up at 5 s), so
+every line waited ~4 s and was sent as it was (review R1). The user's decision: 「先送出、事後再搬進卡片」. Nothing waits for the model now, so the call may take its time (the setting's default is 10 s).
 
-The user's decision: the un-@ lines of a chat that has cards are sorted by a call of a small model that takes over directly (no shadow mode). Which model is a **setting**, not code (review S5). The head bot is no longer asked to route:
-the `move="yes"` instruction is gone from the prompt section (`package.json`) and from the briefing's tail. `<pin-say>` stays (the answer inside a card). The `move="yes"` *handler*
-(`takeAuto`, `keepAnswer`) is still in the host: a bot that says it anyway (an old session) is honoured, nothing asks for it.
+**Off until the user tries it.** `botling.pin-area.sorter.enabled` defaults to **false**; the code treats anything but exactly `true` as off. Turn it on in **Settings › Plugins › Pin 區** ("Sort plain lines into cards after
+they are sent"), or by setting `botling.pin-area.sorter.enabled` to `true` in the plugin's settings; a change takes effect on the next line (the settings are read on every line). Off, the hook is exactly what it was without 4c.
 
-**How the app calls a model without tools (nothing new in the core).** `api.engines.cli("claude")` gives the CLI as Botling starts it (the real `claude`, found where the bots' is); `sorter-call.ts` (`askModel`, the model passed in)
-runs it as the chat summaries do (botling.catchup `claudeSummarizer`): `claude -p --output-format json --model <the setting> --tools "" --strict-mcp-config --no-session-persistence
---disable-slash-commands --setting-sources "" --system-prompt …`, in a fresh temporary folder, the question on stdin, a process group ended on the call's timeout, the answer the
-`structured_output` (else the result text). No permission (a shipped plugin's own child process, as catchup's), no API key, no SDK. A Botling with no such CLI (`engines` missing or `cli()` null) sorts nothing:
-every plain line stays in the chat with the briefing.
+**Flow.** `beforeSend` for a plain line (`M.briefable`, at least 3 characters, the bot has cards, no @card hit; `@card` and the 回覆到 chip are routed by code first and never asked) answers **in the same call** with the line as it
+is plus the briefing, and leaves an *intent* (`pins.ts` `intents`, in memory, 2 minutes). **The sort starts only when the core has shown the line** (`messagePosted`, user, the text matching an intent): a send that another hook blocked, or
+that failed, never shows, so it leaves no job, no model call and no suggestion. The sort is a *job* (`Job`, one per line, in memory only): the model is asked beside the send (`sortAfter`; the cards, the chat's newest 6 lines without the line itself, what the user corrected lately
+(`Book.fixes`) and the line, as **one JSON document**; `askModel`, the settings' model / limit; the answer is parsed strictly, `parseVerdict`). The job is **bound to the turn it was sent into** and to no later one:
+- `messagePosted` (user, every line, sorted or not): while a turn runs (`running`, `turnStarted` .. `turnFinished`) a line is read into that turn or waits behind it, so the turn's reply is no longer one line's: the new job is `"shared"` and a
+  `"mine"` job of that turn that has no reply yet becomes `"shared"` too. Otherwise the line is counted (`linesSince`). `turnStarted`: a turn that carries no worker's report binds the waiting jobs: it began after exactly one line (and
+  that is the job's) → `turn: "mine"` (its reply can move too); anything else → `"shared"` (the lines may move one by one, the reply stays in the chat; no guess about whose reply is whose). A turn that carries a worker's report answers no line (the
+  line waits for its own turn, which takes it only if it began after exactly that line). `messagePosted` (bot): only while the turn runs, the first reply goes to the turn's own, unfinished `"mine"` job (`job.reply`); a reply longer than
+  `MAX_LATE_REPLY` (12,000 characters) is not kept whole, so it stays in the chat (the job becomes `"shared"`). `turnFinished`: the job is finished and takes no later turn's reply; a `"mine"` job that got no reply (the turn failed or was stopped)
+  whose line already went into a card is released (`M.releaseLate`: the line shows in the chat again), and a verdict that comes after such a turn leaves the line in the chat.
+- The verdict is decided against the book **as it is then** (`decide`): `chat` / low confidence (the setting, 0.75) / a card that went / a wrong shape / a failure or timeout → **nothing happens**, the line is already in the chat.
+  `assign` → `moveJob`: once the line has shown, `M.takeLate` puts it into the card as one turn (`via: "auto"`, `late: true`, the line's id kept) and, if the reply is already there, the reply too (`replyId`); a reply that has not
+  come yet is filled in when it is posted (`attachLateReply`), so a reply that is still streaming while the move happens just follows. The chat's two messages (the line and the reply) fold behind **one line**
+  「→ 放進「X」的卡片 · 移回聊天 · 改到…」 (`tracesOf`: `fold: [line, reply]`). `new` / `merge` → only a **suggestion** as before (`Book.suggest`, a tap to make the card, a confirm to merge; undo of a merge is 釘回 of the folded card).
+- A late turn never waits for a `<pin-say>` (`waits` excludes it: the bot was not told about the card, so it will not say anything for it): no open-turn bookkeeping, no 「等回覆」, no double answer from `answerOnlyWaiting`.
+  The bot's next briefing lists the card as usual; the prompt section tells the bot the app may move a line and its reply (nothing for it to do).
+- **Undo.** 移回聊天 (`moveBack`) takes the turn out of the thread and **draws nothing**: the line and the reply are real chat messages that simply show again (a late turn has no "answer under the trace" to draw);
+  the correction goes into `Book.fixes` and so into the model's next prompt. 改到… (`moveTo`) keeps the trace with the new card's name. A card taken down gives the lines back the same way (no trace); 釘回 folds them again.
 
-**Settings** (`package.json` `contributes.settings`, read with `api.settings.get` on every line, `classify.ts` `sorterSettings`; precedent botling.catchup): `botling.pin-area.sorter.enabled` (default **false**; only an
-explicit true turns the sort on), `.engine` (only `claude` is wired; any other value means no engine, so nothing is sorted and nothing is sent to a model), `.model` (default `claude-haiku-5-5`; a plain model name
-as the CLI takes it, `[A-Za-z0-9][A-Za-z0-9._:\[\]-]*`, so a value can never read as a flag; anything else is the default; no list of known models, so a new model needs no code change), `.confidence` (0.75, held to 0.5–0.99)
-and `.timeoutMs` (3500, held to 500–3500). Every value is read back to a safe one (a throwing reader or a wrong type is the default). The `isClaudeModel` check of the `bot/claude-models-open` branch is not depended on.
+**The cases.** *A second line sent before the verdict*: its own job, in parallel (at most `MAX_SORTING` = 3 per bot; a fourth is sent and not sorted); lines answered by their own turns move with their own replies whatever order the verdicts
+come in. *Bot reply streaming while the move happens*: the line moves at once, the reply is attached when it is posted. *Card removed meanwhile*: before the verdict, the verdict is chat; after the move, the reply is not written
+into a card that is down (it stays in the chat), the line shows again. *App quits / host restarts*: the plugin's last disposer aborts every model call (`SorterCall.signal`: the child is killed) and drops the jobs; the line was sent
+before, so nothing is lost; a move that was never decided is simply not made. A job is forgotten when its verdict is in and it can do nothing more (its turn is over, the line stays in the chat, or its reply is not its to move), or after 15 minutes (`JOB_MS`); at most 12 per bot. A line whose shown text differs from what was sent (another plugin changed it) is never matched, so never sorted. **The sorter switch is read again when the verdict comes** (`settle`): turned off while the model thinks, nothing moves. The card keeps the whole reply (the chat's copy is folded away, so nothing is cut); a card turn whose reply stays in the chat says 「回覆在聊天裡」, and the receipt of a moved line says 「自動放進這裡」 (the app's sorter put it there, not the bot).
 
-**The deadline (review F1).** The core gives a `beforeSend` hook 5 s (`host-client.ts` `DEFAULT_TIMING.hook`) and then sends the line as it is. The whole sort therefore has `SORT_DEADLINE_MS` = 4 s from the hook's
-start: a guard timer gives back the plain line (with the briefing) at the deadline; every step after a wait (the chat read, the model) checks the clock again and **writes nothing once it has passed**, so a late answer
-makes no orphan turn and no suggestion for a line the core already sent; the model's own time limit is what is left of the deadline less 300 ms, at most the setting, and a line with less than 600 ms left is not asked.
-A timeout simply leaves the line in the chat (measured on an idle Mac: one call of the small model takes about 3.7 s, so the model's limit is the setting's 3.5 s, not the old 8 s).
+**How the app calls a model without tools (nothing new in the core).** `api.engines.cli("claude")` gives the CLI as Botling starts it; `sorter-call.ts` (`askModel`, the model passed in) runs it as the chat summaries do
+(botling.catchup): `claude -p --output-format json --model <the setting> --tools "" --strict-mcp-config --no-session-persistence --disable-slash-commands --setting-sources "" --system-prompt …`, in a fresh temporary folder, the question
+on stdin, a process group ended on the call's timeout or abort, the answer the `structured_output` (else the result text). No `--json-schema` (measured: it makes the CLI take 2–3 turns instead of 1); the system text asks for one JSON
+object. No permission (a shipped plugin's own child process, as catchup's), no API key, no SDK. A Botling with no such CLI (`engines` missing or `cli()` null) sorts nothing.
 
-**Order (review S2).** Each bot has a queue of the lines being settled: a line sent while an earlier one is still being sorted waits for it (it is settled within its own, earlier, deadline) and is then handled like a first
-line: an @card is written after it, a short line goes plain, a plain line is sorted with what is left of its own deadline. A line is never settled before one sent earlier. A line of another bot does not wait. With nothing
-waiting the hook answers in the same call as before (no promise) unless a model call is needed.
+**Settings** (`package.json` `contributes.settings`, read with `api.settings.get` on every line, `classify.ts` `sorterSettings`; precedent botling.catchup): `botling.pin-area.sorter.enabled` (default **false**), `.engine` (only `claude` is
+wired; any other value means no engine, so nothing is sorted), `.model` (default `claude-haiku-5-5`; a plain model name as the CLI takes it, so a value can never read as a flag; anything else is the default; no list of known models),
+`.confidence` (0.75, held to 0.5–0.99) and `.timeoutMs` (10000, held to 1000–30000). Every value is read back to a safe one (a throwing reader or a wrong type is the default).
 
-**Flow** (`pins.ts` `sortLine`, pure parts in `classify.ts`). `beforeSend` for a plain line (`M.briefable`, at least 3 characters, the bot has cards, no @card hit; `@card` and the 回覆到 chip are routed by
-code first and never asked) asks the model once: the cards (id, title, state, status as the short summary), the chat's newest 6 lines (`chat.messages`, the user's words without the briefing or a card
-header, nothing the app wrote), what the user corrected lately (`Book.fixes`) and the line, as **one JSON document** (so no text of a card or the chat can pass for an instruction). The answer
-`{action: assign|new|merge|chat, card, card2?, confidence}` is parsed strictly (`parseVerdict`: anything else is none) and decided against the book **as it is after the wait** (`decide`; the send
-waits for the model, so the book is read again):
-- confidence below `CONFIDENCE` (0.75), `chat`, a card that does not exist, a wrong shape, a timeout or any failure: the line stays in the chat, with the briefing, nothing is written.
-- `assign`: written into that card exactly as an @card (`writeInto`: duplicate guard, the card's header and footer go to the bot, which answers with `<pin-say>`), with `via: "auto"`. The user's line folds
-  behind the trace 「→ 放進 X 的卡片 · 移回聊天 · 改到…」 (`markPosted` keeps the line's id as `msgId` when the line shows in the chat); both buttons are the Phase 2 undo, and a correction goes to the next prompt of the classifier.
-- `new`: only a **suggestion** (`Book.suggest`, 2 kept, 30 minutes): the line stays in the chat; the strip shows 「要把「…」做成新卡片嗎？ 建立卡片 · 不用」; the tap makes a card of the user's (`acceptSuggest`), like pinning the line.
-- `merge`: only a suggestion that **needs the confirm**: 「A 和 B 好像是同一件事，要合併嗎？ 合併 · 不用」. The tap (`mergeCards`) copies B's thread and workers into A and takes B down
-  (`Removed.merged` says what to take back); **undo** is B's 釘回 (the strip's line 「B 已併入 A · 釘回」), which takes those turns and workers out of A again. A merge whose card went meanwhile is not shown and does nothing.
-
-**Limits.** The send waits for the model (about 3.7 s for the small model measured, 4 s at most, then the line goes as it is). One model call per plain line of a chat that has cards; none for a chat with no cards, a line under 3 characters, a slash command
-or a 〔header〕 line. The model sees titles, statuses and recent lines: they go to the user's own claude login, as any bot turn does. Not tested against the real model here (the tests mock the call).
+**Limits.** One model call per plain line of a chat that has cards, 3 at once per bot; none for a chat with no cards, a line under 3 characters, a slash command or a 〔header〕 line. The model sees titles, statuses and recent lines: they go to
+the user's own claude login, as any bot turn does. Not tested against the real model here (the tests mock the call; the real latency was measured by the reviewer).
 
 ## Phase 3 (「你不在時」: what happened while you were away)
 
@@ -283,7 +280,7 @@ is a hook of the whole chat, answered at once for a bot with no cards).
 
 **Phase 4c additions to the answers above.** 4 (text): the model is given one JSON document (cards, lines, the line: `oneLine`/`clean` each, quotes and newlines escaped by `JSON.stringify`), and the model's answer is read back to a verdict
 (`parseVerdict`: strict action, a card id only if `isId`, confidence 0–1). 5 (secrets): none passed; the CLI's own login is used, errors log a fixed word, never the text. 6 (sizes): line 1,500, recent lines 6 × 200, 2 suggestions × 80, the
-child's output capped at 1 MB; the settings are clamped. 8 (retries): one sort in flight per bot (the lines behind it wait in order), the same words within 3 s are one send (`writeInto`), a suggestion is taken out of the book before it acts (a double tap acts once, the page also guards by id).
-9 (authority at use): the book is read again after the model's wait and the deadline is checked after it (nothing is written once it has passed); the worker-report ids are read only from `origin: "app"` turns; a card that went, or a merge whose cards went, does nothing; a suggestion expires after 30 minutes. 10 (fail closed): a missing CLI, a timeout, a bad exit or answer,
-a low confidence, a deadline that passed, an engine that is not wired or any throw leaves the line in the chat with the briefing. 11 (tests): `classify.test.ts` (prompt, parse, decide, merge, the settings, the isolated call against a fake CLI script), `host.test.ts` (the flow with a mocked model), `ui.test.ts`.
-13: the second and last `remote-test.sh` run covers 4a–4c; the review fix round (F1, S1–S6) made one run.
+child's output capped at 1 MB; the settings are clamped. 8 (retries): at most 3 sorts in flight per bot, 12 jobs (the line is already sent, so a retry is never a second send); a line is moved once (`lineUsed`), a reply is filled once, the same words within 3 s are one send (`writeInto`), a suggestion is taken out of the book before it acts (a double tap acts once, the page also guards by id).
+9 (authority at use): the book is read again after the model's wait (the verdict is decided on it), the move re-reads it too; the host going away aborts the calls and a late answer writes nothing; the worker-report ids are read only from `origin: "app"` turns; a card that went, or a merge whose cards went, does nothing; a suggestion expires after 30 minutes. 10 (fail closed): a missing CLI, a timeout, a bad exit or answer,
+a low confidence, an engine that is not wired or any throw leaves the line in the chat where it was sent. 11 (tests): `classify.test.ts` (prompt, parse, decide, merge, the settings, the isolated call against a fake CLI script), `host.test.ts` (the after-send flow with a mocked model: verdict before / during / after the reply, two lines, a card removed meanwhile, undo, quit), `model.test.ts` (`takeLate`, `attachLateReply`, traces), `ui.test.ts`.
+13: the after-send redo (this step) is at most 2 `remote-test.sh` runs, no `--typecheck`; the earlier steps' runs are in their own notes.

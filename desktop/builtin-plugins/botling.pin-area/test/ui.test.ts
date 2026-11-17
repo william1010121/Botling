@@ -743,6 +743,15 @@ describe("a line the bot put into a card, in the card's thread", () => {
     expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
     await flush();
   });
+
+  it("a line the app moved after its send says it was put here automatically (not that the bot decided), and one whose reply stays in the chat says so", () => {
+    ui.update("B1", view(pin("p-0001", { thread: [turn({ rid: "r1", late: true, a: null, aAt: null }), turn({ rid: "r2", late: true, replyId: "b2" })] })));
+    ui.open("p-0001");
+    const receipts = [...panel()!.querySelectorAll(".pt-me .pt-receipt")].map((node) => node.textContent!.split(" · ")[1]);
+    expect(receipts).toEqual(["自動放進這裡", "自動放進這裡"]);
+    expect(panel()!.textContent).not.toContain("bot 判斷");
+    expect([...panel()!.querySelectorAll(".pt-empty")].map((node) => node.textContent)).toEqual(["回覆在聊天裡"]);
+  });
 });
 
 describe("what a worker said, in the card's thread and as a trace in the chat", () => {
