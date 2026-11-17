@@ -133,24 +133,28 @@ describe("changing pins", () => {
     expect(await book.change(BOT, "P1", { kind: "remove" })).toEqual({ changed: false });
   });
 
-  it("the picker lists only components with a Command: what was drawn with one, the bot's own others, then the pin-only ones; no snapshot rows", async () => {
+  it("the picker lists only components with a Command, the pin-only ones first, then what was drawn with one, then the bot's own others; no snapshot rows", async () => {
     const { f, book } = await two();
     f.entries.uptime = { command: "uptime", detail: null, every: null, sizes: [] };
     f.entries.cpu = { command: "python3 cpu.py", detail: null, every: 5, sizes: ["1x1"] };
     f.entries.nocmd = { command: null, detail: null, every: null, sizes: [] };
-    f.pinOnly = ["cpu", "nocmd"];
-    // todo: drawn as plain data (no Command anywhere); gitlog: drawn with a command; choices: never.
-    f.shownCards = [shown("todo"), shown("gitlog", { shownCommand: GIT }, 1), shown("choices", {}, 2)];
+    f.entries.mem = { command: "python3 mem.py", detail: null, every: 5, sizes: ["1x1"] };
+    f.pinOnly = ["cpu", "nocmd", "mem"];
+    // todo: drawn as plain data (no Command anywhere); gitlog: drawn with a command; mem: pin-only and drawn once, with its command; choices: never.
+    f.shownCards = [shown("todo"), shown("gitlog", { shownCommand: GIT }, 1), shown("choices", {}, 2), shown("mem", { shownCommand: "python3 mem.py" }, 3)];
     const view = await book.view(BOT);
     expect(view.pinChoices).toEqual([
+      { name: "cpu", command: "python3 cpu.py", uses: 0, pinned: false },
+      { name: "mem", command: "python3 mem.py", uses: 1, pinned: false },
       { name: "gitlog", command: GIT, uses: 1, pinned: true },
       { name: "uptime", command: "uptime", uses: 0, pinned: false },
-      { name: "cpu", command: "python3 cpu.py", uses: 0, pinned: false },
     ]);
-    // A component drawn as plain data whose library entry has a Command is offered with that Command.
+    // A component drawn as plain data whose library entry has a Command is offered with that Command (after the pin-only ones).
     f.entries.todo!.command = "cat todo.json";
     book.forgetLibraries();
-    expect((await book.view(BOT)).pinChoices[0]).toEqual({ name: "todo", command: "cat todo.json", uses: 1, pinned: true });
+    const after = (await book.view(BOT)).pinChoices;
+    expect(after.map((choice) => choice.name)).toEqual(["cpu", "mem", "todo", "gitlog", "uptime"]);
+    expect(after[2]).toEqual({ name: "todo", command: "cat todo.json", uses: 1, pinned: true });
   });
 
   it("a snapshot pin saved before stays in the view, and keeps working (resize, save, unpin) though none can be made now", async () => {

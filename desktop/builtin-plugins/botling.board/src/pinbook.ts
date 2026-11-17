@@ -158,12 +158,13 @@ export class PinBook {
   }
 
   /**
-   * The picker's list: only components with a Command (a pin runs it to stay current; there are no snapshot pins). First the ones the
-   * bot drew with a command (newest first), then its own others with one, then the pin-only status components (the bot is not told of
-   * those, every bot's picker has them).
+   * The picker's list: only components with a Command (a pin runs it to stay current; there are no snapshot pins). First the pin-only
+   * status components (the main use of the strip; the bot is not told of them, every bot's picker has them), then the ones the bot drew
+   * with a command (newest first), then its own others with one.
    */
   private choices(library: CardLibrary, pins: PinRecord[], shown: ShownCard[]): PinChoiceView[] {
     const available = new Set(library.names);
+    const pinOnly = new Set(library.pinOnly);
     const uses = new Map<string, number>();
     const commands = new Map<string, string>();
     const order: string[] = [];
@@ -176,15 +177,19 @@ export class PinBook {
     }
     const pinned = new Set(pins.map((pin) => pin.name));
     const choice = (name: string, command: string): PinChoiceView => ({ name, command, uses: uses.get(name) ?? 0, pinned: pinned.has(name) });
-    const used = order.flatMap((name) => {
+    const first = library.pinOnly.filter((name, at, all) => available.has(name) && all.indexOf(name) === at).flatMap((name) => {
       const command = commands.get(name) ?? library.entries[name]?.command ?? null;
       return command ? [choice(name, command)] : [];
     });
-    const others = [...library.offered, ...library.pinOnly].filter((name, at, all) => available.has(name) && !uses.has(name) && all.indexOf(name) === at).flatMap((name) => {
+    const used = order.filter((name) => !pinOnly.has(name)).flatMap((name) => {
+      const command = commands.get(name) ?? library.entries[name]?.command ?? null;
+      return command ? [choice(name, command)] : [];
+    });
+    const others = library.offered.filter((name, at, all) => available.has(name) && !pinOnly.has(name) && !uses.has(name) && all.indexOf(name) === at).flatMap((name) => {
       const command = library.entries[name]?.command ?? null;
       return command ? [choice(name, command)] : [];
     });
-    return [...used, ...others].slice(0, 200);
+    return [...first, ...used, ...others].slice(0, 200);
   }
 
   /** The pins as the page draws them, those floating, and what the picker offers. */
