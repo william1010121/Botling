@@ -9,6 +9,7 @@ import { BotCards } from "../../src/core/bot/cards";
 import { ALWAYS_COMPONENTS, COMPONENT_LIMIT, ComponentLibrary, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
 import { INLINE_BLOCK_GUIDANCE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
+import { launchSettings } from "../../src/core/settings";
 import { botPrompts, desktopPrompts, type ReportTool } from "../../src/core/prompts";
 import { REPORT_SECTION, reportSections } from "../report-section";
 import { tempDir } from "../helpers";
@@ -53,6 +54,8 @@ describe("settings.json inlineBlockGuidance: who gets the guidance", () => {
     expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/inline-blocks-missing-top/x")).toBe(true);
     expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/nline-blocks-missing-top/x")).toBe(false);
     expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/oline-blocks-missing-top/x")).toBe(false);
+    // An empty or blank entry names nothing (resolve("") is the working folder: it must not match a bot that sits there).
+    expect(inlineBlocksFor({ inlineBlockGuidance: ["", "   "] }, process.cwd())).toBe(false);
     // A list does not fall back to the default: the source project is in only when it is named.
     expect(inlineBlocksFor({ inlineBlockGuidance: [] }, a)).toBe(false);
   });
@@ -235,9 +238,22 @@ describe("the built-in component every bot has", () => {
     expect(desk.giveComponent("inline-report-block", bot)).toBe(true);
     expect(list).toHaveLength(COMPONENT_LIMIT);
     expect(list).not.toContain("inline-report-block");
+    // With a place left (19 of its own) a 20th is given, though its own list also holds the always-yours one (that is not counted).
+    list = Array.from({ length: COMPONENT_LIMIT - 1 }, (_, i) => `c${i}`);
+    expect(desk.giveComponent("table", bot)).toBe(true);
+    expect(list).toContain("table");
+    list = Array.from({ length: COMPONENT_LIMIT }, (_, i) => `c${i}`);
     // The 21st of the bot's own is still refused, and says 20 / 20 (not 21).
     expect(desk.giveComponent("table", bot)).toBe(false);
     expect(desk.askNote("table", "add it", true, bot)).toContain("already has 20 / 20 components");
+  });
+});
+
+describe("settings.json inlineBlockGuidance reaches the bots' launch settings", () => {
+  it("as written (a string or a list), and absent when it is not there", () => {
+    expect(launchSettings({ inlineBlockGuidance: "all" } as never).inlineBlockGuidance).toBe("all");
+    expect(launchSettings({ inlineBlockGuidance: ["/a"] } as never).inlineBlockGuidance).toEqual(["/a"]);
+    expect(launchSettings({} as never).inlineBlockGuidance).toBeUndefined();
   });
 });
 
