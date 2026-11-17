@@ -52,6 +52,49 @@ export function canPin(command: string | null | undefined, pinned: boolean): boo
   return !!command || pinned;
 }
 
+/** The built-in inline blocks (botling.cards): drawn from JSON the bot wrote in its reply, with no Command, so they cannot be pinned as they are. */
+const INLINE_BLOCKS: ReadonlySet<string> = new Set(["inline-chart", "inline-report-block"]);
+/** The JSON longer than this is not pasted into the request (the bot's reply above has it). */
+const MAKE_PINNABLE_JSON_MAX = 16_000;
+/** A second press of "Make it pinnable" within this many ms is the same request (a double tap sends once). */
+const MAKE_PINNABLE_AGAIN_MS = 15_000;
+/** When each card's request was sent (`messageID/index`), so a double tap never sends twice. */
+const askedPinnable = new Map<string, number>();
+
+/** Forgets the requests sent (for a test; the page is the only other thing that ends them). */
+export function forgetPinnableAsks(): void {
+  askedPinnable.clear();
+}
+
+/** An inline block with data and no command, not pinned: it can be made pinnable by asking the bot for a script. */
+export function canMakePinnable(display: DisplayView, pinned: boolean): boolean {
+  return !pinned && !display.command && INLINE_BLOCKS.has(display.name) && display.data.trim() !== "" && display.data.trim() !== "null";
+}
+
+/** The message "Make it pinnable" sends, in the page's language: the block's JSON (one line) and what the bot should do with it. */
+export function makePinnableText(name: string, data: string): string {
+  let json = data.trim();
+  try { json = JSON.stringify(JSON.parse(json)); } catch { /* not JSON: as the bot wrote it */ }
+  if (json.length > MAKE_PINNABLE_JSON_MAX) json = t("pins.makePinnableTooLong");
+  return t("pins.makePinnableMessage", { name, json });
+}
+
+/**
+ * Sends the request to this bot as a chat message, as if the user had typed it (the bot then starts a worker that writes the script and
+ * shows the card again with a command, which has the Pin button). A press while the same card's request is fresh does nothing but say so.
+ */
+export function askMakePinnable(display: DisplayView, messageID: string, index: number): void {
+  const key = `${messageID}/${index}`;
+  const last = askedPinnable.get(key);
+  if (last !== undefined && Date.now() - last < MAKE_PINNABLE_AGAIN_MS) {
+    showToast(t("pins.makePinnableAsked"));
+    return;
+  }
+  askedPinnable.set(key, Date.now());
+  post({ type: "send", text: makePinnableText(display.name, display.data) });
+  showToast(t("pins.makePinnableSent", { bot: current.botName }));
+}
+
 export const icons = {
   pin: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2v.8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9a2 2 0 0 1-1.1-1.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`,
   refresh: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`,
@@ -99,6 +142,7 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
   });
   const pinnedHere = barFor(display.name).pinned;
   const pinnable = canPin(display.command, pinnedHere);
+  const makeable = canMakePinnable(display, pinnedHere);
   if (pinnedHere) bar.dataset.holder = "pinned";
   if (pinnedHere) {
     const badge = button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
@@ -108,6 +152,10 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
   } else if (pinnable) {
     const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => pinIt(pin));
     bar.append(pin);
+  } else if (makeable) {
+    // An inline block has no command to pin: this first, visible button asks the bot for one.
+    const make = button("pin-tool pin-make", t("pins.makePinnableTitle", { bot: current.botName }), `${icons.pin}<span>${escapeHTML(t("pins.makePinnable"))}</span>`, () => askMakePinnable(display, messageID, index));
+    bar.append(make);
   }
   if (display.command && (display.status === "done" || display.status === "failed")) {
     bar.append(button("pin-tool", t("command.runAgainLabel"), icons.refresh, () => {
@@ -119,7 +167,8 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
     openMenu(more, [
       ...(pinned
         ? [{ label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }]
-        : pinnable ? [{ label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) }] : []),
+        : pinnable ? [{ label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) }]
+        : makeable ? [{ label: t("pins.makePinnable"), run: () => askMakePinnable(display, messageID, index) }] : []),
       reportItem(more, display.name, current.components[display.name], more.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null, pinned?.id)
         ?? { label: t("pins.report"), disabled: true, run: () => {} },
     ]);
@@ -287,20 +336,24 @@ export function openPinDialog(anchor: HTMLElement, options: { name: string; comm
   confirm.focus();
 }
 
-export function showToast(text: string, undo: () => void): void {
+/** A toast for a few seconds, with Undo when `undo` is given. */
+export function showToast(text: string, undo?: () => void): void {
   document.querySelector(".pin-toast")?.remove();
   const toast = document.createElement("div");
   toast.className = "pin-toast";
   toast.setAttribute("role", "status");
   const words = document.createElement("span");
   words.textContent = text;
-  const undoButton = document.createElement("button");
-  undoButton.textContent = t("pins.undo");
-  undoButton.addEventListener("click", () => {
-    undo();
-    toast.remove();
-  });
-  toast.append(words, undoButton);
+  toast.append(words);
+  if (undo) {
+    const undoButton = document.createElement("button");
+    undoButton.textContent = t("pins.undo");
+    undoButton.addEventListener("click", () => {
+      undo();
+      toast.remove();
+    });
+    toast.append(undoButton);
+  }
   document.body.append(toast);
   setTimeout(() => toast.remove(), 6000);
 }
