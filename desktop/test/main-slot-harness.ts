@@ -70,6 +70,7 @@ export async function drawPage(options: PageOptions = {}): Promise<Page> {
       if (command.type === "card.page") return { url: "botling-card://page/1" };
       if (command.type === "plugins.web") return { specs: [] };
       if (command.type === "storage.list") return { items: [] };
+      if (command.type === "plugins.list") return { plugins: [] };
       return { result: null };
     }),
     onEvent: () => () => {},
