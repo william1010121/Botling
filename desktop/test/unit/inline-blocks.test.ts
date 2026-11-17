@@ -10,6 +10,7 @@ import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
 import { INLINE_BLOCK_GUIDANCE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
+import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
 import { botPrompts, desktopPrompts, type ReportTool } from "../../src/core/prompts";
 import { REPORT_SECTION, reportSections } from "../report-section";
@@ -260,6 +261,11 @@ describe("the built-in components every bot has", () => {
     expect(full.bot.componentList).not.toContain("table");
     expect(full.bot.componentList).not.toContain("inline-report-block");
   });
+  it("one that sits on the list as well (put there before it was tagged) is not counted when drawing adds a component", () => {
+    const { bot } = cards([...Array.from({ length: COMPONENT_LIMIT - 1 }, (_, i) => `c${i}`), "inline-report-block"]);
+    bot.drewComponents(["clock"]);
+    expect(bot.componentList).toContain("clock");
+  });
   it("the Note's insert menu and the pin picker offer it", () => {
     const { bot } = cards(["table"]);
     expect(bot.noteComponents()!.components.find((entry) => entry.name === "inline-report-block")).toMatchObject({ offered: true });
@@ -382,6 +388,17 @@ describe("the built-in tag: Maintainer decides, not the app", () => {
     expect(new ComponentLibrary(() => [bare]).builtInNames()).toEqual([]);
   });
 
+  it("built-ins with the same order are placed by name, whichever was tagged first", () => {
+    const root = newRoot("tag-tie");
+    put(root, "zeta", "Z.\nBuilt-in: yes");
+    put(root, "alpha", "A.");
+    const lib = new ComponentLibrary(() => [root]);
+    expect(lib.builtInNames()).toEqual(["zeta"]);
+    put(root, "alpha", "A.\nBuilt-in: yes");
+    expect(lib.rescan()).toBe(true);
+    expect(lib.builtInNames()).toEqual(["alpha", "zeta"]);
+  });
+
   it("the copy that wins decides: a plugin-library copy without the line untags the shipped one, removing it tags it again; both reach the bots through rescan", () => {
     const own = newRoot("tag-shadow"), shipped = newRoot("tag-shadow-built");
     put(shipped, "inline-chart", "Chart.\nBuilt-in: yes");
@@ -408,6 +425,12 @@ describe("the built-in tag: Maintainer decides, not the app", () => {
     utimesSync(join(shipped, "inline-chart", "about.md"), kept, kept);
     expect(lib.rescan()).toBe(true);
     expect(lib.builtInNames()).toEqual(["inline-chart"]);
+  });
+
+  it("Maintainer's plugin guide says how to tag one, and that bots hear of a change in their next message", () => {
+    const guide = pluginGuideFiles()["reference/components.md"];
+    expect(guide).toContain("A `Built-in: yes` line (optional `Built-in order: 3`, lowest first)");
+    expect(guide).toContain("bots hear of either in their next message");
   });
 
   it("a bot's component lines put the built-ins first in their order, the rest in the library's order, and count only the rest", () => {
