@@ -165,6 +165,27 @@ describe("shutdown calls the collaborators in the old order", () => {
   });
 });
 
+describe("quitTidyMs caps the quit-time tidy", () => {
+  it("a tidy that never answers is cut off at quitTidyMs: the turn is interrupted, the head ends and shutdown returns", async () => {
+    const order: string[] = [];
+    const peek = make(order, { quitTidyMs: 40 });
+    peek.send("hi");
+    await waitFor("the head to have the message", () => fixture.heads[0]?.sent.length >= 1);
+    fixture.heads[0].item({ kind: "result", ok: true, text: "hello", subtype: "success" });
+    await waitFor("the turn to end", () => !peek.turn);
+    const head = fixture.heads[0];
+    head.interrupt = () => { order.push("head.interrupt"); };
+    const finish = head.finish.bind(head);
+    head.finish = () => { order.push("head.finish"); finish(); };
+    const before = performance.now();
+    await peek.shutdown(); // the tidy turn is sent to the head, which never answers it
+    expect(performance.now() - before).toBeGreaterThanOrEqual(30);
+    expect(performance.now() - before).toBeLessThan(4_000);
+    expect(head.sent.length).toBe(2); // the message and the tidy
+    expect(order.filter((line) => line.startsWith("head."))).toEqual(["head.interrupt", "head.finish"]);
+  });
+});
+
 describe("Bot.begin is TurnControl.launch", () => {
   function spied() {
     const order: string[] = [];

@@ -27,6 +27,9 @@ import { RemoteWorkers } from "../remote/service";
 
 type Env = Record<string, string | undefined>;
 
+/** How long a quit waits for the awake bots' tidy (see `quitTidyMs` below). */
+export const QUIT_TIDY_MS = 10_000;
+
 export const envNumber = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
 /** `--allowedTools` as 1.x gives it: its tools, Skill when it has plugins (their skills), and the plugins' MCP tools. */
@@ -238,8 +241,11 @@ export function coreProcessOptions(parts: CoreProcessParts): CoreOptions {
     idleMs: envNumber(env.BOTLING_IDLE_MS, 50 * 60_000),
     interruptGraceMs: envNumber(env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
     tidyTimeoutMs: envNumber(env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
-    // Quitting waits for awake bots to tidy their notes, with no time limit, as in 1.x (`putEveryoneToSleep`).
-    quitTidyMs: envNumber(env.BOTLING_QUIT_TIDY_MS, Number.POSITIVE_INFINITY),
+    // Quitting waits for awake bots to tidy their notes (1.x's `putEveryoneToSleep`), but at most this long: the bots tidy
+    // together, so this is also about how long a quit or an install waits for them. Measured quits with no limit took 7 s
+    // to 52 s ("stop: core took"). A tidy cut off here is interrupted; the bot's session is kept, so its next idle tidy
+    // writes the note. BOTLING_QUIT_TIDY_MS changes it (0 = no tidy).
+    quitTidyMs: envNumber(env.BOTLING_QUIT_TIDY_MS, QUIT_TIDY_MS),
     routineTickMs: envNumber(env.BOTLING_ROUTINE_TICK_MS, ROUTINE_TICK_MS),
     watchMs: envNumber(env.BOTLING_WATCH_MS, 20_000),
     stallMinuteMs: envNumber(env.BOTLING_STALL_MINUTE_MS, 60_000),

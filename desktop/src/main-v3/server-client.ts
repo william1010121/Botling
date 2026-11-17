@@ -229,7 +229,9 @@ export class ServerClient {
     });
     // `token` is read at each hello: botlingd writes a new one when it starts.
     const linkOptions: FeLinkOptions = {
-      storage, dial, deviceId: "desktop", feVersion: this.deps.feVersion ?? FE_VERSION, clock: this.clock, ...this.deps.link,
+      storage, dial, deviceId: "desktop", feVersion: this.deps.feVersion ?? FE_VERSION, clock: this.clock,
+      // The local socket: botlingd is usually back within seconds of a restart, so retry at 500 ms for the first minute.
+      reconnectFastMs: 500, reconnectFastWindowMs: 60_000, ...this.deps.link,
       get token() { return readToken(); },
     };
     const link = await FeLink.open(linkOptions);

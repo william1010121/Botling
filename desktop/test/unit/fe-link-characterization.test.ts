@@ -581,6 +581,42 @@ describe("a closed connection and the reconnect (§13.3, D18)", () => {
     expect(r.link.state).toBe("offline");
   });
 
+  // Local socket, opt-in `reconnectFastMs`: botlingd restarts take seconds, so the first minute of an outage retries at <= 500 ms.
+  async function gapsOf(r: Awaited<ReturnType<typeof rig>>, count: number): Promise<number[]> {
+    const gaps: number[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const before = r.wire.dials;
+      r.wire.drop("refused");
+      let waited = 0;
+      while (r.wire.dials === before && waited < 20_000) { r.clock.advance(1); waited += 1; }
+      gaps.push(waited);
+    }
+    return gaps;
+  }
+
+  it("reconnectFastMs on a local link: dials never wait more than 500 ms in the first minute of an outage, then back off to 5 s", async () => {
+    const r = await rig({ reconnectFastMs: 500, reconnectFastWindowMs: 5_000 });
+    const early = await gapsOf(r, 6);
+    expect(early).toEqual([250, 500, 500, 500, 500, 500]);
+    r.clock.advance(5_000); // the window (5 s here) is over; the next gaps double from 500 again
+    const late = await gapsOf(r, 5);
+    expect(late.slice(1)).toEqual([1000, 2000, 4000, 5000]);
+  });
+
+  it("reconnectFastMs after a welcomed session ended: a new outage starts, so the fast window starts again", async () => {
+    const r = await rig({ reconnectFastMs: 500, reconnectFastWindowMs: 5_000 });
+    r.wire.drop("refused"); // the first outage starts here ...
+    r.clock.advance(250);
+    r.clock.advance(30_000); // ... and is long over the 5 s window when the server finally answers
+    await attach(r);
+    expect(await gapsOf(r, 5)).toEqual([250, 500, 500, 500, 500]);
+  });
+
+  it("reconnectFastMs is for the local socket only: a remote link keeps the 250 ms doubling", async () => {
+    const r = await rig({ wire: new Wire(false), token: "tok-0123456789abcdef", local: false, reconnectFastMs: 500 });
+    expect(await gapsOf(r, 5)).toEqual([250, 500, 1000, 2000, 4000]);
+  });
+
   it("a welcome resets the backoff to 250 ms; the close of a welcomed session says attached false and state connecting", async () => {
     const r = await rig();
     r.wire.drop("refused");

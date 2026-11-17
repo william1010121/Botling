@@ -60,6 +60,8 @@ export interface CoreOptions {
   claimWaitMs?: number;
   emit: (message: Outbound) => void;
   log?: (line: string) => void;
+  /** Startup timing lines (`timing: …`, core/phase-marks.ts); unset: none are written. */
+  phaseLog?: (line: string) => void;
   /** A Botling 1.x data folder to import from on the first start (read-only). */
   importFrom?: string | null;
   approvalTimeoutMs?: number;

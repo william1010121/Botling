@@ -56,6 +56,12 @@ export interface FeLinkOptions {
   /** Reconnect backoff (default 250 ms doubling to 5 s). */
   reconnectMinMs?: number;
   reconnectMaxMs?: number;
+  /**
+   * Local socket only, off when unset: retry at most this often (ms) while the outage is younger than
+   * `reconnectFastWindowMs` (default 60 s), then back off as usual. botlingd restarts take seconds, not minutes.
+   */
+  reconnectFastMs?: number;
+  reconnectFastWindowMs?: number;
   /** Without a session this long, "connecting" turns "offline" (default 10 s). */
   offlineAfterMs?: number;
   /** §5.2: ping after 15 s of sending nothing; no frame for 45 s ends the session. */

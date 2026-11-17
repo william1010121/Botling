@@ -49,6 +49,8 @@ export class LinkStreams {
   private set conn(value) { this.host.conn = value; }
   private get settledRecent() { return this.host.settledRecent; }
   private set settledRecent(value) { this.host.settledRecent = value; }
+  /** When the current outage began (a session ended, or the first dial failed); drives the fast local retry. */
+  private outageSince: number | null = null;
   private get backoff() { return this.host.backoff; }
   private set backoff(value) { this.host.backoff = value; }
   private get lastByeUnsettled() { return this.host.lastByeUnsettled; }
@@ -475,8 +477,17 @@ export class LinkStreams {
     this.reduce({ type: "lost" });
     if (this.stopped || this.final) return;
     this.armOffline();
-    const delay = this.backoff;
-    this.backoff = Math.min(this.backoff * 2, this.options.reconnectMaxMs ?? 5_000);
+    const maxMs = this.options.reconnectMaxMs ?? 5_000;
+    // A welcomed session that ended starts a new outage; a dial that failed during one does not.
+    if (session.welcomed || this.outageSince === null) this.outageSince = this.clock.now();
+    // The local socket (opt-in): while the outage is young the server is most likely starting or restarting, so retry at
+    // `reconnectFastMs` at most (a refused unix connect costs nothing). After `reconnectFastWindowMs` the normal backoff
+    // applies, so a server that is really down is not dialed in a tight loop. A bye{unsettled} loop keeps escalating (D67).
+    const fastMs = this.options.reconnectFastMs;
+    const fast = fastMs !== undefined && this.local && !this.lastByeUnsettled
+      && this.clock.now() - this.outageSince < (this.options.reconnectFastWindowMs ?? 60_000);
+    const delay = fast ? Math.min(this.backoff, fastMs) : this.backoff;
+    this.backoff = Math.min(this.backoff * 2, fast ? Math.min(fastMs, maxMs) : maxMs);
     this.clearTimer("reconnect");
     this.timers.reconnect = this.clock.setTimeout(() => { this.timers.reconnect = undefined; this.dial(); }, delay);
   }

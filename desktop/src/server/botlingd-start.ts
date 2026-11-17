@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { coreProcessOptions, plainHostNode } from "../core/core-process";
 import { createUtilityHostLauncher, createUtilityScriptRunner } from "./utility-process";
 import { Core } from "../core/server";
+import { PhaseMarks } from "../core/phase-marks";
 import { type StreamId } from "../protocol";
 import { BotlingdEngine } from "./botlingd-engine";
 import { DbBotStores } from "./botstore";
@@ -80,6 +81,7 @@ export async function openIdentity(s: Ctx): Promise<Partial<Ctx>> {
 /** The log hub, the live channel, the bots' stores and exports, the shell bridge and the 2.x Core on them (plugins through the Node plugin host). What its closures read from later phases goes through `later`. */
 export async function startCore(s: Ctx): Promise<Partial<Ctx>> {
   const { options, env, paths, log, later, store, serverId, memberId, ids, roster, prefs } = s;
+  const marks = new PhaseMarks(log, "startCore");
   const hub = new LogHub(store, { serverStreams: true, log });
   const live = new LiveChannel({ sink: effectCheckpointSink(store), onError: (error) => log(`live: ${String((error as Error)?.message ?? error)}`) });
   const exports = new BotExports({
@@ -133,7 +135,9 @@ export async function startCore(s: Ctx): Promise<Partial<Ctx>> {
     : undefined;
   // M5-07d: `app_fetch` resolves a machine name to a valid peer and uses the requester, which is built after the core.
   const pendingBotWrites = new Map<string, { botId: string; at: number }>();
+  marks.lap("hub, live, exports, stores, shell, utility host");
   const core = new Core({
+    phaseLog: log,
     ...coreProcessOptions({
       env: env as NodeJS.ProcessEnv, dataDir: paths.dataDir, outDir: options.outDir, emit, log: (line) => log(`core: ${line}`),
       node: pluginNode, sealer: shell.sealer(), boundSecrets: true, app: shell.appBridge(),
@@ -175,14 +179,17 @@ export async function startCore(s: Ctx): Promise<Partial<Ctx>> {
       return stores.open(key, directory);
     },
   });
+  marks.lap("new Core");
   coreEngine.bind(core);
   shell.onAttach(() => { void core.reloadPluginSecrets().catch((error) => log(`plugins: ${String((error as Error)?.message ?? error)}`)); });
+  marks.lap("bind");
   return { hub, live, exports, stores, opened, coreEngine, shell, utilityHost, pdfTextRunner, core, pendingBotWrites };
 }
 
 /** The engine over the core, the content index and media jobs, the table feeds, uploads and the intent runtime (recovery at start), and this server's summary rows. */
 export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
   const { options, env, paths, log, later, store, serverId, roster, hub, live, exports, core, coreEngine, pdfTextRunner } = s;
+  const marks = new PhaseMarks(log, "startRuntime");
   const engine = new BotlingdEngine(coreEngine, { live, feed: (event) => { void exports.feed(event)?.catch?.(() => undefined); } });
   const content = new ContentService({
     store, dataDir: paths.dataDir, serverId, onCommitted: (streams: StreamId[]) => hub.committed(streams), audit: (text) => log(`content: ${text}`),
@@ -202,6 +209,7 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
   // M2 step 12: uploads from pages (`content.put`), kept in <data>/uploads; a chat.send naming them waits for them.
   const uploads = new Uploads({ dir: join(paths.dataDir, "uploads"), log: (line) => log(line) });
   coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
+  marks.lap("engine, content, media, feeds, peer tables, uploads");
   const runtime = new IntentRuntime({
     store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
     callHostTimers: callInTimers(env),
@@ -238,7 +246,9 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
     machine: () => machineRow(pluginsDigestOf(readInstalledPlugins().filter((plugin) => plugin.name.length <= 64))),
   });
   later.summary = summary;
+  marks.lap("intent runtime, summary rows (built)");
   const report = await runtime.start();
+  marks.lap("runtime.start (recovery, core activation)");
   log(`recovery: ${JSON.stringify(report)}`);
   return { engine, content, media, feeds, peerTables, uploads, runtime, pluginHashCache, readInstalledPlugins, machineRow, summary };
 }
@@ -246,6 +256,7 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
 /** Web Push for owned bots that need the user, and the summary rows reconciled with what the event tap stored. */
 export async function startPush(s: Ctx): Promise<Partial<Ctx>> {
   const { options, paths, log, later, roster, hub, runtime, engine, summary } = s;
+  const marks = new PhaseMarks(log, "startPush");
   const pushSender = new PushSender({
     dataDir: paths.dataDir,
     ownsBot: (botId) => engine.hasBot(botId),
@@ -267,7 +278,9 @@ export async function startPush(s: Ctx): Promise<Partial<Ctx>> {
   });
   later.pushTriggers = push;
   const summaries = summary;
+  marks.lap("push sender and triggers");
   const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
+  marks.lap("seed and reconcile summary rows");
   log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
   summaries.startPurging();
   return { push, deviceReadable };
