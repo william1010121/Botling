@@ -62,29 +62,7 @@
     "setting": {
       "type": "boolean",
       "default": true,
-      "title": "Summarize unread messages",
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.interval",
-    "setting": {
-      "type": "boolean",
-      "default": false,
-      "title": "Summarize between your messages",
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.customThresholds",
-    "setting": {
-      "type": "boolean",
-      "default": false,
-      "title": "Adjust thresholds individually",
+      "title": "Fold unread replies when you come back",
       "hidden": true
     }
   },
@@ -96,55 +74,6 @@
       "type": "number",
       "default": 3,
       "title": "Unread threshold",
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.intervalThreshold",
-    "setting": {
-      "type": "number",
-      "default": 3,
-      "title": "Interval threshold",
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.engine",
-    "setting": {
-      "type": "enum",
-      "default": "codex",
-      "title": "Summary model engine",
-      "options": [
-        "codex",
-        "claude",
-        "agy"
-      ],
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.model",
-    "setting": {
-      "type": "string",
-      "default": "gpt-6-luna",
-      "title": "Summary model",
-      "hidden": true
-    }
-  },
-  {
-    "kind": "setting",
-    "plugin": "botling.catchup",
-    "key": "botling.catchup.prompt",
-    "setting": {
-      "type": "string",
-      "default": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.",
-      "title": "Summary prompt",
       "hidden": true
     }
   },

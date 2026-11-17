@@ -12,33 +12,30 @@ setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label) }
 const message=(id:string,extra:Partial<MessageView>={}):MessageView=>({id,role:"bot",text:`Original ${id}: First sentence.`,stamp:null,avatar:null,choices:null,chosen:null,answer:null,open:false,attachments:null,replyTo:null,replyPreview:null,openable:false,...extra});
 const a=message("a",{sourceAuthor:"Garden",sourceEngine:"claude",sourceTime:"10:21 PM",choices:[{label:"Stable",detail:"after review",recommended:true},{label:"Canary",detail:null,recommended:false}],chosen:0,answer:"Keep tests. Wait for signing."});
 const b=message("b",{sourceAuthor:"Garden",sourceEngine:"codex",choices:[{label:"Continue",detail:null,recommended:false}],open:true});
-const view:CatchUpView={key:"range",ids:["a","b"],count:2,state:"ready",bullets:["Decision [[source:a/answer|Wait for signing.]] [[source:b]]"],model:"persisted-model",requestedBy:"user"};
+const view:CatchUpView={key:"range",ids:["a","b"],important:3};
 let viewer:SummaryViewer;
 const state=():ChatState=>({botID:"bot",botName:"Garden",messages:[a,b,message("outside")],working:false,avatar:"",placeholder:"",pendingFiles:[],replyingTo:null,components:{}});
 beforeEach(()=>{setLanguage("en");document.body.innerHTML='<main id="background"><button id="restore">Sources</button></main>';viewer=new SummaryViewer();});
 afterEach(()=>viewer.close());
 it("keeps original authors/time, selected option and notes, without emitting answers or actions",()=>{
- const before=sent.length;viewer.open("owner",state(),view,()=>null,()=>{},0);
+ const before=sent.length;viewer.open("owner",state(),view,()=>null,()=>{});
  expect(document.querySelectorAll(".source-message")).toHaveLength(2);
  expect(document.querySelector('[data-source-id="a"] .source-who')?.textContent).toContain("Garden · Claude10:21 PM");
  expect(document.querySelector(".source-picked")?.textContent).toContain("Stable");
  expect(document.querySelector(".source-faded")?.textContent).toContain("Canary");
  expect(document.querySelector(".source-note")?.textContent).toContain("Picked by YouKeep tests. Wait for signing.");
- expect(document.querySelector("mark")?.textContent).toBe("Wait for signing.");
- expect(document.querySelector(".source-header")?.textContent).toContain("persisted-model");
- expect(document.querySelector(".source-header")?.textContent).toContain("asked by You");
+ expect(document.querySelector("mark")).toBeNull();
+ expect(document.querySelector(".source-header")?.textContent).toContain("2 messages");
+ expect(document.querySelector(".source-nav, [data-source-next]")).toBeNull();
  expect(sent.length).toBe(before);
  expect(sourceAuthor(message("unknown"))).toBe("Original conversation");
 });
-it("reuses the window, navigates exact references and returns to all originals",()=>{
- viewer.open("owner",state(),view,()=>null,()=>{},0,0);const dialog=document.querySelector("dialog");
- document.querySelector<HTMLButtonElement>('[data-source-next]')!.click();
- expect(document.querySelector('[data-source-id="b"]')?.classList.contains("cited")).toBe(true);
- viewer.open("owner",state(),view,()=>null,()=>{},0,0);
+it("reuses the window when opened again, and Show in chat reveals the first message",()=>{
+ const reveal=vi.fn();viewer.open("owner",state(),view,()=>null,reveal);const dialog=document.querySelector("dialog");
+ viewer.open("owner",state(),view,()=>null,reveal);
  expect(document.querySelectorAll("dialog")).toHaveLength(1);expect(document.querySelector("dialog")).toBe(dialog);
  document.querySelector<HTMLButtonElement>('[data-source-all]')!.click();
- expect(document.querySelector(".source-nav")).toBeNull();
- expect(document.querySelectorAll(".source-message")).toHaveLength(2);
+ expect(document.querySelector("dialog")).toBeNull();expect(reveal).toHaveBeenCalledWith("a");
 });
 it("offers only Answer in chat on an unanswered card, closes then locates its actual live message",()=>{
  const reveal=vi.fn();viewer.open("owner",state(),view,()=>null,reveal);
@@ -53,13 +50,6 @@ it("handles Escape, keeps background inert and restores keyboard focus",()=>{
  expect(document.querySelector<HTMLElement>("#background")!.inert).toBe(true);
  document.querySelector("dialog")!.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
  expect(document.querySelector("dialog")).toBeNull();expect(document.querySelector<HTMLElement>("#background")!.inert).toBeFalsy();expect(document.activeElement).toBe(restore);
-});
-
-it("highlights the persisted note rather than identical author or metadata text",()=>{
- const repeated={...a,sourceAuthor:"You",answer:"You"};
- viewer.open("owner",{...state(),messages:[repeated,b]}, {...view,bullets:["Answer [[source:a/answer|You]]"]},()=>null,()=>{},0);
- expect(document.querySelector(".source-who mark")).toBeNull();
- expect(document.querySelector(".source-note>div:last-child mark")?.textContent).toBe("You");
 });
 
 it("keeps original image preview inside the top-layer source dialog",async()=>{

@@ -10,9 +10,9 @@ export const SETTINGS_GROUPS: { title: string; pages: (SettingsPage & { id: Core
     { id: "shortcuts", title: "Shortcuts", terms: "keyboard shortcuts keys keybindings hotkeys rebind reset cmd ctrl terminal search reload 鍵盤 快速鍵 快捷鍵" },
   ] },
   { title: "Bots", pages: [
-    { id: "models", title: "Models & workers", terms: "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast summaries summary model component editor spec writers" },
+    { id: "models", title: "Models & workers", terms: "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast component editor spec writers" },
     { id: "permissions", title: "Permissions", terms: "permissions auto ask full access bypass approvals sandbox yolo antigravity session results publish artifact local html reports" },
-    { id: "chat", title: "Chat & reports", terms: "chat summaries catch-up unread interval threshold prompt reports publish artifact local html results" },
+    { id: "chat", title: "Chat & reports", terms: "chat catch-up unread fold away threshold reports publish artifact local html results" },
   ] },
   { title: "Connect", pages: [
     { id: "setup", title: "Engine setup", terms: "doctor command-line tools claude codex antigravity install version login sign in check health acp runtime path verify" },
