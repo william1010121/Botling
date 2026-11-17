@@ -13,10 +13,26 @@ import { COMMAND_TIMEOUT_MS, OUTPUT_LIMIT, execute, type CommandOutcome } from "
 
 export const FLAG = "--component-shot";
 
-export const SURFACES = ["chat", "pinned", "floating"] as const;
+/** `tile`: a card at a Board cell size (1x1 … 4x4), filling its frame as a home-screen widget does; the `--sizes` ones. */
+export const SURFACES = ["chat", "pinned", "floating", "tile"] as const;
 export type Surface = (typeof SURFACES)[number];
+/** What a bare run draws: `tile` only when `--sizes` (or `--surfaces tile`) asks for it. */
+export const DEFAULT_SURFACES: readonly Surface[] = ["chat", "pinned", "floating"];
 
-/** The Board sizes shot when neither `--sizes` nor the about.md `Sizes:` line names others: the smallest, a wide strip, the default and the chat's widest. */
+/** The looks the app has (Settings → Appearance → App); the shot sets Electron's colour scheme to one, so the chat page and every component frame follow it. */
+export const THEMES = ["dark", "light"] as const;
+export type Theme = (typeof THEMES)[number];
+
+/** A cell of the tile grid, in px (what the Board used: `boardCell`, `boardGap` in botling.board). */
+export const TILE_CELL = 150;
+export const TILE_GAP = 14;
+/** The px a card of this size (`2x1`) fills. */
+export function tilePixels(size: string): { width: number; height: number } {
+  const [w, h] = size.split("x").map(Number) as [number, number];
+  return { width: w * TILE_CELL + (w - 1) * TILE_GAP, height: h * TILE_CELL + (h - 1) * TILE_GAP };
+}
+
+/** The tile sizes shot when `--surfaces` names `tile` and neither `--sizes` nor the about.md `Sizes:` line names others: the smallest, a wide strip, the default and the chat's widest. */
 export const DEFAULT_SIZES = ["1x1", "2x1", "2x2", "4x2"];
 /** Every size a card can take, row by row: 1×1, 2×1, … 4×4 (`PinnedComponent.Size.all`). */
 export const ALL_SIZES = [1, 2, 3, 4].flatMap((rows) => [1, 2, 3, 4].map((columns) => `${columns}x${rows}`));
@@ -30,9 +46,9 @@ export interface ShotOptions {
   /** The project folder its about.md `Command:` runs in; without it the plugin folder. */
   folder: string | null;
   surfaces: Surface[];
-  /** Board sizes; null: `DEFAULT_SIZES` plus the about.md hints. */
+  /** Tile sizes; null: `DEFAULT_SIZES` plus the about.md hints. */
   sizes: string[] | null;
-  theme: string;
+  theme: Theme;
 }
 
 export function isRequested(argv: readonly string[]): boolean {
@@ -40,16 +56,47 @@ export function isRequested(argv: readonly string[]): boolean {
 }
 
 export const USAGE = `Usage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]
-                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]
+                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]
 Draws the component in this build's real chat page on each surface, saves a picture of each
 and a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.
 Data: --data, else its Command run in --folder, else about.md's example (\`\`\`json block or Data: line), else null.
-A Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.`;
+A Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.
+Card sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.
+More: botling --component-shot --help`;
+
+/** `--help`: the whole manual (what a designer or editor needs to shoot a component without writing a renderer of its own). */
+export const HELP = `${USAGE.replace("More: botling --component-shot --help", "").trimEnd()}
+
+Surfaces (--surfaces, default chat,pinned,floating):
+  chat      a reply's card, across the message column (page 760px wide)
+  pinned    a pin opened above the input box
+  floating  a pin floating in a corner
+  tile      the card at each Board cell size, filling its frame like a home-screen widget (data-surface="board");
+            a cell is ${TILE_CELL}px with ${TILE_GAP}px between, so 2x1 is ${tilePixels("2x1").width}x${tilePixels("2x1").height}px. Drawn when --sizes is given, or named in --surfaces.
+Sizes (--sizes 1x1,2x1,2x2,4x2 or all): one picture per size (tile-<size>.png) and every one on the contact sheet.
+  Without --sizes, tile draws ${DEFAULT_SIZES.join(", ")} plus the sizes its about.md "Sizes:" line names.
+Themes (--theme dark|light, default dark): the app's two looks; the chat page, the kit and every frame that asks
+  prefers-color-scheme follow it. The contact sheet is drawn in that look too.
+Output (--out <dir>, default <tmp>/ccb-shot-<name>-<time>): <surface>.png / tile-<size>.png, contact-sheet.png, report.json
+  (and page-<surface>.png, the whole page each was cut from). Read contact-sheet.png to see everything at once.
+One process, one hidden window, no Chrome of its own: a shot takes about 10 seconds; do not loop it.
+Examples:
+  botling --component-shot ./card --out /tmp/shot
+  botling --component-shot ./card --out /tmp/shot --theme light --sizes 1x1,2x1,2x2,4x2
+  botling --component-shot ./card --surfaces tile --sizes all --theme dark
+In a bot's or worker's shell the command is $BOTLING_SHOT_COMMAND (e.g. \`$BOTLING_SHOT_COMMAND ./card --out /tmp/shot --theme light --sizes 2x1,2x2\`).
+Documentation: desktop/README.md "Component shots" (Botling's repo); the component's own rules are in PLUGINS.md.`;
+
+/** Whether the command line asks for the manual (`--help` or `-h` after the flag). */
+export function wantsHelp(argv: readonly string[]): boolean {
+  const at = argv.indexOf(FLAG);
+  return at >= 0 && argv.slice(at + 1).some((arg) => arg === "--help" || arg === "-h");
+}
 
 /** Why the command line was refused: `usage` adds the usage text below (`ShotError.description`). */
 export class ShotError extends Error {
-  constructor(readonly kind: "usage" | "unsupported", readonly text: string) {
-    super(kind === "usage" ? `${text}\n\n${USAGE}` : text);
+  constructor(readonly kind: "usage", readonly text: string) {
+    super(`${text}\n\n${USAGE}`);
   }
 }
 
@@ -60,7 +107,7 @@ const parts = (text: string, separator: string) => text.split(separator).filter(
 
 /** Reads the command line (`ComponentShot.parse`). `cwd` resolves relative paths; `now` names the default out folder. */
 export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.now()): { ok: true; options: ShotOptions } | { ok: false; error: ShotError } {
-  const fail = (kind: "usage" | "unsupported", text: string) => ({ ok: false as const, error: new ShotError(kind, text) });
+  const fail = (kind: "usage", text: string) => ({ ok: false as const, error: new ShotError(kind, text) });
   const at = argv.indexOf(FLAG);
   if (at < 0 || at + 1 >= argv.length || argv[at + 1]!.startsWith("--")) return fail("usage", "Name the component folder (the one with template.html).");
   const path = (text: string) => (isAbsolute(text) ? resolve(text) : resolve(cwd, text));
@@ -68,8 +115,9 @@ export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.n
   const options: ShotOptions = {
     component,
     out: resolve(tmpdir(), `ccb-shot-${basename(component)}-${Math.floor(now / 1000)}`),
-    data: null, folder: null, surfaces: [...SURFACES], sizes: null, theme: "dark",
+    data: null, folder: null, surfaces: [...DEFAULT_SURFACES], sizes: null, theme: "dark",
   };
+  let surfacesGiven = false;
   let index = at + 2;
   while (index < argv.length) {
     const flag = argv[index]!;
@@ -84,11 +132,12 @@ export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.n
         const surfaces: Surface[] = [];
         for (const part of parts(value, ",")) {
           const name = trimSpaces(part).toLowerCase();
-          if (!(SURFACES as readonly string[]).includes(name)) return fail("usage", `Unknown surface ${name}: chat, pinned or floating.`);
+          if (!(SURFACES as readonly string[]).includes(name)) return fail("usage", `Unknown surface ${name}: chat, pinned, floating or tile.`);
           if (!surfaces.includes(name as Surface)) surfaces.push(name as Surface);
         }
         if (!surfaces.length) return fail("usage", "--surfaces names none.");
         options.surfaces = surfaces;
+        surfacesGiven = true;
         break;
       }
       case "--sizes": {
@@ -106,13 +155,18 @@ export function parse(argv: readonly string[], cwd = process.cwd(), now = Date.n
         options.sizes = sizes;
         break;
       }
-      default:
-        options.theme = value.toLowerCase();
+      default: {
+        const theme = trimSpaces(value).toLowerCase();
+        if (!(THEMES as readonly string[]).includes(theme)) return fail("usage", `Unknown theme ${theme}: dark or light.`);
+        options.theme = theme as Theme;
+      }
     }
     index += 2;
   }
-  if (options.theme !== "dark") {
-    return fail("unsupported", `The app only draws components in the dark theme (its window and every component frame are dark), so there is no ${options.theme} theme to shoot.`);
+  // --sizes draws tiles: on its own it adds the tile surface; beside a --surfaces without it, that is a mistake to say so.
+  if (options.sizes !== null) {
+    if (!surfacesGiven) options.surfaces.push("tile");
+    else if (!options.surfaces.includes("tile")) return fail("usage", "--sizes draws the tile surface: add tile to --surfaces (or leave --surfaces out).");
   }
   if (!existsSync(resolve(component, "template.html"))) return fail("usage", `No template.html in ${component}.`);
   return { ok: true, options };
@@ -124,6 +178,25 @@ export function shotSizes(asked: string[] | null, hinted: string[]): string[] {
   const sizes = [...DEFAULT_SIZES];
   for (const size of hinted) if (!sizes.includes(size)) sizes.push(size);
   return sizes;
+}
+
+/** The colours a shot's own surfaces (the tile's backdrop, the contact sheet) are drawn in: the app's tokens (Web/src/tokens.css) of each look. */
+export const LOOKS: Record<Theme, { ground: string; bubble: string; line: string; text: string; muted: string }> = {
+  dark: { ground: "#0E0E10", bubble: "#1B1B1F", line: "#232327", text: "#EDEDF0", muted: "#A0A0A8" },
+  light: { ground: "#F5F5F7", bubble: "#FFFFFF", line: "#E3E3E8", text: "#1C1C1F", muted: "#5F5F68" },
+};
+
+/** Where each tile goes on the tile page: left to right in rows, wrapping before `maxWidth`, with `gap` around and between. */
+export function tileLayout(sizes: string[], maxWidth = 1100, gap = 28): { tiles: { size: string; x: number; y: number; width: number; height: number }[]; width: number; height: number } {
+  const tiles: { size: string; x: number; y: number; width: number; height: number }[] = [];
+  let x = gap, y = gap, row = 0, width = 0;
+  for (const size of sizes) {
+    const { width: w, height: h } = tilePixels(size);
+    if (x > gap && x + w + gap > maxWidth) { x = gap; y += row + gap; row = 0; }
+    tiles.push({ size, x, y, width: w, height: h });
+    x += w + gap; width = Math.max(width, x); row = Math.max(row, h);
+  }
+  return { tiles, width: Math.max(width, 200), height: y + row + gap };
 }
 
 /** How many rows a size takes ("4x2" → 2). */
@@ -319,6 +392,10 @@ export function judge(report: FrameReport, place: string, uniform: boolean): Fin
   } else if (uniform && !report.hasText && !report.hasMedia) {
     problem("Looks blank: one flat colour, no text or pictures");
   }
+  // A tile has a fixed height, as the Board's did: what does not fit is cut off.
+  if (report.surface === "board" && report.scrollHeight > report.height + SLACK) {
+    findings.push({ level: "warning", place, text: `Taller than its tile: ${Math.trunc(report.scrollHeight)}px of content in ${Math.trunc(report.height)}px, the rest is cut off (collapse to a summary when short)` });
+  }
   return findings;
 }
 
@@ -360,10 +437,10 @@ function grouped(findings: Finding[]): { places: string; text: string }[] {
 }
 
 /** What is printed: the verdict, each finding, and where the pictures are; the contact sheet also as a Markdown picture, ready to paste into a chat reply. */
-export function summary(component: string, data: DataSource, findings: Finding[], shots: Shot[], sheet: string | null, notes: string[] = []): string {
+export function summary(component: string, data: DataSource, findings: Finding[], shots: Shot[], sheet: string | null, notes: string[] = [], theme: Theme = "dark"): string {
   const problems = findings.filter((finding) => finding.level === "problem");
   const warnings = findings.filter((finding) => finding.level === "warning");
-  const lines = [`Component ${component}: ${shots.length} frame${shots.length === 1 ? "" : "s"} drawn (dark theme; data from ${sourceText(data)}).`];
+  const lines = [`Component ${component}: ${shots.length} frame${shots.length === 1 ? "" : "s"} drawn (${theme} theme; data from ${sourceText(data)}).`];
   lines.push(...notes);
   lines.push(problems.length ? `Problems (${problems.length}):` : "No problems.");
   lines.push(...grouped(problems).map((entry) => `  ✗ ${entry.places}: ${entry.text}`));

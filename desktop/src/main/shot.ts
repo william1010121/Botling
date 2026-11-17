@@ -8,9 +8,11 @@ import type { BrowserWindow, NativeImage, WebFrameMain } from "electron";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
-  FRAMES_SCRIPT, fileName, isUniform, sourceText, judge, neverLoaded, notDrawn, parse, resolveData, shotSizes, summary, USAGE,
-  type Finding, type FrameReport, type Shot, type Surface,
+  FRAMES_SCRIPT, HELP, LOOKS, fileName, isUniform, sourceText, judge, neverLoaded, notDrawn, parse, resolveData, shotSizes, summary, tileLayout, tilePixels, wantsHelp, USAGE,
+  type Finding, type FrameReport, type Shot, type Surface, type Theme,
 } from "../core/component-shot";
+import { componentPage } from "../../../Web/src/component-page";
+import type { PinSize } from "../../../Web/src/types";
 import { ComponentLibrary } from "../core/components/library";
 import { chatState } from "../renderer/payload";
 import type { BotView, ChatSnapshot, ComponentInfoView, DisplayView } from "../contract";
@@ -47,7 +49,27 @@ export const SHOT_JS = (protocolVersion: number) => `(() => {
       window.botling.post({ v: ${protocolVersion}, id: plugins, cmd: { type: "plugins.web" } });
     }
   });
-  window.__shotStart = (given) => { state = given; push(); };
+  const paint = (look) => { for (const element of [document.documentElement, document.body]) element.style.background = look.ground; };
+  window.__shotStart = (given, look) => { paint(look); state = given; push(); };
+  // The tile page: each component page (built by main, as the chat page builds them) in a frame of exactly its card's size, on its bubble.
+  window.__shotTiles = async (tiles, look) => {
+    paint(look);
+    frame.style.display = "none";
+    for (const tile of tiles) {
+      const id = "shot" + (++next);
+      const url = await new Promise((resolve) => { waiting.set(id, (answer) => resolve(answer.ok ? answer.result.url : null)); window.botling.post({ v: ${protocolVersion}, id, cmd: { type: "card.page", html: tile.html } }); });
+      if (!url) continue;
+      const box = document.createElement("div");
+      Object.assign(box.style, { position: "absolute", left: tile.x + "px", top: tile.y + "px", width: tile.width + "px", height: tile.height + "px", background: look.bubble, borderRadius: "16px", overflow: "hidden", boxShadow: "0 0 0 1px " + look.line });
+      const card = document.createElement("iframe");
+      card.setAttribute("sandbox", "allow-scripts");
+      Object.assign(card.style, { border: "0", display: "block", width: "100%", height: "100%", background: "transparent" });
+      card.src = url;
+      box.append(card);
+      document.body.append(box);
+    }
+    window.__shotTilesDone = true;
+  };
 })();`;
 
 interface Drawn { surface: Surface; image: NativeImage | null; scale: number; frames: { x: number; y: number; width: number; height: number; surface: string; size: string }[]; reports: Map<string, FrameReport> }
@@ -85,7 +107,8 @@ function crop(image: NativeImage, rect: { x: number; y: number; width: number; h
 }
 
 /** Every frame's picture on one dark sheet, each labelled with where it was drawn (drawn on a canvas in the host page). */
-async function contactSheet(window: BrowserWindow, tiles: [string, NativeImage][], title: string): Promise<Buffer | null> {
+async function contactSheet(window: BrowserWindow, tiles: [string, NativeImage][], title: string, theme: Theme): Promise<Buffer | null> {
+  const look = LOOKS[theme];
   if (!tiles.length) return null;
   const items = tiles.map(([place, image]) => ({ place, url: image.toDataURL(), ...image.getSize() }));
   const script = `(async () => {
@@ -102,14 +125,14 @@ async function contactSheet(window: BrowserWindow, tiles: [string, NativeImage][
     const canvas = document.createElement("canvas");
     canvas.width = width; canvas.height = height;
     const g = canvas.getContext("2d");
-    g.fillStyle = "rgb(18,18,20)"; g.fillRect(0, 0, width, height);
-    g.fillStyle = "rgb(237,237,237)"; g.font = "bold 40px system-ui"; g.textBaseline = "top";
-    g.fillText(${JSON.stringify(title + " · dark")}, gap, gap);
+    g.fillStyle = ${JSON.stringify(look.ground)}; g.fillRect(0, 0, width, height);
+    g.fillStyle = ${JSON.stringify(look.text)}; g.font = "bold 40px system-ui"; g.textBaseline = "top";
+    g.fillText(${JSON.stringify(title + " · " + theme)}, gap, gap);
     for (const item of placed) {
       const image = new Image(); image.src = item.url; await image.decode();
-      g.fillStyle = "rgb(161,161,161)"; g.font = "500 28px system-ui"; g.fillText(item.place, item.x, item.y - label + 4);
+      g.fillStyle = ${JSON.stringify(look.muted)}; g.font = "500 28px system-ui"; g.fillText(item.place, item.x, item.y - label + 4);
       g.drawImage(image, item.x, item.y);
-      g.strokeStyle = "rgba(255,255,255,0.12)"; g.strokeRect(item.x - 0.5, item.y - 0.5, item.width + 1, item.height + 1);
+      g.strokeStyle = ${JSON.stringify(theme === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.16)")}; g.strokeRect(item.x - 0.5, item.y - 0.5, item.width + 1, item.height + 1);
     }
     return canvas.toDataURL("image/png");
   })()`;
@@ -121,36 +144,68 @@ function findFrame(window: BrowserWindow, test: (frame: WebFrameMain) => boolean
   return window.webContents.mainFrame.framesInSubtree.find(test) ?? null;
 }
 
-/** Loads the host page at `size`, gives it the state, waits for the frames to draw, reads where they are and takes a picture. */
-async function draw(surface: Surface, size: { width: number; height: number }, state: unknown, after: string | null, makeWindow: (size: { width: number; height: number }) => BrowserWindow): Promise<Drawn> {
-  const window = makeWindow(size);
-  try {
-    await window.loadURL("app://botling/shot.html");
-    const start = Date.now();
-    while (!(await window.webContents.executeJavaScript("!!window.__shotReady")) && Date.now() - start < TIMING.pageNeverReady) await sleep(100);
-    await window.webContents.executeJavaScript(`window.__shotStart(${JSON.stringify(state)})`);
-    if (after) {
-      await sleep(TIMING.beforeSecondScript);
-      await findFrame(window, (frame) => frame.url.startsWith("botling-chat://chat/"))?.executeJavaScript(after).catch(() => {});
-    }
-    await sleep(TIMING.settle);
-    const chat = findFrame(window, (frame) => frame.url.startsWith("botling-chat://chat/"));
-    const frames = (await chat?.executeJavaScript(FRAMES_SCRIPT).catch(() => []) ?? []) as Drawn["frames"];
-    const reports = new Map<string, FrameReport>();
-    for (const frame of window.webContents.mainFrame.framesInSubtree.filter((candidate) => candidate.url.startsWith("botling-card://page/"))) {
-      const report = await frame.executeJavaScript("window.__ccbShotMeasure ? window.__ccbShotMeasure() : null").catch(() => null) as FrameReport | null;
-      if (report) reports.set(`${report.surface}|${report.size}`, report);
-    }
-    const image = await window.webContents.capturePage();
-    const scale = image.isEmpty() ? 1 : image.getSize().width / size.width;
-    return { surface, image: image.isEmpty() ? null : image, scale, frames, reports };
-  } finally {
-    window.destroy();
+/** Reads every component page's measurements (the probe's `__ccbShotMeasure`), by surface and size. */
+async function measure(window: BrowserWindow): Promise<Map<string, FrameReport>> {
+  const reports = new Map<string, FrameReport>();
+  for (const frame of window.webContents.mainFrame.framesInSubtree.filter((candidate) => candidate.url.startsWith("botling-card://page/"))) {
+    const report = await frame.executeJavaScript("window.__ccbShotMeasure ? window.__ccbShotMeasure() : null").catch(() => null) as FrameReport | null;
+    if (report) reports.set(`${report.surface}|${report.size}`, report);
   }
+  return reports;
 }
 
-/** The whole run; resolves with the exit code. */
-export async function runShot(argv: readonly string[], makeWindow: (size: { width: number; height: number }) => BrowserWindow, print: (text: string) => void, fail: (text: string) => void): Promise<number> {
+/** The window's picture and how many device px a page px is. */
+async function picture(window: BrowserWindow, size: { width: number; height: number }): Promise<{ image: NativeImage | null; scale: number }> {
+  const image = await window.webContents.capturePage();
+  return { image: image.isEmpty() ? null : image, scale: image.isEmpty() ? 1 : image.getSize().width / size.width };
+}
+
+/** Loads the host page in `window` (the one window a run uses, resized to `size`), gives it the state, waits for the frames to draw, reads where they are and takes a picture. */
+async function draw(window: BrowserWindow, surface: Surface, size: { width: number; height: number }, state: unknown, after: string | null, theme: Theme): Promise<Drawn> {
+  window.setContentSize(size.width, size.height);
+  await window.loadURL("app://botling/shot.html");
+  const start = Date.now();
+  while (!(await window.webContents.executeJavaScript("!!window.__shotReady")) && Date.now() - start < TIMING.pageNeverReady) await sleep(100);
+  await window.webContents.executeJavaScript(`window.__shotStart(${JSON.stringify(state)}, ${JSON.stringify(LOOKS[theme])})`);
+  if (after) {
+    await sleep(TIMING.beforeSecondScript);
+    await findFrame(window, (frame) => frame.url.startsWith("botling-chat://chat/"))?.executeJavaScript(after).catch(() => {});
+  }
+  await sleep(TIMING.settle);
+  const chat = findFrame(window, (frame) => frame.url.startsWith("botling-chat://chat/"));
+  const frames = (await chat?.executeJavaScript(FRAMES_SCRIPT).catch(() => []) ?? []) as Drawn["frames"];
+  return { surface, ...(await picture(window, size)), frames, reports: await measure(window) };
+}
+
+/** The tile page: one component page per size at its card's px, on the app's bubble colour. Frames are where `tileLayout` put them. */
+async function drawTiles(window: BrowserWindow, info: ComponentInfoView, data: string, sizes: string[], theme: Theme): Promise<Drawn> {
+  const layout = tileLayout(sizes);
+  const size = { width: layout.width, height: layout.height };
+  window.setContentSize(size.width, size.height);
+  await window.loadURL("app://botling/shot.html");
+  const tiles = layout.tiles.map((tile) => ({ ...tile, html: componentPage(info.template, data, {}, tile.size as PinSize, "board", true, false) }));
+  await window.webContents.executeJavaScript(`window.__shotTiles(${JSON.stringify(tiles)}, ${JSON.stringify(LOOKS[theme])})`);
+  await sleep(TIMING.settle);
+  const frames = layout.tiles.map((tile) => ({ x: tile.x, y: tile.y, width: tile.width, height: tile.height, surface: "board", size: tile.size }));
+  return { surface: "tile", ...(await picture(window, size)), frames, reports: await measure(window) };
+}
+
+/** The window a run draws in: the first draw makes it, every later one resizes it (one renderer for the whole run, not one per surface). */
+class OneWindow {
+  private window: BrowserWindow | null = null;
+  constructor(private readonly make: (size: { width: number; height: number }) => BrowserWindow) {}
+  at(size: { width: number; height: number }): BrowserWindow {
+    this.window ??= this.make(size);
+    return this.window;
+  }
+  /** The window as it is now (the contact sheet draws on its canvas), made small if no frame was drawn. */
+  any(): BrowserWindow { return this.at({ width: 400, height: 300 }); }
+  close(): void { if (this.window && !this.window.isDestroyed()) this.window.destroy(); this.window = null; }
+}
+
+/** The whole run; resolves with the exit code. `applyTheme` sets the app's look (nativeTheme) before anything is drawn. */
+export async function runShot(argv: readonly string[], makeWindow: (size: { width: number; height: number }) => BrowserWindow, print: (text: string) => void, fail: (text: string) => void, applyTheme: (theme: Theme) => void = () => {}): Promise<number> {
+  if (wantsHelp(argv)) { print(HELP); return 0; }
   const parsed = parse(argv);
   if (!parsed.ok) { fail(parsed.error.message); return 2; }
   const options = parsed.options;
@@ -165,63 +220,65 @@ export async function runShot(argv: readonly string[], makeWindow: (size: { widt
   const findings: Finding[] = [...resolved.findings];
   const sizes = shotSizes(options.sizes, library.sizes(name));
   const view: ComponentInfoView = { template: info.template, version: 0, updated: false, sizes: info.sizes, icon: info.icon, title: info.title };
-  const drawn: Drawn[] = [];
-  for (const surface of options.surfaces) {
-    const size = surface === "chat" ? { width: 760, height: 1100 }
-      : surface === "pinned" ? { width: 760, height: 1000 } : { width: 1000, height: 800 };
-    const open = surface === "pinned" ? `document.dispatchEvent(new CustomEvent('ccb-open-pin', {detail: ${JSON.stringify(name)}}))` : null;
-    drawn.push(await draw(surface, size, stateFor(surface, name, data, sizes, view), open, makeWindow));
-  }
-  const shots: Shot[] = [];
-  const tiles: [string, NativeImage][] = [];
-  for (const result of drawn) {
-    if (result.image) writeFileSync(join(options.out, `page-${result.surface}.png`), result.image.toPNG());
-    if (!result.frames.length && !result.reports.size) {
-      findings.push(notDrawn(result.surface, data));
-      continue;
-    }
-    const seen = new Set<string>();
-    for (const frame of result.frames) {
-      const key = `${frame.surface}|${frame.size}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const place = result.surface;
-      const report = result.reports.get(key);
-      if (!report) { findings.push(neverLoaded(place)); continue; }
-      let uniform = false;
-      if (result.image) {
-        const exact = crop(result.image, frame, result.scale, 0);
-        uniform = exact ? isUniform(rgba(exact)) : false;
-        const tile = crop(result.image, frame, result.scale, 10);
-        if (tile) {
-          const path = join(options.out, `${fileName(place)}.png`);
-          writeFileSync(path, tile.toPNG());
-          shots.push({ place, path });
-          tiles.push([place, tile]);
-        }
-      }
-      findings.push(...judge(report, place, uniform));
-    }
-    // Reported but not on the page (scrolled away, hidden): judged without a picture.
-    for (const [key, report] of result.reports) {
-      if (seen.has(key)) continue;
-      findings.push(...judge(report, result.surface, false));
-    }
-  }
-  let sheet: string | null = null;
-  const sheetWindow = makeWindow({ width: 400, height: 300 });
+  applyTheme(options.theme);
+  const windows = new OneWindow(makeWindow);
   try {
-    await sheetWindow.loadURL("app://botling/shot.html");
-    const png = await contactSheet(sheetWindow, tiles, name);
+    const drawn: Drawn[] = [];
+    for (const surface of options.surfaces) {
+      if (surface === "tile") { drawn.push(await drawTiles(windows.at({ width: 400, height: 300 }), view, data, sizes, options.theme)); continue; }
+      const size = surface === "chat" ? { width: 760, height: 1100 }
+        : surface === "pinned" ? { width: 760, height: 1000 } : { width: 1000, height: 800 };
+      const open = surface === "pinned" ? `document.dispatchEvent(new CustomEvent('ccb-open-pin', {detail: ${JSON.stringify(name)}}))` : null;
+      drawn.push(await draw(windows.at(size), surface, size, stateFor(surface, name, data, sizes, view), open, options.theme));
+    }
+    const shots: Shot[] = [];
+    const tiles: [string, NativeImage][] = [];
+    for (const result of drawn) {
+      if (result.image) writeFileSync(join(options.out, `page-${result.surface}.png`), result.image.toPNG());
+      if (!result.frames.length && !result.reports.size) {
+        findings.push(notDrawn(result.surface, data));
+        continue;
+      }
+      const seen = new Set<string>();
+      for (const frame of result.frames) {
+        const key = `${frame.surface}|${frame.size}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // A tile is named by its size; the others by their surface.
+        const place = result.surface === "tile" ? `tile ${frame.size}` : result.surface;
+        const report = result.reports.get(key);
+        if (!report) { findings.push(neverLoaded(place)); continue; }
+        let uniform = false;
+        if (result.image) {
+          const exact = crop(result.image, frame, result.scale, 0);
+          uniform = exact ? isUniform(rgba(exact)) : false;
+          const tile = crop(result.image, frame, result.scale, 10);
+          if (tile) {
+            const path = join(options.out, `${fileName(place)}.png`);
+            writeFileSync(path, tile.toPNG());
+            shots.push({ place, path });
+            tiles.push([place, tile]);
+          }
+        }
+        findings.push(...judge(report, place, uniform));
+      }
+      // Reported but not on the page (scrolled away, hidden): judged without a picture.
+      for (const [key, report] of result.reports) {
+        if (seen.has(key)) continue;
+        findings.push(...judge(report, result.surface, false));
+      }
+    }
+    let sheet: string | null = null;
+    const png = await contactSheet(windows.any(), tiles, name, options.theme);
     if (png) { sheet = join(options.out, "contact-sheet.png"); writeFileSync(sheet, png); }
+    const report = { component: name, theme: options.theme, contactSheet: sheet, data: sourceText(source), findings: findings.map((finding) => ({ level: finding.level, place: finding.place, text: finding.text })), shots };
+    writeFileSync(join(options.out, "report.json"), JSON.stringify(report, null, 2));
+    print(summary(name, source, findings, shots, sheet, notes, options.theme));
+    print(`Report: ${join(options.out, "report.json")}`);
+    return findings.some((finding) => finding.level === "problem") ? 1 : 0;
   } finally {
-    sheetWindow.destroy();
+    windows.close();
   }
-  const report = { component: name, contactSheet: sheet, data: sourceText(source), findings: findings.map((finding) => ({ level: finding.level, place: finding.place, text: finding.text })), shots };
-  writeFileSync(join(options.out, "report.json"), JSON.stringify(report, null, 2));
-  print(summary(name, source, findings, shots, sheet, notes));
-  print(`Report: ${join(options.out, "report.json")}`);
-  return findings.some((finding) => finding.level === "problem") ? 1 : 0;
 }
 
 /** A picture's pixels as RGBA (Electron's bitmap is BGRA; the check compares channels alike). */

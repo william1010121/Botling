@@ -3,13 +3,18 @@
 // Swift code wrote (test/fixtures/phase5-golden.json `more.shots`, made by
 // Tests/ClaudeCodeBotCoreTests/DesktopPhase5GoldenExport.swift).
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  ALL_SIZES, FLAG, PROBE_SCRIPT, USAGE, checkCommand, commandFolder, fileName, isRequested, isUniform, judge, notDrawn, parse, resolveData, sampleData,
-  shotSizes, sourceText, summary, withProbe, type DataSource, type FrameReport,
+  ALL_SIZES, DEFAULT_SURFACES, FLAG, HELP, LOOKS, PROBE_SCRIPT, TILE_CELL, TILE_GAP, USAGE, checkCommand, commandFolder, fileName, isRequested, isUniform, judge, notDrawn, parse, resolveData, sampleData,
+  shotSizes, sourceText, summary, tileLayout, tilePixels, wantsHelp, withProbe, type DataSource, type FrameReport,
 } from "../../src/core/component-shot";
+import { SHOT_PLUGIN, shotPluginFile, shotWebSpecs } from "../../src/core/shot-plugins";
+import { shotWorkerRule } from "../../src/core/prompts/delegation";
+import { claudeWorkerPolicy } from "../../src/core/agent/claude-workers";
+import { claudeHarness } from "../claude-workers-fake";
+import { SHOT_JS } from "../../src/main/shot";
 import { maintainerInstructions, componentEditorAgent } from "../../src/core/maintainer-text";
 import { tempDir } from "../helpers";
 
@@ -136,5 +141,131 @@ describe("component shots (ComponentShot.swift)", () => {
     expect(instructions).toContain("  Component shot: '/Apps/Botling 2' --component-shot <component folder> --out <new folder> draws a component");
     expect(maintainerInstructions("/lib", "check", null)).toContain("(No component-shot command this time: review the template by reading it.)");
     expect(componentEditorAgent()).toContain("- Check it as the app draws it: when your job gives a component-shot command, run it with Bash");
+  });
+
+  it("takes --theme dark|light, and says what else is not one", () => {
+    const base = tempDir("shots-theme");
+    component(join(base, "comp"), "A card.");
+    const run = (...more: string[]) => parse(["botling", FLAG, "comp", ...more], base);
+    const light = run("--theme", "Light");
+    expect(light.ok && light.options.theme).toBe("light");
+    const dark = run();
+    expect(dark.ok && dark.options.theme).toBe("dark");
+    const bad = run("--theme", "sepia");
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error.message).toContain("Unknown theme sepia: dark or light.");
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("--sizes draws the tile surface (alone it is added; beside --surfaces it must be named); a bare run has none", () => {
+    const base = tempDir("shots-sizes");
+    component(join(base, "comp"), "A card.");
+    const run = (...more: string[]) => parse(["botling", FLAG, "comp", ...more], base);
+    const bare = run();
+    expect(bare.ok && bare.options.surfaces).toEqual([...DEFAULT_SURFACES]);
+    expect(bare.ok && bare.options.surfaces).not.toContain("tile");
+    const sized = run("--sizes", "1x1, 2×1,2x2,4x2,1x1");
+    expect(sized.ok && sized.options.sizes).toEqual(["1x1", "2x1", "2x2", "4x2"]);
+    expect(sized.ok && sized.options.surfaces).toEqual(["chat", "pinned", "floating", "tile"]);
+    const all = run("--sizes", "all");
+    expect(all.ok && all.options.sizes).toEqual(ALL_SIZES);
+    const only = run("--surfaces", "tile");
+    expect(only.ok && only.options).toMatchObject({ surfaces: ["tile"], sizes: null });
+    expect(shotSizes(null, ["3x1"])).toEqual(["1x1", "2x1", "2x2", "4x2", "3x1"]);
+    const both = run("--surfaces", "chat,tile", "--sizes", "2x2");
+    expect(both.ok && both.options.surfaces).toEqual(["chat", "tile"]);
+    const clash = run("--surfaces", "chat", "--sizes", "2x2");
+    expect(clash.ok).toBe(false);
+    if (!clash.ok) expect(clash.error.message).toContain("--sizes draws the tile surface");
+    expect(run("--sizes", "5x5").ok).toBe(false);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("lays tiles out at their cell px, none over another and none past the width", () => {
+    expect(tilePixels("1x1")).toEqual({ width: TILE_CELL, height: TILE_CELL });
+    expect(tilePixels("4x2")).toEqual({ width: 4 * TILE_CELL + 3 * TILE_GAP, height: 2 * TILE_CELL + TILE_GAP });
+    const layout = tileLayout(["1x1", "2x1", "2x2", "4x2", "4x4"], 1100, 28);
+    expect(layout.tiles.map((tile) => tile.size)).toEqual(["1x1", "2x1", "2x2", "4x2", "4x4"]);
+    for (const [index, a] of layout.tiles.entries()) {
+      expect({ w: a.width, h: a.height }).toEqual({ w: tilePixels(a.size).width, h: tilePixels(a.size).height });
+      expect(a.x + a.width).toBeLessThanOrEqual(layout.width);
+      expect(a.y + a.height).toBeLessThanOrEqual(layout.height);
+      for (const b of layout.tiles.slice(index + 1)) {
+        const apart = a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y;
+        expect(apart, `${a.size} and ${b.size}`).toBe(true);
+      }
+    }
+    // A row wraps before it passes the width: 4x2 (626px) does not fit beside the first three.
+    expect(layout.tiles.find((tile) => tile.size === "4x2")!.y).toBeGreaterThan(layout.tiles[0]!.y);
+  });
+
+  it("judges a tile that is taller than its frame, and names the look in the summary", () => {
+    const report = { surface: "board", size: "1x1", width: 150, height: 150, scrollWidth: 150, scrollHeight: 400, contentHeight: 400, hasText: true, hasMedia: false, errors: [], rejections: [], console: [], ccb: [], resources: [] } as FrameReport;
+    expect(judge(report, "tile 1x1", false)).toEqual([{ level: "warning", place: "tile 1x1", text: "Taller than its tile: 400px of content in 150px, the rest is cut off (collapse to a summary when short)" }]);
+    expect(judge({ ...report, surface: "chat" }, "chat", false)).toEqual([]);
+    expect(summary("card", { kind: "example" }, [], [], null, [], "light").split("\n")[0]).toBe("Component card: 0 frames drawn (light theme; data from about.md's example).");
+    expect(summary("card", { kind: "example" }, [], [], null).split("\n")[0]).toContain("(dark theme;");
+    expect(LOOKS.light.ground).not.toBe(LOOKS.dark.ground);
+  });
+
+  it("has a --help that names every flag, the pictures, the command a bot runs and where the documentation is", () => {
+    expect(wantsHelp(["electron", ".", FLAG, "--help"])).toBe(true);
+    expect(wantsHelp(["electron", ".", FLAG, "comp", "-h"])).toBe(true);
+    expect(wantsHelp(["electron", ".", FLAG, "comp"])).toBe(false);
+    expect(wantsHelp(["electron", ".", "--help"])).toBe(false);
+    for (const word of ["--out", "--data", "--folder", "--surfaces", "--sizes", "--theme dark|light", "tile-<size>.png", "contact-sheet.png", "report.json", "$BOTLING_SHOT_COMMAND", "desktop/README.md"]) expect(HELP, word).toContain(word);
+    expect(USAGE).toContain("--help");
+    expect(HELP.startsWith(USAGE.split("\nMore:")[0]!)).toBe(true);
+  });
+
+  it("gives the pins' web part to a shot without a core: its source, stylesheet urls, and files only inside the plugin", () => {
+    const base = tempDir("shots-plugins");
+    const plugin = join(base, SHOT_PLUGIN);
+    mkdirSync(join(plugin, "dist"), { recursive: true });
+    // The real manifest: the shot reads `ccb.web` and `ccb.styles` from it.
+    writeFileSync(join(plugin, "package.json"), readFileSync(join(__dirname, "..", "..", "builtin-plugins", SHOT_PLUGIN, "package.json")));
+    writeFileSync(join(plugin, "dist", "web.js"), "export function activate(){}");
+    writeFileSync(join(plugin, "dist", "board.css"), ".pin{}");
+    writeFileSync(join(plugin, "dist", "font.woff2"), "font");
+    writeFileSync(join(plugin, "dist", "secret.txt"), "no");
+    writeFileSync(join(base, "outside.css"), "x{}");
+    symlinkSync(join(base, "outside.css"), join(plugin, "dist", "link.woff2"));
+    const specs = shotWebSpecs(base);
+    expect(specs).toHaveLength(1);
+    expect(specs[0]).toMatchObject({ name: SHOT_PLUGIN, source: "export function activate(){}", builtIn: true, settings: {}, commands: [], styles: [`botling-chat://chat/plugin-files/${SHOT_PLUGIN}/dist/board.css`] });
+    expect(shotPluginFile(base, SHOT_PLUGIN, "dist/board.css")).toMatchObject({ type: "text/css; charset=utf-8" });
+    expect(shotPluginFile(base, SHOT_PLUGIN, "dist/font.woff2")).toMatchObject({ type: "font/woff2" });
+    for (const refused of ["dist/secret.txt", "dist/web.js", "../outside.css", "/etc/hosts", "dist/.hidden.woff2", "dist/link.woff2", "dist/missing.woff2"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
+    expect(shotPluginFile(base, "botling.note", "dist/board.css")).toBeNull();
+    // A build without the plugin: nothing (the shot then draws no pins and says so, never hangs).
+    expect(shotWebSpecs(join(base, "none"))).toEqual([]);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  it("the shot's host page asks for the web parts and hands the chat page the pins' one (the reason pinned and floating drew nothing)", () => {
+    const page = SHOT_JS(1);
+    expect(page).toContain('type: "plugins.web"');
+    expect(page).toContain(`spec.name === "${SHOT_PLUGIN}"`);
+    expect(page).toContain("__shotTiles");
+  });
+
+  it("tells a plugin-started worker with Bash the shot command in one line, and nobody else", async () => {
+    const command = "env -u ELECTRON_RUN_AS_NODE '/Apps/Botling.app/Contents/MacOS/Botling' --component-shot";
+    const rule = shotWorkerRule(command);
+    expect(rule).toContain(command);
+    expect(rule).toContain("never hunt for or launch your own Chrome");
+    expect(rule.split("\n")).toHaveLength(1);
+    expect(claudeWorkerPolicy()).not.toContain("Screenshots:");
+    expect(claudeWorkerPolicy(undefined, command).split("\n").at(-1)).toBe(rule);
+    const h = claudeHarness();
+    (h.workers as unknown as { adapter: { options: { shotCommand?: () => string | null } } }).adapter.options.shotCommand = () => command;
+    await h.workers.startFor({ instructions: "designer" });
+    await h.workers.tool("app_handoff", { instructions: "the bot's own" });
+    expect(h.heads[0]!.config.systemPrompt).toContain(rule);
+    expect(h.heads[1]!.config.systemPrompt).not.toContain("Screenshots:");
+    (h.workers as unknown as { adapter: { options: { shotCommand?: () => string | null } } }).adapter.options.shotCommand = () => null;
+    await h.workers.startFor({ instructions: "no command" });
+    expect(h.heads[2]!.config.systemPrompt).not.toContain("Screenshots:");
+    await h.workers.close();
   });
 });
