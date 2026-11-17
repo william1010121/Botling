@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { z } from "zod";
+import { PhaseMarks, PhaseTally } from "../phase-marks";
 import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
@@ -130,9 +131,12 @@ export class Plugins {
 
   /** Opens the sealed secrets, then starts the host for the plugins that are on. */
   async start() {
+    const marks = new PhaseMarks(this.options.phaseLog, "plugins.start", undefined, 100);
     await this.secrets.load();
+    marks.lap("sealed secrets load");
     this.started = true;
     this.sync();
+    marks.lap("sync (snapshots, host start)");
   }
 
   /**
@@ -246,6 +250,9 @@ export class Plugins {
     // Bots' replies lose the tags plugins declare from the start (the host may not run yet: they are dropped then).
     setPluginTags([...this.replyTagOwners().keys()]);
     if (!this.started) return;
+    // Startup timing: what a sync spends where, written only when it took 100 ms or more.
+    const marks = new PhaseMarks(this.options.phaseLog, "plugins sync", undefined, 100);
+    const tally = new PhaseTally();
     const app = this.options.world.appSettings();
     const nextHeldBack = new Set<string>();
     const sharedSpecs: HostSpec[] = [];
@@ -258,8 +265,10 @@ export class Plugins {
       const isSeparate = !!this.options.separateHosts && !!plugin && !plugin.builtIn;
       if (isSeparate) {
         let snapshot: { codeHash: string; files: SnapshotFile[] };
+        const readBegan = performance.now();
         try {
           snapshot = readPluginSnapshot(plugin.folder);
+          tally.add("read plugin folder (every file, sync)", `${spec.name} (${snapshot.files.length} files, ${snapshot.files.reduce((sum, file) => sum + file.data.length, 0)} bytes)`, performance.now() - readBegan);
         } catch {
           nextHeldBack.add(spec.name);
           continue;
@@ -269,8 +278,10 @@ export class Plugins {
           continue;
         }
         let snapDir: string;
+        const materializeBegan = performance.now();
         try {
           const made = materializeSnapshot(this.snapshotRoot, snapshot.codeHash, snapshot.files);
+          tally.add("snapshot copy check or write (reads the copy again)", spec.name, performance.now() - materializeBegan);
           snapDir = made.dir;
           if (made.repaired) repaired.add(spec.name);
         } catch {
@@ -289,6 +300,8 @@ export class Plugins {
       }
     }
     this.heldBack = nextHeldBack;
+    marks.lap("host specs and snapshots");
+    tally.report(this.options.phaseLog, "plugins sync");
     // M7-O03b: a plugin that is gone, held back or another version gives its workers back to core now, before the host
     // below starts the new one (a worker has one owner, the bot; the plugin's route to it ends here).
     this.workersReconcile();
@@ -317,12 +330,16 @@ export class Plugins {
         client.update([spec]);
       }
     }
+    marks.lap("start or update hosts");
     if (this.options.separateHosts) pruneSnapshots(this.snapshotRoot, activeSnapshots);
+    marks.lap("prune snapshots");
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     if (this.takeover && !this.drawing(this.takeover.plugin)) this.takeover = null;
     this.dropDecorations();
     this.foldersChanged();
+    marks.lap("folders changed");
     this.announce();
+    marks.lap("announce");
   }
 
   // ------------------------------------------------------------------------------------------

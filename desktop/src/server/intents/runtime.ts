@@ -9,6 +9,7 @@
 // Everything that writes goes through one TxScope over the store's writer, so the tap and the handlers share the
 // command's transaction and LogHub hears about every stream a commit touched.
 import type { Event as ContractEvent } from "../../contract";
+import { PhaseMarks } from "../../core/phase-marks";
 import type { CmdBody, Slot } from "../../protocol";
 import { CallInGuest, CallInHost, type CallInCrash, type CallInHostOptions } from "../callin";
 import { contentLineHook, type ContentService } from "../content";
@@ -113,12 +114,22 @@ export class IntentRuntime {
 
   /** At start, before any front end: every bot's stream and row, the server stream, recovery; then the worker runs. */
   async start(): Promise<RecoveryReport> {
+    // Startup timing (steps of 100 ms or more): the first lap is the wait behind earlier writes plus the event tap's flush of
+    // what the core said while it was made (the tap writes its own line); the last is the commit and what runs after it.
+    const marks = new PhaseMarks(this.options.log, "runtime.start", undefined, 100);
     const report = await this.scope.submit((tx) => {
+      marks.lap("wait for the writer and the event tap flush");
       ensureStream(tx, serverStreamOf(tx));
-      for (const botId of this.options.engine.bots()) ensureBot(tx, botId);
-      return recoverEffects(this.scope, tx, this.now(), this.options.log, this.options.engine);
+      const bots = this.options.engine.bots();
+      for (const botId of bots) ensureBot(tx, botId);
+      marks.lap(`ensure streams and rows of ${bots.length} bots`);
+      const recovered = recoverEffects(this.scope, tx, this.now(), this.options.log, this.options.engine);
+      marks.lap("recover effects");
+      return recovered;
     });
+    marks.lap("commit and after-commit actions (hub.committed)");
     this.worker.kick();
+    marks.lap("kick the worker");
     return report;
   }
 

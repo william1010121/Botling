@@ -279,7 +279,17 @@ export async function startPush(s: Ctx): Promise<Partial<Ctx>> {
   later.pushTriggers = push;
   const summaries = summary;
   marks.lap("push sender and triggers");
-  const reconciled = await runtime.scope.submit((tx) => { push.seed(tx); return summaries.reconcile(tx); });
+  // Startup timing (steps of 100 ms or more): the wait behind other writes, the push seed, the reconcile (writes its own lines), the commit.
+  const fine = new PhaseMarks(log, "startPush", undefined, 100);
+  const reconciled = await runtime.scope.submit((tx) => {
+    fine.lap("wait for the writer and the event tap flush");
+    push.seed(tx);
+    fine.lap("push seed (open cards)");
+    const result = summaries.reconcile(tx);
+    fine.lap("summary reconcile");
+    return result;
+  });
+  fine.lap("commit and after-commit actions");
   marks.lap("seed and reconcile summary rows");
   log(`summary rows: ${JSON.stringify({ ...reconciled, unknown: reconciled.unknown.length })}`);
   summaries.startPurging();
@@ -325,17 +335,23 @@ export async function startContent(s: Ctx): Promise<Partial<Ctx>> {
     }).catch((error) => { log(`plugin rows: ${String((error as Error)?.message ?? error)}`); });
     return pluginSyncQueue;
   };
+  // Startup timing (steps of 100 ms or more).
+  const marks = new PhaseMarks(log, "startContent", undefined, 100);
   await later.syncPlugins(true);
+  marks.lap("plugin rows");
   // core/server.ts suppresses plugins.updated when only non-manifest plugin files change (codeHash changes without PluginsView changing), so also poll every 60 s using mtime/size stat signatures.
   const pluginTimer = setInterval(() => { void later.syncPlugins(); }, PLUGIN_POLL_MS);
   pluginTimer.unref?.();
   // Step 13: pins left by a crash are swept and every file still preparing is hashed before front ends attach.
   const recovered = await content.recover();
+  marks.lap("content recover (hashes files still preparing)");
   log(`content recovery: ${JSON.stringify(recovered)}`);
   const mediaStart = await media.start();
+  marks.lap("media start (tool probes, jobs)");
   log(`media jobs: ${JSON.stringify({ ...mediaStart, h264: media.tools.h264, found: Object.entries(media.tools.paths).filter(([, at]) => at).map(([name]) => name) })}`);
   for (const note of media.notes()) log(`media note: ${note}`);
   exports.start([...opened.entries()].map(([botId, directory]) => ({ botId, directory })));
+  marks.lap("2.x exports compared and rewritten");
   return { pluginTimer };
 }
 

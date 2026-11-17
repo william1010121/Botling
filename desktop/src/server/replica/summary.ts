@@ -13,6 +13,7 @@
 // - The `settings` row is the settings view without any key that names a secret, at any depth (`SECRET_KEY`).
 // Only names reach a row (a folder's last part, never a path), and no line beyond 140 characters.
 import { basename } from "node:path";
+import { PhaseMarks, PhaseTally } from "../../core/phase-marks";
 import type { BotView, Event as ContractEvent, MessageView } from "../../contract";
 import { Id as ContractId } from "../../protocol/ids";
 import { canonicalJson } from "../../protocol";
@@ -232,22 +233,39 @@ export class SummaryRows {
    * every bot with a view, tombstones for rows of bots gone, the purge, the machine and settings rows.
    */
   reconcile(tx: Db): { written: number; tombstoned: number; purged: number; unknown: string[] } {
+    // Startup timing (steps of 100 ms or more; the slowest bots of the two repeated steps).
+    const marks = new PhaseMarks(this.options.log, "summary reconcile", undefined, 100);
+    const tally = new PhaseTally();
     const stream = ownTableStream(tx);
     const bots = new Set(this.options.engine.bots());
     // Only a bot with no view from the engine needs its last `bot.updated` from the log, and settings only when none are
     // known; with every bot viewed the log is not read at all (summary-entries.ts says why that matters).
-    const lacking = new Set([...bots].filter((botId) => !this.views.has(botId) && !this.options.engine.botView?.(botId)));
+    const lacking = new Set([...bots].filter((botId) => {
+      if (this.views.has(botId)) return false;
+      const began = performance.now();
+      const view = this.options.engine.botView?.(botId);
+      tally.add("core bot view (engine.botView)", botId, performance.now() - began);
+      return !view;
+    }));
+    marks.lap(`views of ${bots.size} bots`);
     const found = latestFromEntries(tx, stream, lacking, !this.settings);
+    marks.lap(`latest entries of ${lacking.size} bots without a view`);
     const fromEntries = found.bots;
     if (!this.settings && found.settings) this.settings = found.settings;
     const unknown: string[] = [];
     let written = 0;
     for (const botId of bots) {
+      const began = performance.now();
       const view = this.views.get(botId) ?? this.options.engine.botView?.(botId) ?? fromEntries.get(botId) ?? null;
+      tally.add("core bot view again (engine.botView)", botId, performance.now() - began);
       if (!view) { unknown.push(botId); continue; }
       this.views.set(botId, view);
+      const writeBegan = performance.now();
       if (this.write(tx, botId)) written += 1;
+      tally.add("build and write a bot's row (buildSummary)", botId, performance.now() - writeBegan);
     }
+    marks.lap(`rows of ${bots.size} bots`);
+    tally.report(this.options.log, "summary reconcile");
     let tombstoned = 0;
     for (const row of tx.prepare("SELECT key FROM rows WHERE stream = ? AND key LIKE 'bot:%' AND deleted = 0").all(stream)) {
       const key = String(row.key);
@@ -255,8 +273,11 @@ export class SummaryRows {
       const rev = deleteRow(tx, stream, key, this.now());
       if (rev != null) { tombstoned += 1; this.committed(key, rev); }
     }
+    marks.lap("tombstones");
     const purged = purgeTombstones(tx, stream, this.now(), this.options.tombstoneKeepMs ?? TOMBSTONE_KEEP_MS);
+    marks.lap("purge tombstones");
     if (this.options.machine) this.put(tx, "machine", this.options.machine());
+    marks.lap("machine row (reads every plugin folder's hash)");
     if (this.settings && readRowBody(tx, stream, "settings") == null) this.put(tx, "settings", settingsRow(this.settings));
     if (unknown.length) this.options.log?.(`summary: no view yet of ${unknown.length} bot(s); their rows come with their next update`);
     return { written, tombstoned, purged, unknown };

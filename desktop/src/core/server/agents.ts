@@ -15,6 +15,7 @@ import type { WorkerOwner } from "../agent/workers";
 import { AgentStatusWriter } from "../agent-status";
 import type { Bot } from "../bot";
 import type { BotRequest } from "../reply";
+import { PhaseMarks } from "../phase-marks";
 
 export class CoreAgents {
   constructor(private readonly host: Core) {}
@@ -154,8 +155,13 @@ export class CoreAgents {
 
   /** Reconcile (A1.3). `notify`: tell what it found (and what the constructor's found), and finish moves cut short. */
   reconcileAgents(notify: boolean) {
+    // Startup timing: the steps of 100 ms or more (this runs in the constructor and again in `activate`).
+    const marks = new PhaseMarks(this.options.phaseLog, notify ? "agents reconcile (activate)" : "agents reconcile (construct)", undefined, 100);
     const alive = [...this.bots.keys()].filter((id) => !this.removed.has(id));
-    const report = this.agents.reconcile({ hosts: alive.flatMap((id) => this.bots.get(id)!.workers.hostBooks()), bots: new Set(alive) });
+    const hosts = alive.flatMap((id) => this.bots.get(id)!.workers.hostBooks());
+    marks.lap(`host books of ${alive.length} bots`);
+    const report = this.agents.reconcile({ hosts, bots: new Set(alive) });
+    marks.lap("registry reconcile (its change callbacks included)");
     const held = this.agentReconcile;
     this.agentReconcile = null;
     const found: ReconcileReport = held ? { ...report, hostLost: [...held.hostLost, ...report.hostLost], ownerReverted: [...held.ownerReverted, ...report.ownerReverted] } : report;
@@ -169,10 +175,13 @@ export class CoreAgents {
       host?.workers.setWorkerOwner(record.nativeId, null);
       host?.appNotice(ownerGoneNotice({ title: record.summary.description || "Subagent", owner: this.agentBotName(from.botId) }));
     }
+    marks.lap("lost and reverted notices");
     for (const move of found.resend) {
       try { this.finishMove(move, {}); } catch (error) { this.log(`agent move ${move.id}: ${(error as Error).message}`); }
     }
+    marks.lap("finish moves");
     this.redeliverAgentReports();
+    marks.lap("redeliver reports");
   }
 
   /** `removeBot`'s part: reconcile rules 4 and 5 for that bot, before it leaves the profiles. */

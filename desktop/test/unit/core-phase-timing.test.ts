@@ -37,6 +37,7 @@ describe("Core startup timing", () => {
     expect(lines.filter((line) => /^timing: core construct: bots \d+ slowest of \d+: "/.test(line))).toHaveLength(1);
     expect(lines.filter((line) => /^timing: core activate: bots \d+ slowest of \d+: "/.test(line))).toHaveLength(1);
     expect(lines.filter((line) => /^timing: core activate: activate total \d+ ms$/.test(line))).toHaveLength(1);
-    expect(lines.every((line) => /^timing: core (construct|activate): .* (\d+ ms|slowest of \d+: .*)$/.test(line))).toBe(true);
+    // Finer lines (bot build, agents reconcile, plugins sync) appear only from 100 ms, under their own labels: same shape.
+    expect(lines.every((line) => /^timing: [^:]+: .* (\d+ ms|slowest of \d+: .*)$/.test(line))).toBe(true);
   });
 });

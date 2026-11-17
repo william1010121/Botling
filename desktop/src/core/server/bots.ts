@@ -78,6 +78,7 @@ export class CoreBots {
       profile,
       ...(options.fetch ? { fetch: options.fetch } : {}),
       deferStartup: options.deferStartup && !this.activated,
+      ...(this.host.buildTally ? { buildTally: this.host.buildTally } : {}),
       headConfig: options.headConfig,
       agyConfig: options.agyConfig ? (p, config) => options.agyConfig!(p, { ...config, rules: () => this.host.orchestrationRules() }) : options.agyConfig,
       orchestrationRules: () => this.host.orchestrationRules(),

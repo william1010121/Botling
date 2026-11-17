@@ -154,10 +154,15 @@ export class LogReader {
   }
 
   private snap(stream: StreamId): void {
+    // Startup timing: a snap that took 100 ms or more (read, then encoded and sent) says which stream and how big.
+    const began = performance.now();
     const snap = readSnap(this.hub.reader(), stream);
     if (!snap) return;
+    const read = performance.now() - began;
     this.emit(snap.frame);
     this.follow(stream, snap.row.logId, snap.row.head);
+    const total = performance.now() - began;
+    if (total >= 100) this.hub.log?.(`timing: snap of ${stream.slice(0, 48)}: read ${Math.round(read)} ms, send and follow ${Math.round(total - read)} ms, all ${Math.round(total)} ms`);
   }
 
   /** `reset` naming the reader's `logId` among the retired ones, then a `snap` of the current incarnation. */

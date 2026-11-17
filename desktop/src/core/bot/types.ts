@@ -62,6 +62,8 @@ export interface SessionStartCodex extends SessionStart {
 
 export interface BotOptions {
   profile: BotProfile;
+  /** Startup timing only (core/phase-marks.ts): while the core makes its bots, the time of each construction step is added here; unset: nothing is measured. */
+  buildTally?: import("../phase-marks").PhaseTally;
   /** Botling 3's server only (2.x leaves it unset): `app_fetch`, a file or folder from another machine; answers with the text the tool returns (M5-07d). */
   fetch?: (botId: string, request: FetchRequest) => Promise<string>;
   /** How to run this bot's claude head for a session. */

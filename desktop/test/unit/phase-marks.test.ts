@@ -1,6 +1,6 @@
 // Startup timing lines (core/phase-marks.ts): one line per phase, the slowest few of many, nothing without an `out`.
 import { describe, expect, it } from "vitest";
-import { PhaseMarks, Slowest } from "../../src/core/phase-marks";
+import { PhaseMarks, PhaseTally, Slowest } from "../../src/core/phase-marks";
 
 describe("PhaseMarks", () => {
   it("writes one line per lap with the time since the previous lap, and a total", () => {
@@ -40,5 +40,39 @@ describe("Slowest", () => {
     expect(line).not.toMatch(/[\n\u001b]/);
     expect(line).toContain('"evil\\nname\\u001b[31m" 5 ms');
     expect(line).toContain(`"${"x".repeat(40)}" 4 ms`);
+  });
+});
+
+describe("PhaseMarks minMs", () => {
+  it("counts every lap but writes only those of at least minMs", () => {
+    let t = 0;
+    const lines: string[] = [];
+    const marks = new PhaseMarks((line) => lines.push(line), "plugins sync", () => t, 100);
+    t += 99; expect(marks.lap("quick")).toBe(99);
+    t += 100; expect(marks.lap("slow")).toBe(100);
+    expect(lines).toEqual(["timing: plugins sync: slow 100 ms"]);
+  });
+});
+
+describe("PhaseTally", () => {
+  it("writes a total line and a slowest line for each phase that reached minMs, in the card reader's shapes", () => {
+    const tally = new PhaseTally();
+    tally.add("chat lines load", "eeg (500 lines)", 90);
+    tally.add("chat lines load", "botling", 30);
+    tally.add("store open", "eeg", 2);
+    const lines: string[] = [];
+    tally.report((line) => lines.push(line), "bot build", 100);
+    expect(lines).toEqual([
+      "timing: bot build: chat lines load (2x) 120 ms",
+      'timing: bot build chat lines load: bots 2 slowest of 2: "eeg (500 lines)" 90 ms, "botling" 30 ms',
+    ]);
+    expect(lines[0]).toMatch(/^timing: (.+?): (.+) (\d+) ms$/);
+    expect(lines[1]).toMatch(/^timing: (.+?): bots (\d+ slowest of .*)$/);
+  });
+
+  it("without an out it writes nothing", () => {
+    const tally = new PhaseTally();
+    tally.add("a", "x", 500);
+    expect(() => tally.report(undefined, "bot build")).not.toThrow();
   });
 });
