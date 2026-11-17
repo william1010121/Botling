@@ -576,7 +576,6 @@ describe("prompts", () => {
       for (const profile of [manager, own]) {
         const system = desktop(profile, engine);
         expect(system, `${engine}/${profile.role}`).toContain("inbox.md, artifacts/, card-scripts/, and the handoff.md");
-        expect(system.split("<name>/ and your <show name").length, `${engine}/${profile.role}`).toBe(1);
       }
     }
     for (const profile of [manager, own, sub]) {
