@@ -464,7 +464,7 @@ describe("chips as small status icons", () => {
 describe("a bot-filled component made live when pinned", () => {
   it("the component made from a reply can be pinned only when it has a command, and says so once pinned", () => {
     setUp().update(state());
-    const filled = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, open: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
+    const filled = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
     const live = { ...filled, display: { ...filled.display, command: "curl wttr.in", folder: "/p", status: "done" as const } };
     // The head of the component the studio draws under its reply (botling.component-studio) asks the studio seam's spec buttons for theirs.
     const headOf = (built: typeof filled) => {
@@ -696,7 +696,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       setUp().update(state());
       for (const [developer, making] of [[false, false], [true, false], [false, true], [true, true]]) {
         feedback.enabled = developer;
-        messageMenu.items = making ? [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true }] : [];
+        messageMenu.items = making ? [{ command: "note.pin", title: "Pin it", icon: "cube", quick: true }] : [];
         const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}", command: "curl wttr.in", folder: "/p", status: "done" }]), text: "" }, components);
         document.getElementById("scroller")!.append(row);
         expect(row.classList.contains("wide")).toBe(true);

@@ -53,12 +53,7 @@
     ],
     "settings": {},
     "builtIn": true,
-    "commands": [
-      {
-        "id": "botling.component-studio.make",
-        "title": "Make into component"
-      }
-    ]
+    "commands": []
   },
   {
     "name": "botling.deps",

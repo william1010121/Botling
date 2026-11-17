@@ -46,7 +46,7 @@ test("Settings → Usage: today's cost and tokens, by bot, the earlier days, Cla
   }
 });
 
-test("a reply's result page as a preview card: the page runs in its frame, Open opens it, Make into component makes a spec from it", async () => {
+test("a reply's result page as a preview card: the page runs in its frame, Open opens it", async () => {
   const dataDir = tempDir("e2e-5c-preview");
   const artifacts = join(tempDir("e2e-5c-project"), ".bot", "artifacts");
   mkdirSync(artifacts, { recursive: true });
@@ -76,25 +76,6 @@ test("a reply's result page as a preview card: the page runs in its frame, Open 
     // Open: the page opens as the results list opens it (here only noted: BOTLING_NO_EXTERNAL).
     await component.getByRole("button", { name: "開啟完整頁面", exact: true }).click();
     await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toContain(url);
-    // Make into component on the card: a spec made from that page goes to Maintainer.
-    // (The pointer over the card's frame shows its bar: the frame says so, component-frames.ts.)
-    await card.hover();
-    await chat.locator(".preview-make").first().click();
-    await page.locator(".bot-row", { hasText: "Maintainer" }).click();
-    await expect(chat.locator(".row", { hasText: "action: build-first" })).toBeVisible({ timeout: 10_000 });
-    await expect(chat.locator(".row", { hasText: "action: build-first" })).toContainText(`The result page it links, ${artifacts}/sales.html, says:`);
-    const relay = await chat.locator(".row", { hasText: "action: build-first" }).innerText();
-    const specId = /Component spec ([0-9A-F-]{36})/.exec(relay)![1];
-    await say(chat, `/say Built sales-card. <component-spec id="${specId}">{"name":"sales-card","about":"Sales at a glance","fields":[{"name":"filled","type":"bool"}]}</component-spec>`);
-    const folder = join(dataDir, "core/plugins/ccb-components/components/sales-card");
-    mkdirSync(folder, { recursive: true });
-    writeFileSync(join(folder, "template.html"), '<div id="sales"></div><script>document.getElementById("sales").textContent = ccb.data.filled ? "Sales component filled" : "No data";</script>');
-    writeFileSync(join(folder, "about.md"), 'Sales at a glance.\nData: {"filled":true}');
-    await page.locator('.bot-row[data-bot="6A0B0000-0000-4000-8000-000000000002"]').click();
-    const built = chat.locator(".row.bot", { hasText: "The report is ready" }).locator(".spec-built");
-    await expect(built).toBeVisible({ timeout: 15_000 });
-    await expect(built.frameLocator("iframe").locator("#sales")).toHaveText("Sales component filled");
-    await expect.poll(() => chat.locator("#messages").evaluate(el => el.getBoundingClientRect().width)).toBeGreaterThan(800);
     for (const frame of page.frames()) await frame.evaluate(async () => {
       for (const image of Array.from(document.images).filter(image => {
         const rect = image.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
@@ -103,7 +84,6 @@ test("a reply's result page as a preview card: the page runs in its frame, Open 
         if (!image.complete || image.naturalWidth === 0) throw new Error("Image failed to decode");
       }
     });
-    await page.screenshot({ path: join(screens, "phase5c-component-built.png") });
     // Nothing else of the app's was framed or reached.
     const audit = await app.evaluate(() => (globalThis as any).__botlingAudit.slice());
     expect(audit.filter((entry: string) => entry.includes("preview"))).toEqual([]);

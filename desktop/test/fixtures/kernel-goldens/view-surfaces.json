@@ -113,11 +113,6 @@
   ],
   "takeovers": [
     {
-      "plugin": "botling.component-studio",
-      "id": "botling.component-studio.spec",
-      "title": "Component spec"
-    },
-    {
       "plugin": "zed.tools",
       "id": "zed.tools.takeover",
       "title": "Zed takeover"

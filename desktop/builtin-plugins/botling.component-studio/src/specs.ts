@@ -5,12 +5,12 @@
 // specs.json beside chat.json, in 1.x's format. The strings are checked character for character against
 // the Swift app's (test/unit/phase5.test.ts, test/fixtures/phase5-golden.json).
 import { readFileSync, statSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { characterCount, characterPrefix, type Clock } from "../../../src/core/briefing";
 import { BUILT_INS, safeName } from "../../../src/core/components/library";
 import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "../../../src/core/components/refresh";
 import { parseReply, type Display } from "../../../src/core/reply";
-import { cardData as pageCardData, filePath, isArtifactPage, pageInCard } from "../../../src/core/page-preview";
+import { filePath, isArtifactPage, pageInCard } from "../../../src/core/page-preview";
 import { PAGE_COMPONENT } from "../../../src/core/preview-url";
 import { newId, type ChatRecord } from "../../../src/core/store/records";
 
@@ -24,16 +24,6 @@ export interface SpecSample { label: string; kind: SampleKind | null; data: stri
 export interface SpecQuestion { id: string; key?: string; text: string; options: { label: string; value?: string }[]; suggested?: number }
 export interface SpecLine { kind: "user" | "maintainer" | "event"; text: string }
 export interface SpecTestRun { command: string; folder: string; output?: string; error?: string; ranAt?: number; matches?: boolean }
-export interface SpecChange {
-  state: "working" | "asking" | "updated" | "failed";
-  version: number;
-  said: string[];
-  startedAt: number;
-  endedAt?: number;
-  error?: string;
-  waitTurn: boolean;
-  request?: string;
-}
 
 /** `ComponentSpec`, as specs.json holds it (dates in Swift seconds, nil fields left out). */
 export interface ComponentSpec {
@@ -70,7 +60,6 @@ export interface ComponentSpec {
   fillError?: string;
   brief?: string;
   version?: number;
-  change?: SpecChange;
   queued?: string[];
   createdAt: number;
   [key: string]: unknown;
@@ -118,8 +107,6 @@ export function readSpec(value: unknown): ComponentSpec | null {
 
 /** Its test runs' card key (`card`), apart from chat cards and pins. */
 export const specCard = (spec: ComponentSpec) => `spec/${spec.id}`;
-/** The version a change now makes (`nextVersion`). */
-export const nextVersion = (spec: ComponentSpec) => (spec.version ?? 1) + 1;
 /** The bot that wrote the reply is drawing it now (`filling`). */
 export const isFilling = (spec: ComponentSpec) => !!spec.filledBy && spec.filled === undefined && spec.fillError === undefined;
 
@@ -213,32 +200,26 @@ export function lastCommand(record: ChatRecord): string | null {
 
 const shownOf = (record: ChatRecord): Display[] => ((record.displays ?? []) as Display[]);
 const isBuiltIn = (name: string) => BUILT_INS.includes(name);
-export { PAGE_COMPONENT };
 
 /**
  * What the app can tell from a reply alone (`draft(from:…)`): the data a component in it was drawn with
  * (its fields and a sample), the command that gave that card its data, a name and the bot's folder.
  */
-export function draftSpec(record: ChatRecord, bot: string, folder: string, library: { names: readonly string[] } | null, createdAt: number, page: string | null = null): ComponentSpec {
+export function draftSpec(record: ChatRecord, bot: string, folder: string, library: { names: readonly string[] } | null, createdAt: number): ComponentSpec {
   const names = new Set(library?.names ?? []);
   const shown = shownOf(record).filter((display) => !isBuiltIn(display.name));
-  // From a result page's preview card (Phase 5c): named after the page, its sample the card.
-  const existing = page === null ? shown.find((display) => names.has(display.name))?.name : undefined;
+  const existing = shown.find((display) => names.has(display.name))?.name;
   const first = shown[0];
-  const command = page === null ? first?.command : undefined;
+  const command = first?.command;
   const ran = command ?? lastCommand(record) ?? undefined;
-  const name = existing ?? (page !== null ? slug(basename(page).replaceAll(".html", "")) : first ? slug(first.name) : ran ? slug(ran) : slug(record.text));
+  const name = existing ?? (first ? slug(first.name) : ran ? slug(ran) : slug(record.text));
   const spec = newSpec({ messageID: record.id, name: name || "component", folder, bots: [bot], createdAt });
   if (existing) spec.existing = existing;
-  if (page !== null) spec.page = page;
   if (command) spec.command = command;
   if (first && first.data !== "null") {
     spec.fields = fieldsFromJSON(first.data);
     spec.samples = [sample("reply", first.data)];
     if (names.has(first.name)) spec.shownAs = first.name;
-  } else if (page !== null) {
-    spec.samples = [sample("page", pageCardData(jsonString({ path: page })))];
-    if (names.has(PAGE_COMPONENT)) spec.shownAs = PAGE_COMPONENT;
   } else {
     spec.samples = [sample("reply", jsonString({ text: record.text.trim() }))];
   }
@@ -247,9 +228,6 @@ export function draftSpec(record: ChatRecord, bot: string, folder: string, libra
 
 // ---------------------------------------------------------------------------------------------
 // Changing it
-
-const LABELS: Record<string, string> = { name: "Name", about: "About", fields: "Data fields", command: "Command", refresh: "Refresh", bots: "Bots", reuse: "Similar", similar: "Similar" };
-const capitalized = (key: string) => key.replace(/(^|\s)(\S)/g, (_, space: string, c: string) => space + c.toUpperCase());
 
 /** "total: int, failures: [suite, test]" as fields; a name alone is text (`parseFields`). */
 export function parseFields(text: string): SpecField[] {
@@ -301,17 +279,6 @@ export function setValue(key: string, text: string, origin: SpecOrigin, spec: Co
   if (sameSpec(spec, before)) return false;
   spec.origins[key === "minutes" ? "refresh" : key] = origin;
   if (key === "command") delete spec.testRun;
-  return true;
-}
-
-/** The user changed a value in the panel (`edit`): theirs, said in the side conversation, kept for Maintainer. */
-export function editSpecValue(key: string, value: string, spec: ComponentSpec): boolean {
-  if (!setValue(key, value, "user", spec)) return false;
-  const label = LABELS[key] ?? capitalized(key);
-  const shown = key === "reuse" ? (spec.reuse ? `use ${spec.similar ?? "the similar one"}` : "make a new one") : value;
-  spec.conversation.push({ kind: "event", text: `You edited ${label} · ${clip(shown, 60)}` });
-  spec.pendingEdits = spec.pendingEdits.filter((edit) => !edit.startsWith(`${label}: `));
-  spec.pendingEdits.push(`${label}: ${shown}`);
   return true;
 }
 
@@ -421,8 +388,8 @@ export function outputMatches(output: string, fields: SpecField[]): boolean {
 // What Maintainer is told
 
 export const FIELD_GROUP = { fromCommand: "From command", botOnly: "Optional (bot only)" };
-export type ComponentAction = "build-first" | "shape" | "build" | "change" | "live-on-board";
-export const COMPONENT_ACTIONS: ComponentAction[] = ["build-first", "shape", "build", "change", "live-on-board"];
+export type ComponentAction = "build-first" | "live-on-board";
+export const COMPONENT_ACTIONS: ComponentAction[] = ["build-first", "live-on-board"];
 /** The header that starts Maintainer's message (`ComponentAction.header`). */
 export const actionHeader = (action: ComponentAction, subject: string) =>
   action === "live-on-board" ? `(Component ${subject}; action: ${action})` : `(Component spec ${subject}; action: ${action})`;
@@ -440,9 +407,6 @@ export function specSummary(spec: ComponentSpec): string {
   if (spec.testRun?.output !== undefined) lines.push(`- test run output: ${clip(spec.testRun.output, 600)}` + (spec.testRun.matches === false ? " (it does not have every field)" : ""));
   return lines.join("\n");
 }
-
-export const tagNote = (spec: ComponentSpec) =>
-  `Answer in one or two sentences, then <component-spec id="${spec.id}">JSON</component-spec> with only what you set or change (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]). Build nothing yet: it is a draft, built when the user presses Build it. Never run the command yourself: the user test-runs it from the panel.`;
 
 export const REPLY_LIMIT = 12_000;
 const PAGE_LIMIT = 12_000;
@@ -512,7 +476,7 @@ export function replyBlock(reply: string, pages: ReplyPage[]): string {
 /** What the component is for, said first (`purposeLine`). */
 export function purposeLine(spec: ComponentSpec, bot: string): string {
   const words = (spec.purpose ?? "").trim();
-  if (!words) return `What it is for: ${bot}'s reply below, shown as a component instead of text (the user pressed "Make into component" and said nothing more).`;
+  if (!words) return `What it is for: ${bot}'s reply below, shown as a component instead of text.`;
   return `What it is for, in ${spec.suggestedBy !== undefined ? `${spec.suggestedBy}'s` : "the user's"} words: ${words}`;
 }
 
@@ -542,18 +506,7 @@ function askedBlock(asked: string | null): string | null {
   return words ? "The user's own message that led to the reply (verbatim):\n" + clip(words, 4_000) : null;
 }
 
-/** The first ask: fill in what can be inferred, ask only what cannot (`draftRequest`). */
-export function draftRequest(spec: ComponentSpec, reply: string, pages: ReplyPage[], ran: string | null, bot: string): string {
-  return `${actionHeader("shape", spec.id)} ${purposeLine(spec, bot)}
-The user wants to make ${bot}'s reply into a component and is shaping it in a side panel; the reply is the context. ${replyBlock(reply, pages)}
-The app's first draft:
-${specSummary(spec)}
-${dataNote(spec, ran, bot)}
-Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
-${tagNote(spec)}`;
-}
-
-/** "Make into component" pressed: Maintainer infers the whole spec and builds the first version now (`firstBuildRequest`). */
+/** A suggestion chip pressed: Maintainer infers the whole spec and builds the first version now (`firstBuildRequest`). */
 export function firstBuildRequest(spec: ComponentSpec, o: { reply: string; pages?: ReplyPage[]; ran?: string | null; asked?: string | null; brief?: string | null; bot: string }): string {
   const live = spec.command !== undefined;
   const bot = o.bot;
@@ -571,46 +524,6 @@ Infer the rest from the reply, the brief and the library, and ask nothing: where
   text += " Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.join(", ");
   text += live ? " and shows it under the reply; do not add it to lists yourself." : `, then asks ${bot}, who wrote the reply, to draw it under the reply with all of that reply's data, following about.md; do not add it to lists yourself.`;
   text += `\nAnswer in one or two sentences, then <component-spec id="${spec.id}">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command (only for live data), refresh: shown|interval|manual, minutes, similar, reuse. Build only the component and send no samples: the data under the reply comes from ${live ? "its command" : bot}. No questions.`;
-  return text;
-}
-
-/** What the user said in the side panel, with their edits since (`sayRequest`). */
-export function sayRequest(spec: ComponentSpec, text: string): string {
-  let said = actionHeader("shape", spec.id) + " ";
-  said += text ? `The user says: ${text}` : "The user changed the spec.";
-  if (spec.pendingEdits.length) said += "\nTheir edits: " + spec.pendingEdits.join("; ");
-  said += `\nThe spec now:\n${specSummary(spec)}\n${tagNote(spec)}`;
-  return said;
-}
-
-/** What the user typed in a built component's panel: a change request, built as the next version (`changeRequest`). */
-export function changeRequest(spec: ComponentSpec, said: string[], version: number): string {
-  const id = spec.id;
-  const name = spec.built ?? spec.name;
-  let text = `${actionHeader("change", id)} Change it now: build v${version} of the component "${name}" with this change, right away.`;
-  const words = said.map((entry) => entry.trim()).filter(Boolean);
-  if (words.length === 1) text += `\nThe user asks: ${words[0]}`;
-  else if (words.length > 1) text += "\nThe user asks (in order, all for this version):\n" + words.map((entry, index) => `${index + 1}. ${entry}`).join("\n");
-  else text += "\nThe user asks for a new version as the spec now says.";
-  if (spec.pendingEdits.length) text += "\nTheir edits in the panel: " + spec.pendingEdits.join("; ");
-  text += `\nThe spec now:\n${specSummary(spec)}`;
-  text += `\nThis is a change request, not a discussion. Do not wait for a Build press and do not ask the user to press anything: have the component editor change template.html and about.md of ${name} now (the same component and name), keeping its data format unless the change needs other fields. `;
-  text += fieldGroups(spec.command !== undefined);
-  text += " Only if the request is genuinely ambiguous (two readings that would build different things), do not build; ask exactly one question in \"questions\" with 2 or 3 short answers and the one you suggest; the user's answer comes back as the next change request.";
-  text += " Never run the command yourself. The app sees the new version land in the library and updates it under the reply and on " + spec.bots.join(", ") + "; do not add it to lists yourself.";
-  text += `\nAnswer in one or two sentences, then <component-spec id="${id}">JSON</component-spec> with only what you changed (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes), or with the one question.`;
-  return text;
-}
-
-/** Build it (`buildRequest`). */
-export function buildRequest(spec: ComponentSpec): string {
-  let text = `${actionHeader("build", spec.id)} Build it: make the component "${spec.name}" now, as the spec says.\n${specSummary(spec)}`;
-  if (spec.pendingEdits.length) text += "\nThe user's last edits: " + spec.pendingEdits.join("; ");
-  text += "\nHave the component editor write template.html and about.md";
-  if (spec.command !== undefined) text += `; about.md gets the line "Command: ${spec.command}" so the app fills it by running that in the bot's folder (only once the user allows it)`;
-  else text += "; about.md says what JSON a bot gives it with <show>: once it is built the app asks the bot that wrote the reply to draw it there with that reply's data";
-  text += ". The data fields above are what the template reads. " + fieldGroups(spec.command !== undefined);
-  text += " Once it is in the library the app adds it to " + spec.bots.join(", ") + "; do not add it to lists yourself.";
   return text;
 }
 

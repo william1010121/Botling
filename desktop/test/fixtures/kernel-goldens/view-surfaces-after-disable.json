@@ -62,12 +62,6 @@
       "title": "Routines"
     }
   ],
-  "takeovers": [
-    {
-      "plugin": "botling.component-studio",
-      "id": "botling.component-studio.spec",
-      "title": "Component spec"
-    }
-  ],
+  "takeovers": [],
   "composerBarViews": []
 }

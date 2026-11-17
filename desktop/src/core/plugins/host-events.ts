@@ -219,7 +219,7 @@ export function studioPlugin(this: HostEventsHost, name: string): StudioWorld | 
 
 /**
  * What a chat's line shows besides itself for the component studio (bot.ts `lineExtras`): asked of the studio seam's world, and only
- * while a plugin shipped with Botling that has the "studio" permission is on (none: nothing, as there is no "Make into component" then).
+ * while a plugin shipped with Botling that has the "studio" permission is on (none: nothing, as no reply is then a library component to add to another bot).
  */
 export function studioLineExtras(this: HostEventsHost, record: { role: string; displays?: unknown }): { component?: string } {
   const on = this.registry.plugins.find((plugin) => plugin.enabled && !plugin.failure && plugin.builtIn && !!plugin.manifest.ccb?.permissions?.includes("studio"));

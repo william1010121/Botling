@@ -253,6 +253,19 @@ describe("the wiring and the sources", () => {
     expect(frame).not.toMatch(/type:\s*"chat\.answer"/);
   });
 
+  it("the page's \"regather\" action is one chat.send to this chat's bot, replying to that line, paced, with empty words refused and a stopped message reported (not the feedback path)", () => {
+    const frame = code(src("chat-frame/ChatFrame.tsx"));
+    const start = frame.indexOf('case "regather"');
+    const body = frame.slice(start, frame.indexOf("return;", frame.indexOf("onError);", start)));
+    expect(start).toBeGreaterThan(0);
+    expect(body).toContain('!action.text.trim()');
+    expect(body).toContain('!paced("regather")');
+    expect(body).toMatch(/type:\s*"chat\.send",\s*botId,\s*text:\s*action\.text\.slice\(0,\s*20_000\),\s*replyTo:\s*action\.messageID/);
+    expect(body).toContain("result.stoppedBy");
+    expect(body).toContain("onSent()");
+    expect(body).not.toContain("chat.feedback");
+  });
+
   it("only card-answer.ts builds a chat.answer, and the one approveRoute is 06a's (no second route function)", () => {
     const names: string[] = [];
     const walk = (dir: string) => {

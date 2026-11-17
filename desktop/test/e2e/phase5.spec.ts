@@ -1,6 +1,6 @@
-// Phase 5a in the real app: the / menu offers components; "Make into component" on a reply has Maintainer
-// build it, the chip says Building…, then the component shows under the reply; Edit spec opens the spec
-// panel in the right panel. Screenshots go to desktop/.tmp/screens/.
+// Phase 5a in the real app: the / menu offers components; a bot's <suggest-component> chip, pressed, has Maintainer
+// build it, the chip says Building…, then the component shows under the reply (no Edit spec, no spec panel: the per-message
+// button of the chat asks the bot for a visual report instead). Screenshots go to desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,7 +21,7 @@ function component(dataDir: string, name: string, template: string, about: strin
   writeFileSync(join(folder, "about.md"), about);
 }
 
-test("the / menu, Make into component, the component under its reply, and its spec in the right panel", async () => {
+test("the / menu, a pressed suggestion chip, and the component under its reply (no spec panel)", async () => {
   const dataDir = tempDir("e2e-5a-specs");
   const { app, page, chat } = await launch({ dataDir, env: { BOTLING_COMPONENT_SCAN_MS: "200" } });
   try {
@@ -32,11 +32,10 @@ test("the / menu, Make into component, the component under its reply, and its sp
     await box.page().keyboard.type("/");
     await expect(chat.locator(".mention-list")).toContainText("design");
     await box.page().keyboard.press("Backspace");
-    await say(chat, "/say Your 3 tests: 2 passed, 1 failed (the cart total).");
+    await say(chat, `/say Your 3 tests: 2 passed, 1 failed (the cart total). <suggest-component name="Your Tests">the tests at a glance, from the test command</suggest-component>`);
     const row = chat.locator(".row.bot[data-id]", { hasText: "Your 3 tests: 2 passed" });
     await expect(row).toBeVisible();
-    await row.hover();
-    await row.getByRole("button", { name: "Make into component" }).click();
+    await row.locator(".spec-chip.suggested").click();
     // Building…: Maintainer got the first build.
     await expect(row.locator(".spec-chip.building")).toContainText("your-tests");
     await page.locator(`.bot-row[data-bot="${MAINTAINER}"]`).click();
@@ -53,14 +52,10 @@ test("the / menu, Make into component, the component under its reply, and its sp
     await expect(built).toBeVisible({ timeout: 15_000 });
     await expect(chat.locator(".row.notice", { hasText: "test-board added to Main bot." })).toBeVisible();
     await shot(page, "phase5a-built");
-    // Edit spec: the spec panel in the right panel.
-    await built.getByRole("button", { name: "Edit spec" }).click();
-    const panel = page.locator(".spec-panel");
-    await expect(panel).toBeVisible();
-    const spec = page.frameLocator(".spec-frame");
-    await expect(spec.locator("body")).toContainText("test-board");
-    await expect(spec.locator("body")).toContainText("Filled by Main bot");
-    await shot(page, "phase5a-spec-panel");
+    // No Edit spec and no spec panel any more.
+    await expect(built.getByRole("button", { name: "Edit spec" })).toHaveCount(0);
+    await expect(built.getByRole("button", { name: "Undo" })).toBeVisible();
+    await expect(page.locator(".spec-panel")).toHaveCount(0);
   } finally {
     await app.close();
   }

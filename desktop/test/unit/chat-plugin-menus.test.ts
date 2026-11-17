@@ -106,7 +106,7 @@ describe("the menu lists of the posted state", () => {
     reconcileView(view);
     await settled();
     const kernelRows = rendererKernel.entries<{ row?: { command: string } }>("message/context").map(({ entry }) => entry.row?.command);
-    expect(kernelRows).toEqual(["botling.component-studio.make", "zed.tools.clip"]);
+    expect(kernelRows).toEqual(["zed.tools.clip"]);
     const plugins = chatPlugins(view)!;
     expect((plugins.menus ?? []).filter((row) => !(MENUS as readonly string[]).includes(row.menu))).toEqual((view.menus ?? []).filter((row) => !(MENUS as readonly string[]).includes(row.menu)));
     // A row the view has and the slot does not (the view changed, the feed has not caught up yet) is not shown: nothing stale, nothing early.
@@ -119,16 +119,24 @@ describe("the menu lists of the posted state", () => {
 
   it("keep the order of the view's array when a plugin is reloaded (the slot puts a reloaded plugin's rows last)", async () => {
     await host().start();
-    const view = fixture();
+    // The shipped plugins no longer have a message/context row but zed.tools' (the component studio's "Make into component" went), so a
+    // second plugin with a row ahead of it in the view's array stands in for the one that is reloaded.
+    const base = fixture();
+    const first = { menu: "message/context" as const, command: "first.pin", plugin: "first.board", title: "Pin it", quick: true };
+    const view: PluginsView = {
+      ...base,
+      plugins: [...base.plugins, { ...base.plugins.find((plugin) => plugin.name === "zed.tools")!, name: "first.board", commands: [] }],
+      menus: [first, ...(base.menus ?? [])],
+    };
     reconcileView(view);
-    await settled();
-    const changed: PluginsView = { ...view, plugins: view.plugins.map((plugin) => (plugin.name === "botling.component-studio" ? { ...plugin, version: "9.9.9" } : plugin)) };
+    await vi.waitFor(() => { expect(rendererKernel.entries("message/context")).toHaveLength(2); });
+    const changed: PluginsView = { ...view, plugins: view.plugins.map((plugin) => (plugin.name === "first.board" ? { ...plugin, version: "9.9.9" } : plugin)) };
     reconcileView(changed);
     await vi.waitFor(() => {
       const order = rendererKernel.entries<{ row?: { plugin: string } }>("message/context").map(({ entry }) => entry.row?.plugin);
-      expect(order).toEqual(["zed.tools", "botling.component-studio"]);
+      expect(order).toEqual(["zed.tools", "first.board"]);
     });
-    expect(posted(chatPlugins(changed)).messageMenu).toEqual(golden.none.messageMenu);
+    expect((posted(chatPlugins(changed)).messageMenu ?? []).map((row) => row.command)).toEqual(["first.pin", "zed.tools.clip"]);
   });
 
   it("are empty, not stale and not the view's, when the chat plugin was refused; other menus are untouched; a host that never touched it leaves the view as it is", async () => {

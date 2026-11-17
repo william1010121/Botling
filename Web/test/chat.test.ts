@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { readChatCss } from "./helpers/chat-css";
 import { Composer } from "../src/composer";
+import { setLanguage } from "../src/i18n";
+import { regatherText } from "../src/regather";
 import { feedback, messageElement, messageMenu, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
 
@@ -846,6 +848,71 @@ describe("messages", () => {
     feedback.enabled = false;
   });
 
+  /** A file dragged over a report box; true when the box took it (acceptPictures). */
+  const dragFilesOver = (box: Element): boolean => {
+    const event = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"] } });
+    box.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it("the cube button opens Report problem's box, and Send posts one regather line for that reply (no command, no feedback)", () => {
+    feedback.enabled = false;
+    messageMenu.items = [];
+    const row = messageElement(message({ id: "r20", text: "Disk is 80% full." }), {});
+    document.body.append(row);
+    // Every bot reply has it, with no plugin and no developer mode; a user's line does not.
+    const button = row.querySelector<HTMLButtonElement>(".message-actions .regather-button")!;
+    expect(button.getAttribute("aria-label")).toBe("Make this reply a visual report");
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(messageElement(message({ role: "user", text: "Me" }), {}).querySelector(".regather-button")).toBeNull();
+    button.click();
+    const box = document.querySelector(".report")!;
+    // The same small box as Report problem, without its picture strip.
+    expect(box.querySelector(".report-title")?.textContent).toBe("Anything you would like in the report?");
+    expect(box.querySelector("textarea")).not.toBeNull();
+    expect(box.querySelector(".report-images")?.children.length).toBe(0);
+    // Pictures dragged onto it are not taken (nothing would send them).
+    expect(dragFilesOver(box)).toBe(false);
+    expect(box.classList.contains("dropping")).toBe(false);
+    box.querySelector("textarea")!.value = "  compare by week ";
+    box.querySelector<HTMLButtonElement>(".send")!.click();
+    expect(document.querySelector(".report")).toBeNull();
+    expect(sent).toEqual([{ type: "regather", messageID: "r20", text: regatherText("compare by week") }]);
+    expect(sent.some((action) => action.type === "runCommand" || action.type === "feedback")).toBe(false);
+  });
+
+  it("the report box of the cube is the one box: opening Report problem's replaces it", () => {
+    feedback.enabled = true;
+    try {
+      const row = messageElement(message({ id: "r21", text: "Hi" }), {});
+      document.body.append(row);
+      row.querySelector<HTMLButtonElement>(".regather-button")!.click();
+      row.querySelector<HTMLButtonElement>(".feedback-button")!.click();
+      expect(document.querySelectorAll(".report")).toHaveLength(1);
+      expect(document.querySelector(".report .report-title")?.textContent).not.toBe("Anything you would like in the report?");
+      // Report problem's box takes pictures; the cube's does not.
+      expect(dragFilesOver(document.querySelector(".report")!)).toBe(true);
+      expect(sent).toEqual([]);
+    } finally {
+      feedback.enabled = false;
+    }
+  });
+
+  it("says to gather again and answer as a visual report, with your suggestion when you typed one (English and 繁體中文)", () => {
+    try {
+      setLanguage("en");
+      expect(regatherText("")).toBe("Please gather the data behind the reply I am quoting again, then answer it again as a visual report. First decide what the picture must show (groups side by side, a time axis, error bars, measured against estimated). A table, KPI row, comparison or timeline: one inline-report-block. A chart: an inline-chart only if it shows that clearly, otherwise a matplotlib PNG shown inline. A report page only if the content is really long. If nothing in the library shows it well and I would want it again, offer to make it a component, as you usually do.");
+      expect(regatherText("   ")).toBe(regatherText(""));
+      expect(regatherText(" only the failures ")).toBe(`${regatherText("")}\n\nMy suggestion: only the failures`);
+      setLanguage("zh-Hant");
+      expect(regatherText("")).toBe("請重新收集我引用的那則回覆背後的資料，再用圖表報告回答一次。先想清楚這張圖要呈現什麼（組別並排、時間軸、誤差線、實測對估計）：表格、KPI、比較或時間線用一個 inline-report-block；圖表只有 inline-chart 能清楚呈現時才用，否則用 matplotlib 畫成 PNG 直接貼在對話裡；內容真的很長才用結果頁。如果元件庫裡沒有適合的、而且我之後還會想再看，就照平常的做法建議做成元件。");
+      expect(regatherText("只看失敗的")).toBe(`${regatherText("")}\n\n我的建議：只看失敗的`);
+    } finally {
+      setLanguage("en");
+    }
+  });
+
   it("puts plugins' commands in a reply's menu, each run for that reply", () => {
     expect(messageElement(message({ text: "Hi" }), {}).querySelector(".message-menu-button")).toBeNull();
     messageMenu.items = [{ command: "quote.it", title: "Quote it" }, { command: "quote.save", title: "Save it" }];
@@ -866,20 +933,20 @@ describe("messages", () => {
   });
 
   it("draws a plugin's quick menu entry as a button of its own, with its words for a reply that already is a component", () => {
-    messageMenu.items = [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true, alt: "Add to another bot…", hint: "built from this reply" }, { command: "quote.it", title: "Quote it" }];
+    messageMenu.items = [{ command: "note.pin", title: "Pin it", icon: "cube", quick: true, alt: "Add to another bot…", hint: "pinned from this reply" }, { command: "quote.it", title: "Quote it" }];
     try {
       const row = messageElement(message({ id: "r8", text: "Hi" }), {});
       document.body.append(row);
-      const button = row.querySelector<HTMLButtonElement>(".message-actions button[data-command='studio.make']")!;
-      expect(button.title).toBe("Make into component: built from this reply");
+      const button = row.querySelector<HTMLButtonElement>(".message-actions button[data-command='note.pin']")!;
+      expect(button.title).toBe("Pin it: pinned from this reply");
       expect(button.querySelector("svg")).not.toBeNull();
       // The other entry stays a row of "⋯"; the quick one is not repeated there.
       row.querySelector<HTMLButtonElement>(".message-menu-button")!.click();
       expect([...document.querySelectorAll(".message-menu [role=menuitem]")].map((item) => item.textContent)).toEqual(["Quote it"]);
       button.click();
-      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "studio.make", via: "menu", menu: "message/context", messageID: "r8" });
+      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "note.pin", via: "menu", menu: "message/context", messageID: "r8" });
       const already = messageElement(message({ id: "r9", text: "Hi", component: "chart" }), {});
-      const again = already.querySelector<HTMLButtonElement>("button[data-command='studio.make']")!;
+      const again = already.querySelector<HTMLButtonElement>("button[data-command='note.pin']")!;
       expect(again.title).toBe("Add to another bot…");
       expect(again.getAttribute("aria-label")).toBe("Add to another bot…");
     } finally {
@@ -888,13 +955,13 @@ describe("messages", () => {
   });
 
   it("draws a plugin's preview-card button on a result page's card, naming which card", () => {
-    messageMenu.previews = [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true }];
+    messageMenu.previews = [{ command: "note.pin", title: "Pin it", icon: "cube", quick: true }];
     try {
       const row = messageElement(message({ id: "r10", text: "See it", previews: [{ name: "網頁預覽卡片", data: "{}" }] } as never), { "網頁預覽卡片": { template: "<p>x</p>", version: 1, updated: false, working: false, hasPrevious: false, sizes: [], icon: null, title: null } as never });
-      const button = row.querySelector<HTMLButtonElement>(".preview-bar button[data-command='studio.make']");
-      expect(button?.textContent).toBe("Make into component");
+      const button = row.querySelector<HTMLButtonElement>(".preview-bar button[data-command='note.pin']");
+      expect(button?.textContent).toBe("Pin it");
       button!.click();
-      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "studio.make", via: "menu", menu: "message/preview", messageID: "r10", preview: 0 });
+      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "note.pin", via: "menu", menu: "message/preview", messageID: "r10", preview: 0 });
     } finally {
       messageMenu.previews = [];
     }

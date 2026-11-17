@@ -9,9 +9,6 @@ import { Composer } from "../src/composer";
 import { componentPage } from "../src/components";
 import { compositionGrace, imeGuardScript, installImeGuard, isComposingEnter, isComposingKey } from "../src/ime";
 import type { ChatState } from "../src/types";
-// The spec workspace moved into the component studio plugin; its text boxes use the chat page's IME guard.
-import { SpecPanel, type PanelIO } from "../../desktop/builtin-plugins/botling.component-studio/src/panel";
-import type { SpecState } from "../../desktop/builtin-plugins/botling.component-studio/src/types";
 
 // CodeMirror measures text after a key; jsdom has no layout.
 Range.prototype.getClientRects ??= (() => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] })) as unknown as Range["getClientRects"];
@@ -183,61 +180,6 @@ describe("a composition that never ends where the page can hear it", () => {
     later();
     key(content, { key: "Enter", keyCode: 13 });
     expect(sent).toEqual([{ type: "send", text: "hi" }]);
-  });
-});
-
-function specState(overrides: Partial<SpecState> = {}): SpecState {
-  return {
-    id: "S1", name: "test-summary", about: "Test results", status: "done", draft: 2,
-    chat: "ClaudeCodeBot", from: "", suggestedBy: null, existing: null,
-    fields: [{ name: "total", type: "int", by: "app" }],
-    command: "swift test", folder: "/Users/me/ClaudeCodeBot", refresh: "manual", minutes: 15,
-    bots: [{ name: "ClaudeCodeBot", on: true }], similar: null, similarAbout: null, reuse: false,
-    samples: [], questions: [], conversation: [], origins: {},
-    preview: null, components: {}, testRun: null, steps: null, wide: false,
-    ...overrides,
-  } as SpecState;
-}
-
-/** What the spec panel asked of its plugin. */
-const asked: Record<string, unknown>[] = [];
-const io: PanelIO = {
-  act: (method, params = {}) => { asked.push({ method, ...params }); },
-  testRun: () => {}, preview: () => null, keepFrames: (_old, fresh) => fresh, media: () => "", mediaClicks: () => {},
-};
-
-describe("the spec panel", () => {
-  beforeEach(() => { asked.length = 0; });
-
-  it("Ask for changes… does not send on the Return that commits a candidate; plain Return sends; Shift-Return does not", () => {
-    const root = document.body.appendChild(document.createElement("div"));
-    new SpecPanel(root, io).update(specState({ version: 2 }));
-    const box = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
-    expect(box.placeholder).toBe("Ask for changes…");
-    box.value = "失敗的要列名字";
-    for (const kind of ["chrome", "webkit", "webkit13"] as const) {
-      later();
-      commitWithReturn(box, kind);
-    }
-    expect(asked).toEqual([]);
-    later();
-    const shift = key(box, { key: "Enter", shiftKey: true, keyCode: 13 });
-    expect(shift.defaultPrevented).toBe(false);
-    expect(asked).toEqual([]);
-    key(box, { key: "Enter", keyCode: 13 });
-    expect(asked).toEqual([{ method: "say", id: "S1", text: "失敗的要列名字", request: expect.any(String) }]);
-  });
-
-  it("a field keeps focus on the Return that commits a candidate, and is done on plain Return", () => {
-    const root = document.body.appendChild(document.createElement("div"));
-    new SpecPanel(root, io).update(specState());
-    const input = root.querySelector<HTMLInputElement>("input.spec-input")!;
-    input.focus();
-    commitWithReturn(input, "webkit");
-    expect(document.activeElement).toBe(input);
-    later();
-    key(input, { key: "Enter", keyCode: 13 });
-    expect(document.activeElement).not.toBe(input);
   });
 });
 

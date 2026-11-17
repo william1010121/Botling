@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
-import { draftSpec, replyPages } from "../../builtin-plugins/botling.component-studio/src/specs";
+import { replyPages } from "../../builtin-plugins/botling.component-studio/src/specs";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
 import { parseLine } from "../../src/core/agent/stream";
 import { addSpending, claudeRateLimits, codexRateLimits, codexTokens, freshSpending, type RateLimits, type RateLimitWindow } from "../../src/core/usage";
@@ -51,7 +51,7 @@ describe("usage (RateLimits.swift, Spending, RateLimitText)", () => {
   });
 });
 
-describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(from:page:))", () => {
+describe("result pages' preview cards (PagePreview.swift)", () => {
   const P = G.preview;
   // The same files under a folder of this test's own; Swift's paths, scheme and change dates put in for ours.
   const root = realpathSync(tempDir("5c-preview"));
@@ -75,13 +75,9 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
     }
   });
 
-  it("makes a spec from a preview card as 1.x: named after the page, its sample the card, the page's words for Maintainer", () => {
+  it("a spec made before from a preview card still sends Maintainer the page's words (replyPages with the spec's page)", () => {
     const page = join(root, "p/.bot/artifacts/My Report 2.html");
     const record = { id: "00000000-0000-4000-8000-0000000000C1", role: "bot", text: ours("Here: [競品比較](file://" + P.root + "/p/.bot/artifacts/report.html)"), date: 800_000_000 } as never;
-    const library = { names: ["網頁預覽卡片"] } as never;
-    const spec = draftSpec(record, "Shop", join(root, "p"), library, 0, page);
-    expect({ name: spec.name, page: spec.page, shownAs: spec.shownAs ?? null, existing: spec.existing ?? null, command: spec.command ?? null, samples: spec.samples.map((entry) => ({ label: entry.label, data: same(entry.data) })) })
-      .toEqual({ ...P.spec, page: ours(P.spec.page), samples: P.spec.samples.map((entry: any) => ({ label: entry.label, data: ours(entry.data) })) });
     expect(replyPages(record, page)).toEqual(P.pages.map((entry: any) => ({ path: ours(entry.path), text: entry.text })));
   });
 
@@ -100,7 +96,6 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
     expect(previewCards({ role: "user", text }, true)).toBeNull();
     expect(previewCards({ role: "bot", text }, false)).toBeNull();
     expect(previewCards({ role: "bot", text, displays: [{ name: "網頁預覽卡片", data: JSON.stringify({ path }) }] }, true)).toBeNull();
-    // (Which card "Make into component" is asked for, 0 to 2, is checked by the plugin's `make`, botling.component-studio.)
   });
 
   it("serves only files inside an artifacts folder, through symlinks; a page encoded or climbing out is refused", () => {

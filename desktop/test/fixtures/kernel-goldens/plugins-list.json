@@ -200,7 +200,7 @@
       "name": "botling.component-studio",
       "title": "Component studio",
       "version": "1.0.0",
-      "description": "Turns a reply into a component: \"Make into component\" under a reply (or on a result page's preview card), a bot's own <suggest-component> chip, and the spec workspace in the right panel where you and Maintainer shape it.",
+      "description": "Turns a bot's own <suggest-component> chip under a reply into a component: pressed, Maintainer builds it and the bot that wrote the reply draws it under that reply.",
       "enabled": true,
       "failure": null,
       "hostState": "starting",
@@ -214,13 +214,7 @@
         "host"
       ],
       "settings": [],
-      "commands": [
-        {
-          "id": "botling.component-studio.make",
-          "title": "Make into component",
-          "registered": false
-        }
-      ],
+      "commands": [],
       "panels": []
     },
     {
@@ -739,36 +733,6 @@
   "menus": [
     {
       "menu": "message/context",
-      "command": "botling.component-studio.make",
-      "plugin": "botling.component-studio",
-      "title": "Make into component",
-      "icon": "cube",
-      "quick": true,
-      "alt": "Add to another bot…",
-      "hint": "Maintainer builds it from this reply right away",
-      "locales": {
-        "zh-Hant": {
-          "title": "做成元件",
-          "alt": "加到其他 Bot…",
-          "hint": "Maintainer 會馬上用這則回覆做出來"
-        }
-      }
-    },
-    {
-      "menu": "message/preview",
-      "command": "botling.component-studio.make",
-      "plugin": "botling.component-studio",
-      "title": "Make into component",
-      "icon": "cube",
-      "quick": true,
-      "locales": {
-        "zh-Hant": {
-          "title": "做成元件"
-        }
-      }
-    },
-    {
-      "menu": "message/context",
       "command": "zed.tools.clip",
       "plugin": "zed.tools",
       "title": "Clip it",
@@ -942,11 +906,6 @@
     }
   ],
   "takeovers": [
-    {
-      "plugin": "botling.component-studio",
-      "id": "botling.component-studio.spec",
-      "title": "Component spec"
-    },
     {
       "plugin": "zed.tools",
       "id": "zed.tools.takeover",
