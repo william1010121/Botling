@@ -10,6 +10,7 @@ import { openServerStore, type Db, type Writer } from "../../src/server/store";
 import {
   admit, cmdHash, HELD_LIMIT, readNext, SlotEngine, SlotRefusal, type ApplyFn, type AuditEvent, type BasisReader, type SlotEngineOptions, type SlotReply,
 } from "../../src/server/slots";
+import { effectBasisReader } from "../../src/server/intents";
 import { EPOCH_B, entries, FakeLog, memoryStore, react, slot } from "./server-slots-harness";
 
 const dbs: Db[] = [];
@@ -320,6 +321,13 @@ describe("§11.3 apply at the owner, branch by branch", () => {
         const h = harness();
         line(h, "q1");
         expect(await h.send(choose(1))).toMatchObject({ message: { outcome: { reason: "changed" } } });
+      });
+
+      it("the reader the server runs with (effectBasisReader) tells a line too, not only the default one", async () => {
+        const h = harness({ basis: effectBasisReader });
+        line(h, "c1");
+        expect(await h.send(approve(1, "c1"))).toMatchObject({ message: { outcome: { kind: "applied" } } });
+        expect(await h.send(approve(2, "nope:card-1"))).toMatchObject({ message: { outcome: { reason: "changed" } } });
       });
 
       it("a reader that cannot tell whether the line exists refuses (fail closed)", async () => {

@@ -75,6 +75,8 @@ export const effectBasisReader: BasisReader = {
     return !!row && (row.state === "queued" || row.state === "started");
   },
   card: (tx, botId, cardId) => dbBasisReader.card(tx, botId, cardId),
+  // The reader the server really runs with (runtime.ts): without this, component.approve on a component card is still refused.
+  line: (tx, botId, messageId) => dbBasisReader.line?.(tx, botId, messageId) === true,
 };
 
 function refuseFrom(error: unknown): never {

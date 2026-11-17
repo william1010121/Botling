@@ -127,4 +127,75 @@ describe("ApprovalSheet", () => {
     expect(sent).toEqual([first]);
     expect(document.querySelector(".approval-sheet")).toBeNull();
   });
+
+  // eeg 2026-11-18: "Allow" on a card did nothing and said nothing when the server refused it.
+  describe("an Allow the core refuses stays on the sheet with the reason", () => {
+    const approve = { type: "component.approve", botId: BOT, messageId: MESSAGE, index: 0, command: ask.command, folder: ask.folder } as const;
+    function mount(answer: (envelope: any) => any) {
+      const sent: any[] = [];
+      let receive: (value: unknown) => void = () => {};
+      const client = new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+        sent.push(envelope.cmd);
+        queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ...answer(envelope) }));
+      } });
+      const ends: boolean[] = [];
+      let opener: ReturnType<typeof useApprovalSheet>["ask"] = () => {};
+      function Page() {
+        const approval = useApprovalSheet(client, "en", () => {}, 0);
+        opener = approval.ask;
+        return createElement("div", null, approval.sheet);
+      }
+      return { sent, ends, open: async () => { await act(async () => root.render(createElement(Page))); await act(async () => opener({ ...ask, detail: null }, approve, (allowed) => ends.push(allowed))); } };
+    }
+    const allow = () => document.querySelector<HTMLButtonElement>(".approval-allow")!;
+    const problem = () => document.querySelector(".approval-error");
+
+    it("a refusal (RequestFailed) keeps the sheet open, shows why, and Allow can be pressed again; Cancel ends it with false", async () => {
+      const page = mount(() => ({ ok: false, error: { code: "changed", message: "card x is closed" } }));
+      await page.open();
+      expect(problem()).toBeNull();
+      await act(async () => allow().click());
+      expect(document.querySelector(".approval-sheet")).not.toBeNull();
+      expect(problem()?.textContent).toBe("Could not allow this command: card x is closed");
+      expect(problem()?.getAttribute("role")).toBe("alert");
+      expect(allow().disabled).toBe(false);
+      expect(page.ends).toEqual([]);
+      await act(async () => allow().click());
+      expect(page.sent).toEqual([approve, approve]);
+      await act(async () => document.querySelector<HTMLButtonElement>(".dialog-cancel")!.click());
+      expect(document.querySelector(".approval-sheet")).toBeNull();
+      expect(page.ends).toEqual([false]);
+    });
+
+    it("the core answering accepted:false shows the same kind of line; accepted:true closes the sheet with true and no error", async () => {
+      const answers = [{ ok: true, result: { accepted: false } }, { ok: true, result: { accepted: true } }];
+      const page = mount(() => answers.shift()!);
+      await page.open();
+      await act(async () => allow().click());
+      expect(problem()?.textContent).toContain("not allowed");
+      expect(document.querySelector(".approval-sheet")).not.toBeNull();
+      await act(async () => allow().click());
+      expect(document.querySelector(".approval-sheet")).toBeNull();
+      expect(page.ends).toEqual([true]);
+    });
+
+    it("while Allow waits for the core it is off, so a double tap sends once", async () => {
+      let release: () => void = () => {};
+      const sent: any[] = [];
+      let receive: (value: unknown) => void = () => {};
+      const client = new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+        sent.push(envelope.cmd);
+        release = () => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result: { accepted: true } });
+      } });
+      let opener: ReturnType<typeof useApprovalSheet>["ask"] = () => {};
+      function Page() { const approval = useApprovalSheet(client, "en", () => {}, 0); opener = approval.ask; return createElement("div", null, approval.sheet); }
+      await act(async () => root.render(createElement(Page)));
+      await act(async () => opener({ ...ask, detail: null }, approve));
+      await act(async () => { allow().click(); allow().click(); });
+      expect(sent).toHaveLength(1);
+      expect(allow().disabled).toBe(true);
+      await act(async () => release());
+      expect(document.querySelector(".approval-sheet")).toBeNull();
+    });
+  });
 });

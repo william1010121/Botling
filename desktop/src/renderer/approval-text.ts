@@ -1,6 +1,6 @@
 // The ApprovalSheet's words (a card's command waiting for your OK), English and Traditional Chinese.
 
-type Words = { title: string; line: (card: string) => string; detailLine: string; remembered: string; cancel: string; allow: string };
+type Words = { title: string; line: (card: string) => string; detailLine: string; remembered: string; cancel: string; allow: string; refused: string; failed: (why: string) => string };
 
 const en: Words = {
   title: "Allow this command to run?",
@@ -9,6 +9,8 @@ const en: Words = {
   remembered: "Remembered for this command in this folder: it runs again without asking.",
   cancel: "Cancel",
   allow: "Allow and run",
+  refused: "This command was not allowed: the card changed or is gone. Close this and try again from the card.",
+  failed: (why) => `Could not allow this command: ${why}`,
 };
 const zh: Words = {
   title: "允許執行這個指令嗎？",
@@ -17,6 +19,8 @@ const zh: Words = {
   remembered: "這個資料夾會記住這個指令的允許，之後執行不再詢問。",
   cancel: "取消",
   allow: "允許並執行",
+  refused: "沒有允許這個指令：卡片已經變了或不見了。請關掉這個視窗，再從卡片重按一次。",
+  failed: (why) => `無法允許這個指令：${why}`,
 };
 
 export const approvalWords = (lang: string | null | undefined): Words => (lang === "zh-Hant" ? zh : en);
