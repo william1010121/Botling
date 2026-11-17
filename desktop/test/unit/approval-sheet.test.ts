@@ -151,7 +151,7 @@ describe("ApprovalSheet", () => {
     const problem = () => document.querySelector(".approval-error");
 
     it("a refusal (RequestFailed) keeps the sheet open, shows why, and Allow can be pressed again; Cancel ends it with false", async () => {
-      const page = mount(() => ({ ok: false, error: { code: "changed", message: "card x is closed" } }));
+      const page = mount(() => ({ ok: false, error: { code: "conflict", message: "card x is closed" } }));
       await page.open();
       expect(problem()).toBeNull();
       await act(async () => allow().click());
