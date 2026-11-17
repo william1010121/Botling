@@ -85,6 +85,8 @@ export interface RailWorkerList {
 
 const ended = (row: Pick<SubagentRowView, "startedAt" | "endedAt">) => row.endedAt ?? row.startedAt;
 const stateOf = (status: SubagentRowView["status"]): RailWorkerState => (status === "completed" ? "done" : status);
+/** A finished worker nobody has viewed for this long counts as viewed and leaves the list. */
+export const UNREAD_FOR_MS = 24 * 3_600_000;
 const RANK: Record<string, number> = { unreadFailed: 0, unread: 1, running: 2, rest: 3 };
 
 /** A bot's own items (labelled `subBot` when it is a sub bot under the listed one), unsorted; `all`: the gone ones too. */
@@ -96,7 +98,7 @@ function collect(bot: Pick<BotView, "id" | "name" | "subagentRows">, now: number
     const selected = marks.watching?.botId === bot.id && marks.watching.id === row.id;
     const base = { kind: "worker" as const, row, ownerId: bot.id, subBot, groupKey: row.group ? `${bot.id}|${row.group.id}` : row.id, state, selected };
     if (state === "running") { items.push({ ...base, unread: false, viewed: false }); continue; }
-    const unread = !marks.viewed.has(row.id) && ended(row) >= marks.since;
+    const unread = !marks.viewed.has(row.id) && ended(row) >= marks.since && now - ended(row) <= UNREAD_FOR_MS;
     const back = row.unsettledAt !== null && now - row.unsettledAt < LISTED_AFTER_ENDING_MS;
     if (!all && !unread && !selected && !back) continue;
     items.push({ ...base, unread: unread && !selected, viewed: !unread || selected });

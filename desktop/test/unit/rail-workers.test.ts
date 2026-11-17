@@ -55,6 +55,20 @@ describe("a bot's worker items", () => {
     expect(railWorkerItems(b, NOW + 600 * MIN, marks()).map((item) => item.row.id)).toEqual(["bad", "ok"]);
   });
 
+  it("a finished worker left unviewed for over 24 hours counts as viewed and leaves the list; running ones stay; the counts follow", () => {
+    const HOUR = 60 * MIN;
+    const b = bot({ id: "b", subagentRows: [
+      done("h23", { endedAt: NOW - 23 * HOUR }),
+      done("h25", { endedAt: NOW - 25 * HOUR }),
+      row({ id: "bad25", status: "failed", endedAt: NOW - 25 * HOUR }),
+      row({ id: "run", startedAt: NOW - 30 * HOUR }),
+    ] });
+    const m = marks({ since: NOW - 100 * HOUR });
+    expect(railWorkerItems(b, NOW, m).map((item) => item.row.id)).toEqual(["h23", "run"]);
+    const list = railWorkers(b, [b], NOW, m);
+    expect([list.total, list.unread]).toEqual([2, 1]);
+  });
+
   it("workers that ended before the list existed count as viewed (no flood of old ones on first start)", () => {
     const b = bot({ id: "b", subagentRows: [done("old", { endedAt: SINCE - MIN }), done("new")] });
     expect(railWorkerItems(b, NOW, marks()).map((item) => item.row.id)).toEqual(["new"]);
