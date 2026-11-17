@@ -1367,6 +1367,9 @@ describe("a plain line sorted by the small model (4c)", () => {
       // two lines sent together, the first never answered: the second has nothing left when the first is given up on, and is not asked
       const third = t.sendAsync("B1", "第三句話");
       const fourth = t.sendAsync("B1", "第四句話");
+      // let the third one's call go out with its full budget first (the clock would otherwise move before its steps run)
+      await advance(0);
+      expect(m.calls()).toHaveLength(3);
       await advance(C.SORT_DEADLINE_MS + 1);
       expect(M.hasBriefing((await third) as string)).toBe(true);
       expect(M.hasBriefing((await fourth) as string)).toBe(true);
