@@ -1,5 +1,6 @@
 import { ClaudeRequestTracker } from "../token-speed";
 import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
+import { BACKGROUND_CAP_HOOK, backgroundCapDecision } from "./background-cap";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
 import { specGuardDecision } from "../spec-guard";
 import { siteToolsGuardDecision } from "../site-tools-guard";
@@ -239,13 +240,15 @@ export class ClaudeHead {
     const app = !this.config.harmless && this.config.appMcp ? this.config.appMcp : null;
     const spec = !this.config.harmless && !!this.config.specGuard;
     const siteTools = !this.config.harmless && !!this.config.siteToolsGuard;
-    if (monitor || guard || app || spec || siteTools) {
+    const bgCap = !this.config.harmless; // background waits stay within 50 minutes (background-cap.ts)
+    if (monitor || guard || app || spec || siteTools || bgCap) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
       this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), POLICY_INIT_TIMEOUT_MS);
       this.monitorInitTimer.unref();
       const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
         ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : []),
-        ...(siteTools ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SITE_TOOLS_GUARD_HOOK] }] : [])];
+        ...(siteTools ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SITE_TOOLS_GUARD_HOOK] }] : []),
+        ...(bgCap ? [{ matcher: "^(Bash|Monitor)$", hookCallbackIds: [BACKGROUND_CAP_HOOK] }] : [])];
       this.write({ type: "control_request", request_id: this.monitorInit, request: { subtype: "initialize",
         ...(hooks.length ? { hooks: { PreToolUse: hooks } } : {}), ...(app ? { sdkMcpServers: [app.server] } : {}) } });
     }
@@ -267,7 +270,7 @@ export class ClaudeHead {
     this.monitorPolicyFailed = true;
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
     this.queuedMessages = [];
-    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the spec/ guard, the app tools); no queued user input was sent.";
+    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the spec/ guard, the background wait cap, the app tools); no queued user input was sent.";
     void this.process?.terminate({ graceMs: 0 });
   }
 
@@ -309,6 +312,10 @@ export class ClaudeHead {
       const guard = this.config.siteToolsGuard;
       this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
         response: guard ? siteToolsGuardDecision(message.request.input, { folder: guard.folder, cwd: this.config.cwd }) : {} } });
+      return;
+    }
+    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === BACKGROUND_CAP_HOOK) {
+      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: backgroundCapDecision(message.request.input) } });
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "mcp_message") { void this.appMcp(message); return; }

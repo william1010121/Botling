@@ -21,7 +21,12 @@ function transport() {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ChildProcessWithoutNullStreams;
     const pid = 10_000 + processes.length;
     const writes: any[] = [];
-    child.stdin.on("data", chunk => { for (const line of String(chunk).trim().split("\n")) writes.push(JSON.parse(line)); });
+    child.stdin.on("data", chunk => { for (const line of String(chunk).trim().split("\n")) {
+      const message = JSON.parse(line); writes.push(message);
+      // A claude editor registers its tool policy (the background wait cap) first and holds input until it is answered.
+      if (message.type === "control_request" && message.request?.subtype === "initialize")
+        (child.stdout as PassThrough).write(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } }) + "\n");
+    } });
     let resolve!: (result: TerminateResult) => void;
     const ended = new Promise<TerminateResult>(r => { resolve = r; });
     const record = { child, writes, args, terminateCalls: 0, release() { child.emit("close", 0, null); resolve({ killed: [pid], forced: false }); },
