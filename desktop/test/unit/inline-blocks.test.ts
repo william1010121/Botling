@@ -66,8 +66,11 @@ describe("the guidance in the prompt", () => {
       expect(text).toContain("A block is not a sentence");
       expect(text).toContain("More than 3 blocks");
       expect(text).toContain("you need no usage lookup");
-      expect(text).toContain("Results meant for the user (reports, screenshots, previews)");
-      expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
+      // The main bot's results rule is its own line (it hands work over), without the list.
+      if (role !== "main") {
+        expect(text).toContain("Results meant for the user (reports, screenshots, previews)");
+        expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
+      }
       expect(text).toContain("every bot has it, and no request to Maintainer is needed");
       expect(text).toContain("is not a request either: it is yours to use");
       // Components still belong to Maintainer otherwise.
@@ -110,7 +113,7 @@ describe("the guidance in the prompt", () => {
 describe("the report rule by size", () => {
   const manifestText = REPORT_SECTION.text;
   const page = (inlineBlocks: boolean, engine: "claude" | "codex" | "agy" = "claude", role: "main" | "manager" | "bot" = "manager") =>
-    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), profile(role), "claude", true, reportSections(tool), undefined, inlineBlocks);
+    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), profile(role), engine, true, reportSections(tool), undefined, inlineBlocks);
 
   it("the manifest still says the sentence the swap replaces (change the swap with the manifest, never one of them)", () => {
     expect(manifestText).toContain(`- ${REPORT_RULE_ALL_TO_PAGE}`);
@@ -186,7 +189,9 @@ describe("the built-in component every bot has", () => {
       expect(bot.ownComponents()).toContain("inline-report-block");
       const note = bot.componentNote();
       expect(note).toContain("- inline-report-block (JSON): ");
-      expect(note).not.toContain("not yours yet");
+      // Not in the shared shelf (the "not yours yet" part), where the others are.
+      expect(note.split("not yours yet")[1] ?? "").not.toContain("inline-report-block");
+      expect(note).toContain("not yours yet");
     }
   });
   it("is not counted: 1 / 20 with one of its own, and Maintainer's limit is about the others", () => {

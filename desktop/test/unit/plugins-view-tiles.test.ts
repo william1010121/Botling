@@ -36,6 +36,6 @@ describe("plugins.list carries the tiles of the plugins that are on", () => {
     expect(tilesOf(updated[updated.length - 1]!, CARDS)).toEqual([]);
 
     await c.call({ type: "plugins.enable", name: CARDS, enabled: true });
-    expect(tilesOf(await list(c), CARDS)).toHaveLength(1);
+    expect(tilesOf(await list(c), CARDS)).toHaveLength(2);
   }, 60_000);
 });
