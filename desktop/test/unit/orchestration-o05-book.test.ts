@@ -34,15 +34,16 @@ function fakeCore() {
 }
 
 function book(core = fakeCore(), file: { text: string | null } = { text: null }, quota: { atOnce?: number } = {}, written?: { cards: number; answer?: () => void }) {
-  const told: Record<string, unknown>[] = [];
+  const told: Record<string, unknown>[] = [], warns: string[] = [];
   const workers = new PluginWorkers({
     world: { granted: () => true, workers: () => core.port, quota: () => quota, made: () => true },
     facts: (): PluginFacts => ({ name: "p", identity: H1, permissions: ALL, botWritten: !!written }),
     ask: async () => { if (written) { written.cards += 1; written.answer?.(); } return { index: 0 }; },
     tell: (_plugin, _event, data) => { told.push(data); },
+    warn: (_plugin, text) => { warns.push(text); },
     file: { read: () => file.text, write: (text) => { file.text = text; } },
   });
-  return { workers, core, told, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
+  return { workers, core, told, warns, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
 }
 
 describe("O05 item 1: a cancel under way when the app goes away leaves no place held for ever", () => {
@@ -63,9 +64,11 @@ describe("O05 item 1: a cancel under way when the app goes away leaves no place 
     again.workers.pickUp();
     expect(again.told).toEqual([expect.objectContaining({ taskId: "T1", run: 1, status: "interrupted", report: "cut off" })]);
     expect(again.rows()[0]).toMatchObject({ open: false, stopped: false });
-    // T2 still runs; T1's place is free: a third worker starts, a fourth does not.
+    // T2 still runs; T1's place is free: a third worker starts with no warning (2 at work), a fourth starts too (3 > 2) and warns.
     await expect(again.workers.start("p", params)).resolves.toMatchObject({ taskId: "T3" });
-    await expect(again.workers.start("p", params)).rejects.toThrow("2 workers at work");
+    expect(again.warns).toEqual([]);
+    await expect(again.workers.start("p", params)).resolves.toMatchObject({ taskId: "T4" });
+    expect(again.warns).toHaveLength(1);
   });
 
   it("the end event of a run is told after the restart too (ended() no longer skips the row)", async () => {
@@ -111,29 +114,32 @@ describe("O05 item 2: a send in flight keeps its place", () => {
     return { t, core, sent, answer: (value: Parameters<typeof answer>[0]) => answer(value) };
   }
 
-  it("another start's gate (its pickUp) does not close the entry: the new run holds its place and the second start is refused", async () => {
+  it("another start's gate (its pickUp) does not close the entry: the new run holds its place, so the second start is counted past the threshold and warned about", async () => {
     const { t, core, sent, answer } = await sending();
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    await expect(t.workers.start("p", params)).resolves.toMatchObject({ taskId: "T2" });
+    expect(t.warns).toHaveLength(1);
     expect(core.log.sent).toEqual(["T1"]);
     answer({ ok: true, how: "newRun", run: 2 });
     await sent;
     // Still held after the send returns; the core now runs T1 again.
     core.ledger.set("T1", { run: 2, running: true, status: "", report: "" });
     expect(t.rows()[0]).toMatchObject({ open: true });
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
     // The new run ends: told once, the place is free.
     core.ledger.set("T1", { run: 2, running: false, status: "completed", report: "second" });
     t.workers.ended("T1", 2, "completed", "second");
     expect(t.told.map((data) => [data.run, data.report])).toEqual([[1, "done"], [2, "second"]]);
     expect(t.rows()[0]).toMatchObject({ open: false });
-    await expect(t.workers.start("p", params)).resolves.toMatchObject({ taskId: "T2" });
+    // T2 still runs: one at work, so the next start (2 > 1) crosses the threshold again after the dip and warns once more.
+    await expect(t.workers.start("p", params)).resolves.toMatchObject({ taskId: "T3" });
+    expect(t.warns).toHaveLength(2);
   });
 
   it("a host registering (a pickUp) does not close it either", async () => {
     const { t, answer, sent } = await sending();
     t.workers.pickUp();
     t.workers.pickUp();
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    await expect(t.workers.start("p", params)).resolves.toMatchObject({ taskId: "T2" });
+    expect(t.warns).toHaveLength(1); // T1's place was still held: 2 at work, past 1
     answer({ ok: true, how: "newRun", run: 2 });
     await sent;
     expect(t.rows()[0]).toMatchObject({ open: true });

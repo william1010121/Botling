@@ -3,8 +3,9 @@
 // one runs before a worker is started (the plan of M7-O01, (c) and (d), with its review's F3 and F4):
 //   1. the plugin declares `orchestrate`, `exec`, `files` and `bots` in package.json AND the user granted it
 //      (`OrchestrationWorld.granted`; nobody has it unless the world says so: fail closed);
-//   2. the quota (workers at once, workers in the last 24 hours) has room, and the room is taken (a reservation,
-//      synchronously) before the first await, so N+5 requests at once start exactly N;
+//   2. the workers a plugin has at work and has started in the last 24 hours are counted (a reservation, taken
+//      synchronously before the first await). There is NO cap (2026-11-17 decision: "不限定，告警就好"): past a threshold
+//      (WARN_AT, or settings' `world.quota`) the user gets one notice per crossing and the start still succeeds;
 //   3. a plugin the bot wrote (not shipped, not installed from the catalog; unknown counts as written) gets an approval
 //      card for every worker, unless the user installed it (2026-11-16: "install once, everything allowed": `world.installed`);
 //      its answer is checked again once it comes (the plugin may have changed, the grant gone); cards of one plugin queue
@@ -34,8 +35,8 @@ import type { AppAnswer, AppQuestion } from "../plugins/types";
 
 /** What a plugin must declare in package.json for `workers.start` (the user's grant is asked on top of these). */
 export const ORCHESTRATE_NEEDS = ["orchestrate", "exec", "files", "bots"] as const;
-export const DEFAULT_QUOTA = { atOnce: 4, perDay: 40 } as const;
-export const QUOTA_MAX = { atOnce: 16, perDay: 200 } as const;
+/** Past these a plugin's starts raise one warning (never a refusal): more than 8 workers at once, or more than 60 started in 24 hours. */
+export const WARN_AT = { atOnce: 8, perDay: 60 } as const;
 /** The handoff argument that makes a worker one a plugin started: fewer rights than a worker the bot started itself (ClaudeWorkers.prepare). */
 export const PLUGIN_STARTED = "pluginStarted";
 /** Set (a symbol, so no JSON from a model can carry it) on a handoff this book already checked; `admitHeard` lets it through. */
@@ -69,7 +70,7 @@ export interface OrchestrationWorld {
   installed?(plugin: string): boolean;
   /** Whether the bot is one this plugin made (`profile.plugin`): a plugin the bot wrote works only on those. Absent: none is. */
   made?(plugin: string, bot: string): boolean;
-  /** Settings: workers at once and workers a day (clamped to QUOTA_MAX). */
+  /** Where the warning starts (workers at once, workers a day); a limit nothing is refused at. Absent or invalid: WARN_AT. */
   quota?(): { atOnce?: number; perDay?: number };
   /** settings.json `specWriters`. */
   specWriters?(): readonly string[];
@@ -99,6 +100,8 @@ export interface PluginWorkersDeps {
   /** `workerReport` to the plugin that started the worker (only to it). `false`: its host did not take it now (it stays owed). */
   tell(plugin: string, event: "workerReport", data: Record<string, unknown>): unknown;
   log?(line: string): void;
+  /** A warning for the user (a plugin's workers past the warning threshold). Absent: only logged. */
+  warn?(plugin: string, text: string): void;
   /** The book on disk (absent: kept in memory only). */
   file?: { read(): string | null; write(text: string): void };
   now?(): number;
@@ -144,12 +147,14 @@ export class PluginWorkers {
   private save() {
     const now = this.now();
     this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP);
-    // Over the most: the oldest rows that nothing counts any more go (closed, older than a day, nothing owed). A row at work,
-    // one from the last day (the quota counts it) or one with a report owed is never the one forgotten.
+    // Over the most: the oldest rows that nothing needs go, first those older than a day, then (with no cap since 2026-11-17 a
+    // plugin can start any number in a day) closed rows of the last day, which only the day's warning counts. A row at work
+    // or one with a report owed is never the one forgotten.
     let excess = this.entries.length - MAX_ENTRIES;
-    if (excess > 0) {
+    for (const dayToo of [false, true]) {
+      if (excess <= 0) break;
       this.entries = this.entries.filter((entry) => {
-        if (excess <= 0 || entry.open || entry.at > now - DAY || entry.owed?.length) return true;
+        if (excess <= 0 || entry.open || (!dayToo && entry.at > now - DAY) || entry.owed?.length) return true;
         excess -= 1;
         return false;
       });
@@ -168,19 +173,48 @@ export class PluginWorkers {
     return facts;
   }
 
+  /** Where the warnings start. No maximum: a bigger number in settings just warns later. */
   private quota() {
     const given = this.deps.world.quota?.() ?? {};
-    const pick = (value: number | undefined, fallback: number, max: number) => (Number.isInteger(value) && value! >= 1 ? Math.min(value!, max) : fallback);
-    return { atOnce: pick(given.atOnce, DEFAULT_QUOTA.atOnce, QUOTA_MAX.atOnce), perDay: pick(given.perDay, DEFAULT_QUOTA.perDay, QUOTA_MAX.perDay) };
+    const pick = (value: number | undefined, fallback: number) => (Number.isInteger(value) && value! >= 1 ? value! : fallback);
+    return { atOnce: pick(given.atOnce, WARN_AT.atOnce), perDay: pick(given.perDay, WARN_AT.perDay) };
   }
 
-  /** Why a plugin may not have one more worker now (null: it may). Reservations count as workers at work. */
-  private full(plugin: string): string | null {
-    const { atOnce, perDay } = this.quota();
+  /** Which plugins are past which threshold now, so a warning comes once per crossing (the flag clears when the count is back under). */
+  private readonly warned = new Map<string, { atOnce: boolean; perDay: boolean }>();
+
+  private counts(plugin: string) {
     const mine = this.entries.filter((entry) => entry.plugin === plugin);
-    if (mine.filter((entry) => entry.open).length >= atOnce) return `This plugin already has ${atOnce} workers at work (the most at once). Nothing was started.`;
-    if (mine.filter((entry) => entry.at > this.now() - DAY).length >= perDay) return `This plugin has started ${perDay} workers in the last 24 hours (the most). Nothing was started.`;
-    return null;
+    return { open: mine.filter((entry) => entry.open).length, day: mine.filter((entry) => entry.at > this.now() - DAY).length };
+  }
+
+  /** Called before a place is taken: a plugin that has dipped back under a threshold since its last warning may be warned again when it crosses once more. */
+  private rearm(plugin: string) {
+    try {
+      const flags = this.warned.get(plugin);
+      if (!flags) return;
+      const { atOnce, perDay } = this.quota();
+      const { open, day } = this.counts(plugin);
+      if (open <= atOnce) flags.atOnce = false;
+      if (day <= perDay) flags.perDay = false;
+    } catch { /* counting for a warning never stops a worker */ }
+  }
+
+  /**
+   * Counts the plugin's workers (reservations included) and warns the user once each time it goes past a threshold: more than `atOnce`
+   * at work, or more than `perDay` started in 24 hours. Nothing is refused. Called after a place is taken; never throws.
+   */
+  private warnIfPast(plugin: string) {
+    try {
+      const { atOnce, perDay } = this.quota();
+      const { open, day } = this.counts(plugin);
+      const flags = this.warned.get(plugin) ?? { atOnce: false, perDay: false };
+      this.warned.set(plugin, flags);
+      const shown = oneLine(plugin, 100);
+      const say = (text: string) => { this.deps.log?.(text); try { this.deps.warn?.(plugin, text); } catch { /* a notice that fails must not undo a start */ } };
+      if (open > atOnce && !flags.atOnce) { flags.atOnce = true; say(`The plugin "${shown}" now has ${open} workers at work at once (more than ${atOnce}). They all run; this is only a warning.`); }
+      if (day > perDay && !flags.perDay) { flags.perDay = true; say(`The plugin "${shown}" has started ${day} workers in the last 24 hours (more than ${perDay}). They all run; this is only a warning.`); }
+    } catch { /* counting for a warning never stops a worker */ }
   }
 
   /**
@@ -234,7 +268,7 @@ export class PluginWorkers {
     if (facts.botWritten && !this.installed(facts.name) && !this.deps.world.made?.(facts.name, botId)) throw new Error("A plugin a bot wrote may only start workers on bots it made itself. Nothing was started.");
   }
 
-  /** The checks before a worker's room is taken: the record is readable, the plugin is allowed, the model is not one that may change spec/, there is room. */
+  /** The checks before a worker's room is taken: the record is readable, the plugin is allowed, the model is not one that may change spec/. */
   private gate(plugin: string, model?: string): PluginFacts {
     if (this.unreadable) throw new Error("The record of the workers plugins started could not be read, so none is started. Nothing was started.");
     const facts = this.allowed(plugin);
@@ -243,22 +277,22 @@ export class PluginWorkers {
     }
     // A place held for a worker that has ended (or is gone) without this book hearing of it is free before the room is counted.
     this.pickUp();
-    const refused = this.full(plugin);
-    if (refused) throw new Error(refused);
     return facts;
   }
 
-  /** The card (for a plugin a bot wrote), the room taken, then `go`; the room is given back if `go` fails. Shared by `start` and `admitHeard`. */
+  /** The card (for a plugin a bot wrote), the place taken, then `go`; the place is given back if `go` fails. Shared by `start` and `admitHeard`. */
   private async launched(facts: PluginFacts, botId: string, params: StartParams, go: (startedBy: StartedBy) => Promise<{ task_id: string; run: number }>): Promise<{ taskId: string; run: number }> {
     if (facts.botWritten && !this.installed(facts.name)) {
       if (!(await this.card(facts, botId, params))) throw new Error("You did not allow this worker. Nothing was started.");
-      // Authority at use: what the card showed is still true, and the room is still there.
+      // Authority at use: what the card showed is still true.
       this.allowed(facts.name, facts.identity);
-      const nowFull = this.full(facts.name);
-      if (nowFull) throw new Error(nowFull);
     }
     const entry: Entry = { plugin: facts.name, bot: botId, task: null, at: this.now(), open: true, reported: 0, stopped: false, hash: facts.identity };
+    // Re-armed here, right before the place is taken (not in `gate`): a card may wait minutes, and a count that dipped under the
+    // threshold meanwhile and is crossed again by this place is a new crossing, told again.
+    this.rearm(facts.name);
     this.entries.push(entry);
+    this.warnIfPast(facts.name);
     const forget = () => { this.entries = this.entries.filter((candidate) => candidate !== entry); this.persist(); };
     // The reservation is written before the worker starts: a write that fails starts nothing (fail closed).
     try { this.save(); } catch (error) { this.entries = this.entries.filter((candidate) => candidate !== entry); throw error; }
@@ -348,13 +382,13 @@ export class PluginWorkers {
     // O05: a next run drops the report the bot has not taken (`launch` resets it): not while the bot is still owed the last one.
     this.refuseWhileStopping(entry); // a cancel may have started while the card waited
     this.refuseWhileBotOwed(port, taskId);
-    // A run into a worker that is idle takes a place again: the same limit as a new one (not the daily count).
+    // A run into a worker that is idle takes a place again: counted for the at-once warning like a new one (not the daily count).
     const wasOpen = entry.open;
     if (!wasOpen) {
-      const { atOnce } = this.quota();
-      if (this.entries.filter((candidate) => candidate.plugin === plugin && candidate.open).length >= atOnce) throw new Error(`This plugin already has ${atOnce} workers at work (the most at once).`);
+      this.rearm(plugin);
       entry.open = true;
       entry.stopped = false;
+      this.warnIfPast(plugin);
     }
     // O05: from here until the port answers nothing closes the entry (a `pickUp` of another start's gate or a host registering would see the
     // old run ended and told, and free the place the new run is about to take).

@@ -167,15 +167,16 @@ function fakeCore() {
 function book(core = fakeCore(), file: { text: string | null } = { text: null }, init: { present?: boolean; identity?: string; taken?: boolean; quota?: { atOnce?: number; perDay?: number }; write?: (n: number) => void } = {}) {
   let writes = 0;
   const state = { present: init.present ?? true, identity: init.identity ?? H1, taken: init.taken ?? true, quota: init.quota ?? {} };
-  const told: Record<string, unknown>[] = [];
+  const told: Record<string, unknown>[] = [], warns: string[] = [];
   const workers = new PluginWorkers({
     world: { granted: () => true, workers: () => (core.state.available ? core.port : "No such bot."), quota: () => state.quota },
     facts: (): PluginFacts | null => (state.present ? { name: "p", identity: state.identity, permissions: ALL, botWritten: false } : null),
     ask: async () => ({ index: 0 }),
     tell: (_plugin, _event, data) => { if (!state.taken) return false; told.push(data); },
+    warn: (_plugin, text) => { warns.push(text); },
     file: { read: () => file.text, write: (text) => { init.write?.(++writes); file.text = text; } },
   });
-  return { workers, core, file, state, told, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
+  return { workers, core, file, state, told, warns, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
 }
 const params = { bot: "main", instructions: "Do it", name: "n" };
 
@@ -221,18 +222,21 @@ describe("a plugin that goes hands its workers back to core", () => {
     expect(await t.workers.send("p", "T2", "more")).toEqual({ run: 1, how: "steered" });
   });
 
-  it("a worker the old version has handed back still counts at work for the plugin's name until it ends: a new hash does not get the room again", async () => {
+  it("a worker the old version has handed back still counts at work for the plugin's name until it ends: a new hash is warned about it, not refused", async () => {
     const t = book(undefined, undefined, { quota: { atOnce: 2 } });
     await t.workers.start("p", params);
     await t.workers.start("p", params);
     t.state.identity = H2;
     t.workers.reconcile();
-    await expect(t.workers.start("p", params)).rejects.toThrow("2 workers at work");
+    expect(t.warns).toEqual([]);
+    await t.workers.start("p", params); // the handed-back two still count: 3 at work, past 2
+    expect(t.warns).toHaveLength(1);
     t.core.ledger.get("T1")!.running = false;
     t.workers.ended("T1", 1, "completed", "done");
     expect(t.told).toEqual([]);
+    // T1's end dipped the count back to 2, so the next start crosses again (3 > 2) and warns again: once per crossing.
     await t.workers.start("p", params);
-    await expect(t.workers.start("p", params)).rejects.toThrow("2 workers at work");
+    expect(t.warns).toHaveLength(2);
   });
 
   it("a book older than this one (no hash on its rows) is handed back, not guessed to be the plugin's", async () => {
@@ -322,7 +326,9 @@ describe("after a restart a plugin's workers are picked up, once", () => {
     const file = { text: JSON.stringify([{ plugin: "p", bot: "main", task: null, at: Date.now(), open: true, reported: 0, stopped: false, hash: H1 }]) };
     const t = book(undefined, file, { quota: { atOnce: 1, perDay: 2 } });
     await t.workers.start("p", params);
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    expect(t.warns).toEqual([]); // the cut-off row is not at work (1 at work) and the day has 2, not more than 2
+    await t.workers.start("p", params);
+    expect(t.warns).toHaveLength(2); // 2 at work now, past 1, and the day's 3 is past 2: both crossings are told
   });
 });
 
@@ -373,8 +379,9 @@ describe("the book keeps the truth when things go wrong", () => {
     const t = book(undefined, undefined, { quota: { atOnce: 1 }, write: (n) => { if (n === 2) throw new Error("disk full"); } });
     expect(await t.workers.start("p", params)).toEqual({ taskId: "T1", run: 1 });
     expect(t.core.log.started).toHaveLength(1);
-    // Counted at work (the plugin cannot start a second one past its limit), though the row on disk has no task id yet.
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    // Counted at work (a second one goes past the threshold and is warned about), though the row on disk has no task id yet.
+    await t.workers.start("p", params);
+    expect(t.warns).toHaveLength(1);
     // Its own: it can send, and that write keeps the row with its task id.
     expect(await t.workers.send("p", "T1", "go on")).toEqual({ run: 1, how: "steered" });
     expect(t.rows()[0]).toMatchObject({ task: "T1", open: true });
@@ -406,6 +413,21 @@ describe("the book keeps the truth when things go wrong", () => {
     // The ones forgotten are the oldest of the closed.
     expect(kept).not.toContain("OLD0");
     expect(kept).toContain("OLD999");
+  });
+
+  it("B2 (no cap since 2026-11-17): past 1000 rows the closed rows of the last day go too, oldest first; a row at work or owed stays", async () => {
+    const now = Date.now();
+    const row = (task: string, at: number, extra: Record<string, unknown> = {}) => ({ plugin: "p", bot: "main", task, at, open: false, reported: 1, stopped: false, hash: H1, ...extra });
+    const rows = [
+      row("OWED", now - 7_200_000, { owed: [{ run: 2, status: "completed", report: "x" }] }),
+      ...Array.from({ length: 1_005 }, (_, n) => row(`DAY${n}`, now - 3_600_000 + n)),
+    ];
+    const t = book(undefined, { text: JSON.stringify(rows) }, { quota: { atOnce: 4, perDay: 2_000 }, taken: false });
+    expect(await t.workers.start("p", params)).toEqual({ taskId: "T1", run: 1 });
+    const kept = t.rows().map((entry) => entry.task);
+    expect(kept.length).toBe(1_000);
+    for (const task of ["OWED", "T1", "DAY1004"]) expect(kept, task).toContain(task);
+    expect(kept).not.toContain("DAY0");
   });
 
   it("B3: a worker that ended without this book hearing of it frees its place when the next one is asked for, and is told once", async () => {
@@ -759,7 +781,7 @@ describe("O03b review: who may be told a report", () => {
 });
 
 describe("O03b review: the trim's day guard", () => {
-  it("B2: rows from the last day are kept even when that leaves the book over 1,000 (the quota counts them)", async () => {
+  it("B2: rows older than a day go first; only what is still over 1,000 comes from the last day's closed rows, oldest first (no cap since 2026-11-17)", async () => {
     const now = Date.now(), DAYS = 86_400_000;
     const row = (plugin: string, task: string, at: number) => ({ plugin, bot: "main", task, at, open: false, reported: 1, stopped: false, hash: H1 });
     const rows = [row("p", "OLD0", now - 2 * DAYS), row("p", "OLD1", now - 2 * DAYS + 1), ...Array.from({ length: 1_000 }, (_, n) => row("q", `RECENT${n}`, now - 3_600_000 + n))];
@@ -768,7 +790,11 @@ describe("O03b review: the trim's day guard", () => {
     const kept = t.rows().map((entry) => entry.task);
     expect(kept).not.toContain("OLD0");
     expect(kept).not.toContain("OLD1");
-    expect(kept.filter((task) => String(task).startsWith("RECENT"))).toHaveLength(1_000);
+    // 1,003 rows: the two old ones go, then one of the day (the oldest), not more.
+    expect(kept).not.toContain("RECENT0");
+    expect(kept.filter((task) => String(task).startsWith("RECENT"))).toHaveLength(999);
+    expect(kept).toContain("RECENT1");
     expect(kept).toContain("T1");
+    expect(kept).toHaveLength(1_000);
   });
 });

@@ -1,8 +1,8 @@
 // 2026-11-16 (the user: "install once, everything allowed; an update just replaces it"; Maintainer's design-duel needs two workers at once):
-// 1. a plugin the user installed (`world.installed`) starts and messages workers with no card, two at once, and the quota still holds;
+// 1. a plugin the user installed (`world.installed`) starts and messages workers with no card, two at once, and with no cap (2026-11-17) only warned past a threshold;
 // 2. a plugin that is not installed still gets its card, and cards of one plugin queue (one open, the rest wait) instead of the second failing;
 // 3. the "installed" answer is asked at every use, and an error or a missing answer means not installed (a card).
-// The grant, the quota and "only bots it made" (G1) are untouched by `installed`.
+// The grant, the counts and their warning, and "only bots it made" (G1) are untouched by `installed`.
 import { describe, expect, it } from "vitest";
 import { mkdirSync } from "node:fs";
 import type { AppAnswer, AppQuestion } from "../../src/core/plugins";
@@ -16,7 +16,7 @@ import { tempDir } from "../helpers";
 const ALL = ["orchestrate", "exec", "files", "bots"];
 
 function book(world: Partial<OrchestrationWorld> & { atOnce?: number } = {}, ask?: (question: AppQuestion) => Promise<AppAnswer | null>, written = true) {
-  const log = { started: [] as Record<string, unknown>[], sent: [] as string[], cards: [] as string[] };
+  const log = { started: [] as Record<string, unknown>[], sent: [] as string[], cards: [] as string[], warns: [] as string[] };
   const port: WorkerPort = {
     id: "b1",
     start: async (args) => { log.started.push(args); return { task_id: `T${log.started.length}`, run: 1 }; },
@@ -29,6 +29,7 @@ function book(world: Partial<OrchestrationWorld> & { atOnce?: number } = {}, ask
     facts: () => ({ name: "duel", identity: "a".repeat(64), permissions: ALL, botWritten: written }),
     ask: ask ?? (async (question) => { log.cards.push(question.text); return { index: 0 }; }),
     tell: () => {},
+    warn: (_plugin, text) => { log.warns.push(text); },
   });
   return { workers, log };
 }
@@ -57,11 +58,13 @@ describe("an installed plugin starts workers with no card", () => {
     expect(t.log.cards).toEqual([]);
   });
 
-  it("the quota still holds with no card: 5 starts at once with room for 2 start exactly 2", async () => {
+  it("no cap with no card: 5 starts at once past a threshold of 2 all start, with one warning", async () => {
     const t = book({ installed: () => true, atOnce: 2 });
     const results = await Promise.allSettled([1, 2, 3, 4, 5].map((n) => t.workers.start("duel", go(`w${n}`))));
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
-    expect(t.log.started).toHaveLength(2);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(5);
+    expect(t.log.started).toHaveLength(5);
+    expect(t.log.warns).toHaveLength(1);
+    expect(t.log.cards).toEqual([]);
   });
 
   it("the grant still decides: installed but not granted starts nothing", async () => {
