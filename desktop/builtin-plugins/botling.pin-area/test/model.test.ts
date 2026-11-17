@@ -190,13 +190,15 @@ describe("the strip's limits", () => {
 
   it("keeps the last MAX_REMOVED removed cards for 釘回, puts one back with a handle that is free, and refuses when the strip is full", () => {
     const b = book();
-    const ids = ["a", "b", "c", "d"].map((title) => make(b, { title }).id);
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"].map((title) => make(b, { title }).id);
     for (const id of ids) M.remove(b, id, T0, "user");
-    expect(b.removed.map((entry) => entry.pin.title)).toEqual(["b", "c", "d"]);
-    const other = make(b, { title: "d" });
-    expect(M.restore(b, ids[3]!, T0)!.handle).toBe("d-2");
-    expect(other.handle).toBe("d");
-    expect(M.restore(b, ids[3]!, T0)).toBeNull();
+    expect(b.removed).toHaveLength(M.MAX_REMOVED);
+    M.remove(b, make(b, { title: "i" }).id, T0, "user");
+    expect(b.removed.map((entry) => entry.pin.title)).toEqual(["b", "c", "d", "e", "f", "g", "h", "i"]);
+    const other = make(b, { title: "h" });
+    expect(M.restore(b, ids[7]!, T0)!.handle).toBe("h-2");
+    expect(other.handle).toBe("h");
+    expect(M.restore(b, ids[7]!, T0)).toBeNull();
     for (let n = 0; n < M.MAX_PINS; n++) if (b.pins.length < M.MAX_PINS) make(b, { title: `x${n}` });
     expect(M.restore(b, ids[2]!, T0)).toBeNull();
   });
@@ -527,7 +529,8 @@ describe("a plain message the bot moves into a card", () => {
     expect(rows[0]).toBe("p-0003「等你的」等你 · 選一個");
     expect(rows[1]).toBe("p-0002「我釘的」進行中 · 進行 · 使用者釘的");
     expect(rows[2]).toBe("p-0001「完成的」完成 · done status · 使用者釘的");
-    expect(brief).toContain('move="yes"');
+    // the bot is no longer asked to sort lines (the app does, 4c)
+    expect(brief).not.toContain("move=");
   });
 
   it("a card's words in the briefing are one clean line each, so a card cannot smuggle a header or a fake note into the bot's prompt", () => {
@@ -693,5 +696,233 @@ describe("a plain message the bot moves into a card", () => {
     const raw = JSON.parse(JSON.stringify(b));
     raw.pins[0].thread[0].msgId = "x".repeat(300);
     expect(M.readBook(raw).pins[0]!.thread[0]!.msgId).toBeUndefined();
+  });
+});
+
+describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)", () => {
+  it("finds the open card by its id, then its title, key or handle (ignoring case and punctuation) and nothing looser; ties and nothing give null", () => {
+    const b = book();
+    const a = make(b, { title: "Build 報告" });
+    const c = make(b, { title: "Deploy staging", botKey: "deploy" });
+    expect(M.cardForGroup(b, "p-0001")).toBe(a);
+    expect(M.cardForGroup(b, "BUILD-報告")).toBe(a);
+    expect(M.cardForGroup(b, "deploy")).toBe(c);
+    expect(M.cardForGroup(b, "deploy staging env")).toBeNull(); // no containment match
+    expect(M.cardForGroup(b, "報告")).toBeNull();
+    expect(M.cardForGroup(b, "")).toBeNull();
+    expect(M.cardForGroup(b, "something else")).toBeNull();
+    const twin = make(b, { title: "Build 報告" });
+    expect(M.cardForGroup(b, "build 報告")).toBeNull();
+    expect(M.cardForGroup(b, twin.id)).toBe(twin);
+    a.state = "done";
+    twin.state = "done";
+    expect(M.cardForGroup(b, "build 報告")).toBeNull();
+    expect(M.cardForGroup(b, "p-0001")).toBeNull();
+  });
+
+  it("(review S3) a job name that only shares a word with a card's title binds to no card, in either direction", () => {
+    const names = (title: string, group: string) => M.cardForGroup(M.readBook({ seq: 1, pins: [{ id: "p-0001", origin: "bot", title, handle: title, state: "run", status: "s", source: "bot", thread: [], updates: [], createdAt: 1, updatedAt: 1 }], removed: [] }), group);
+    expect(names("Build", "rebuild cache")).toBeNull();
+    expect(names("Review", "pin-area review")).toBeNull();
+    expect(names("測試報告", "寫測試報告的模板")).toBeNull();
+    expect(names("Deploy staging environment", "deploy")).toBeNull();
+    expect(names("Build", "build")?.id).toBe("p-0001");
+  });
+
+  it("puts a worker's words into the thread as one turn each (same words once), cut at MAX_REPORT, and reads them back", () => {
+    const b = book();
+    const pin = make(b);
+    const turn = M.addWorkerTurn(pin, "t-1", "final", "x".repeat(M.MAX_REPORT + 500), T0)!;
+    expect(turn.a).toHaveLength(M.MAX_REPORT);
+    expect(M.addWorkerTurn(pin, "t-1", "final", "x".repeat(M.MAX_REPORT + 500), T0 + 1)).toBeNull();
+    expect(M.addWorkerTurn(pin, "t-1", "note", "x".repeat(M.MAX_REPORT), T0 + 2)).not.toBeNull();
+    expect(M.addWorkerTurn(pin, "../bad", "final", "y", T0)).toBeNull();
+    expect(M.addWorkerTurn(pin, "t-1", "final", "  \n ", T0)).toBeNull();
+    const read = M.readBook(JSON.parse(JSON.stringify(b))).pins[0]!;
+    expect(read.thread.map((t) => [t.via, t.worker, t.wkind, t.a!.length])).toEqual([["worker", "t-1", "final", M.MAX_REPORT], ["worker", "t-1", "note", M.MAX_REPORT]]);
+    // a worker turn of a bad shape is read as nothing special, never with a worker id it does not have
+    const odd = M.readBook({ pins: [{ ...JSON.parse(JSON.stringify(pin)), thread: [{ rid: "r1", q: "", a: "z", via: "worker", worker: "../x", wkind: "final", qAt: 1 }, { rid: "r2", q: "", a: "z", via: "worker", worker: "t-1", wkind: "evil", qAt: 1 }] }] }).pins[0]!;
+    expect(odd.thread.map((t) => [t.via, t.worker])).toEqual([["at", undefined], ["at", undefined]]);
+  });
+
+  it("attachReply files the bot's reply with the newest unfiled report of those workers, once; the message becomes a trace, moved back its words come back", () => {
+    const b = book();
+    const pin = make(b);
+    M.linkFrom(pin, ["t-1"], M.MAX_LINKED);
+    M.addWorkerTurn(pin, "t-1", "final", "報告一", T0);
+    const second = M.addWorkerTurn(pin, "t-1", "note", "報告二", T0 + 5)!;
+    expect(M.attachReply(b, ["t-other"], "m1", "hi", T0 + 6)).toBe(false);
+    expect(M.attachReply(b, ["t-1"], "m1", "說明", T0 + 6)).toBe(true);
+    expect([second.msgId, second.say]).toEqual(["m1", "說明"]);
+    expect(M.attachReply(b, ["t-1"], "m1", "again", T0 + 7)).toBe(false); // a message id is used once
+    const trace = M.tracesOf(b);
+    expect(trace).toHaveLength(1);
+    expect(trace[0]).toMatchObject({ fold: ["m1"], data: { kind: "moved", worker: true, q: "報告二" } });
+    expect(M.moveBack(b, second.rid, T0 + 8)).toBe(true);
+    expect(b.fixes).toBeUndefined();
+    expect(M.tracesOf(b)[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "說明" } });
+    // a card taken down gives the line back to the chat too
+    const removed = M.remove(b, pin.id, T0 + 9, "user")!;
+    expect(removed).toBe(pin);
+    expect(M.tracesOf(b)[0]!.data.kind).toBe("back");
+  });
+
+  it("a worker turn with no reply cannot be moved back, and 改到… never takes a worker's turn", () => {
+    const b = book();
+    const pin = make(b);
+    const other = make(b, { title: "Other" });
+    const turn = M.addWorkerTurn(pin, "t-1", "final", "報告", T0)!;
+    expect(M.moveBack(b, turn.rid, T0 + 1)).toBe(false);
+    M.attachReply(b, ["t-1"], "m1", "", T0 + 2);
+    expect(M.moveTo(b, turn.rid, other.id, T0 + 3)).toBe(false);
+  });
+
+  it("a note: a question makes a running card wait, a report only logs; the same note twice changes nothing", () => {
+    const b = book();
+    const pin = make(b);
+    expect(M.applyWorkerNote(pin, "t-1", "report", "進度 50%", T0 + 1)).toBe(true);
+    expect(M.applyWorkerNote(pin, "t-1", "report", "進度 50%", T0 + 2)).toBe(false);
+    expect(pin.state).toBe("run");
+    expect(M.applyWorkerNote(pin, "t-1", "question", "A 或 B？", T0 + 3)).toBe(true);
+    expect([pin.state, pin.status, pin.source]).toEqual(["wait", "worker 問：A 或 B？", "app"]);
+  });
+});
+
+describe("cards that close or go stale by themselves (sweep, workerEnded, briefing)", () => {
+  const MIN = 60_000;
+  it("a done card takes itself down an hour after it became done (a card the user pinned too), 釘回 brings it back, and 20 more minutes is not enough yet", () => {
+    const b = book();
+    const mine = make(b, { title: "Mine", origin: "user" });
+    const theirs = make(b, { title: "Theirs", origin: "bot", source: "bot" });
+    M.applyUpdate(mine, { state: "done", source: "user" }, T0);
+    M.applyUpdate(theirs, { state: "done", source: "bot" }, T0 + 30 * MIN);
+    expect(mine.doneAt).toBe(T0);
+    expect(M.sweep(b, T0 + 59 * MIN)).toEqual({ changed: false, closed: [] });
+    expect(M.sweep(b, T0 + 60 * MIN)).toEqual({ changed: true, closed: [mine.id] });
+    expect(b.pins.map((pin) => pin.title)).toEqual(["Theirs"]);
+    expect(b.removed[0]).toMatchObject({ by: "auto", at: T0 + 60 * MIN });
+    expect(M.closedOf(b, T0 + 61 * MIN)).toEqual([{ id: mine.id, title: "Mine", at: T0 + 60 * MIN }]);
+    expect(M.closedOf(b, T0 + 60 * MIN + M.CLOSED_SHOW_MS)).toEqual([]);
+    expect(M.viewOf(b, T0 + 61 * MIN).closed).toHaveLength(1);
+    expect(M.viewOf(b).closed).toBeUndefined();
+    expect(M.restore(b, mine.id, T0 + 62 * MIN)).toBe(mine);
+    expect(mine.doneAt).toBe(T0 + 62 * MIN); // its hour starts again
+    expect(M.sweep(b, T0 + 63 * MIN).closed).toEqual([]);
+    // reopened and done again: the hour starts again
+    M.applyUpdate(mine, { state: "run", source: "user" }, T0 + 63 * MIN);
+    expect(mine.doneAt).toBeUndefined();
+    expect(M.sweep(b, T0 + 90 * MIN).closed).toEqual([theirs.id]);
+  });
+
+  it("a done card from an older book (no doneAt) counts from its last change; a card that is not done is never taken down", () => {
+    const b = book();
+    const old = make(b, { title: "Old", state: "done", status: "ok" });
+    delete old.doneAt;
+    const live = make(b, { title: "Live" });
+    expect(M.sweep(b, T0 + M.DONE_CLOSE_MS).closed).toEqual([old.id]);
+    expect(M.sweep(b, T0 + 100 * M.DONE_CLOSE_MS).closed).toEqual([]);
+    expect(b.pins).toEqual([live]);
+  });
+
+  it("a card whose bound workers all ended and that said nothing for 20 minutes is marked stale; any change clears it; one with a worker still at work, or none that ended, is not", () => {
+    const b = book();
+    const pin = make(b, { title: "Job" });
+    const idle = make(b, { title: "Idle" });
+    M.workerLive(pin, "t-1");
+    M.workerLive(pin, "t-2");
+    expect(M.sweep(b, T0 + 25 * MIN).changed).toBe(false);
+    expect(M.workerEnded(pin, "t-1", "completed", T0 + 1)).toBe(true);
+    expect(pin.nudge).toBeUndefined(); // t-2 is still at work
+    expect(M.sweep(b, T0 + 25 * MIN).changed).toBe(false);
+    expect(M.workerEnded(pin, "t-2", "completed", T0 + 2)).toBe(true);
+    expect(pin.live).toBeUndefined();
+    expect(M.workerEnded(pin, "t-2", "completed", T0 + 3)).toBe(false);
+    expect(M.sweep(b, T0 + 19 * MIN).changed).toBe(false);
+    expect(M.sweep(b, T0 + 20 * MIN)).toEqual({ changed: true, closed: [] });
+    expect(M.isStale(pin)).toBe(true);
+    expect(M.isStale(idle)).toBe(false);
+    expect(M.sweep(b, T0 + 21 * MIN).changed).toBe(false); // marked once
+    expect(M.viewOf(b).pins.find((p) => p.id === pin.id)!.stale).toBe(true);
+    expect(M.briefing(b, T0 + 25 * MIN)).toContain("可能已過時（它的 worker 都結束了，25 分鐘沒更新）");
+    // the card changes: no longer stale, and it can go stale again later
+    M.applyUpdate(pin, { status: "新的狀況", source: "bot" }, T0 + 30 * MIN);
+    expect(M.isStale(pin)).toBe(false);
+    expect(M.sweep(b, T0 + 49 * MIN).changed).toBe(false);
+    expect(M.sweep(b, T0 + 50 * MIN).changed).toBe(true);
+    expect(M.isStale(pin)).toBe(true);
+    // a done card is never stale
+    M.applyUpdate(pin, { state: "done", source: "bot" }, T0 + 51 * MIN);
+    expect(M.isStale(pin)).toBe(false);
+    expect(M.viewOf(b).pins.find((p) => p.id === pin.id)!.stale).toBeUndefined();
+  });
+
+  it("the last worker's completed report nudges a running card (next briefing says so); a failed one, a waiting card or the bot's own word does not / clears it", () => {
+    const b = book();
+    const pin = make(b, { title: "Job" });
+    M.workerLive(pin, "t-1");
+    expect(M.workerEnded(pin, "t-1", "failed", T0 + 1)).toBe(true);
+    expect(pin.nudge).toBeUndefined();
+    M.workerLive(pin, "t-2");
+    M.workerEnded(pin, "t-2", "completed", T0 + 2);
+    expect(pin.nudge).toBe(true);
+    expect(M.briefing(b, T0 + 3)).toContain("做完請標 state=\"done\"");
+    expect(M.viewOf(b).pins[0]!.nudge).toBe(true);
+    // news by the app does not answer it; the bot saying something does
+    M.applyUpdate(pin, { status: "worker 回報：x", source: "app" }, T0 + 4);
+    expect(pin.nudge).toBe(true);
+    M.applyUpdate(pin, { status: "還差測試", source: "bot" }, T0 + 5);
+    expect(pin.nudge).toBeUndefined();
+    expect(M.briefing(b, T0 + 6)).not.toContain("做完請標");
+    const waiting = make(b, { title: "W", state: "wait", status: "要你選" });
+    M.workerLive(waiting, "t-3");
+    M.workerEnded(waiting, "t-3", "completed", T0 + 7);
+    expect(waiting.nudge).toBeUndefined();
+  });
+
+  it("reads the new fields back from storage and drops nonsense (a stale mark on a done card, a nudge on a waiting one, bad worker ids)", () => {
+    const base = { id: "p-0001", origin: "bot", title: "T", handle: "T", status: "s", source: "bot", thread: [], updates: [], createdAt: 1, updatedAt: 5 };
+    const run = M.readPin({ ...base, state: "run", live: ["t-1", "../x", 7], endedAt: 9, stale: 5, nudge: true, doneAt: 3 })!;
+    expect(run).toMatchObject({ live: ["t-1"], endedAt: 9, stale: 5, nudge: true });
+    expect(run.doneAt).toBeUndefined();
+    const done = M.readPin({ ...base, state: "done", doneAt: 4, stale: 5, nudge: true })!;
+    expect([done.doneAt, done.stale, done.nudge]).toEqual([4, undefined, undefined]);
+    const wait = M.readPin({ ...base, state: "wait", nudge: true, doneAt: "x" })!;
+    expect([wait.nudge, wait.doneAt]).toEqual([undefined, undefined]);
+    expect(M.readBook({ pins: [], removed: [{ pin: { ...base, state: "done" }, at: 3, by: "auto" }] }).removed[0]!.by).toBe("auto");
+  });
+});
+
+
+describe("cards put away keep their 釘回 (review S4)", () => {
+  const H = 3_600_000;
+  const done = (n: number) => ({ id: `p-000${n}`, origin: n === 1 ? "user" : "bot", title: `Job ${n}`, handle: `Job-${n}`, state: "done", status: "s", source: "bot", thread: [], updates: [], createdAt: 1, updatedAt: 1, doneAt: 1 });
+  it("one sweep that puts away four done cards (a user's among them) keeps all four for 釘回 and in the strip's closed list", () => {
+    const b = M.readBook({ seq: 4, pins: [1, 2, 3, 4].map(done), removed: [] });
+    const swept = M.sweep(b, 2 * H);
+    expect(swept.closed).toHaveLength(4);
+    expect(b.removed).toHaveLength(4);
+    expect(M.closedOf(b, 2 * H).map((item) => item.id)).toEqual(["p-0001", "p-0002", "p-0003", "p-0004"]);
+    expect(b.removed[0]).toMatchObject({ by: "auto", pin: { origin: "user" } });
+    for (const id of ["p-0001", "p-0002", "p-0003", "p-0004"]) expect(M.restore(b, id, 2 * H)).toBeTruthy();
+  });
+  it("over the limit a card the user took down goes before one the app put away by itself", () => {
+    const b = M.readBook({ seq: 0, pins: [], removed: [] });
+    for (let n = 0; n < M.MAX_REMOVED; n++) b.removed.push({ pin: M.readPin({ ...done(n + 1), id: `p-00${n + 1}0`, title: `T${n}` })!, at: T0, by: n === 0 ? "user" : "auto" });
+    b.pins.push(M.readPin({ ...done(9), state: "run" })!);
+    M.remove(b, "p-0009", T0 + 1, "user");
+    expect(b.removed).toHaveLength(M.MAX_REMOVED);
+    expect(b.removed.some((entry) => entry.pin.title === "T0")).toBe(false);
+    expect(b.removed.filter((entry) => entry.by === "auto")).toHaveLength(M.MAX_REMOVED - 1);
+    expect(b.removed.at(-1)!.pin.id).toBe("p-0009");
+  });
+  it("(review M15) a done card the bot marks done again, with other words, keeps the hour it began with: the sweep still puts it away on time", () => {
+    const b = book();
+    const pin = make(b, { title: "Job" });
+    M.applyUpdate(pin, { state: "done", status: "好了", source: "bot" }, T0);
+    expect(pin.doneAt).toBe(T0);
+    M.applyUpdate(pin, { state: "done", status: "好了，補充說明", source: "bot" }, T0 + 30 * 60_000);
+    expect(pin.doneAt).toBe(T0);
+    expect(M.sweep(b, T0 + 59 * 60_000).closed).toEqual([]);
+    expect(M.sweep(b, T0 + 61 * 60_000).closed).toEqual([pin.id]);
   });
 });

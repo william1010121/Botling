@@ -59,6 +59,7 @@ export class CoreBots {
   private refreshWaiting(...a: Parameters<Core["refreshWaiting"]>) { return this.host.refreshWaiting(...a); }
   private replied(...a: Parameters<Core["replied"]>) { return this.host.replied(...a); }
   private get usage() { return this.host.usage; }
+  private workerNoted(...a: Parameters<Core["workerNoted"]>) { return this.host.workerNoted(...a); }
 
   bots = new Map<string, Bot>();
 
@@ -139,6 +140,7 @@ export class CoreBots {
       callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
       callInFollowUp: (caller, asked, record, by) => this.conversations?.callInFollowUp(caller, bot, asked, record, by),
       callInFollowUpMissed: (caller, asked, why, by) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why, by),
+      workerNoted: (note) => this.workerNoted(profile.id, note),
       agents: this.agentPort(profile),
       ...(options.deferTurn ? { deferTurn: options.deferTurn } : {}),
       ...(options.botStore ? { botStore: options.botStore } : {}),

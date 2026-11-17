@@ -5,7 +5,9 @@
 export type State = "run" | "wait" | "done";
 /** Who vouches for a card's status line: the bot itself, the app (a worker's own report: Phase 2) or the user (a card they pinned by hand). */
 export type Source = "bot" | "app" | "user";
-export type Via = "at" | "auto";
+export type Via = "at" | "auto" | "worker";
+/** What a worker said into a card: its final report, a failed/stopped run, an interim note, or a question. */
+export type WorkerKind = "final" | "failed" | "note" | "question";
 
 /**
  * One exchange in a card's thread. `postedAt`: the line showed in the chat; `seenAt`: a turn of the bot began after that (the bot saw it);
@@ -16,6 +18,8 @@ export interface Turn {
   rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via; moved?: boolean;
   /** `via` "auto": the user's own line in the chat (it is folded behind the trace while the turn is in the card). `redirected`: the user chose this card with 改到…. */
   msgId?: string; redirected?: boolean;
+  /** `via` "worker": the worker's task id and what it said (`a` holds the words, `q` is empty); `msgId` is then the bot's reply in the chat to it (folded behind a trace), `say` that reply. */
+  worker?: string; wkind?: WorkerKind; say?: string;
 }
 export interface Update { at: number; state: State; status: string; source: Source }
 export interface Step { done: number; total: number }
@@ -45,22 +49,54 @@ export interface Pin {
   updatedAt: number;
   /** When the user last had the card open: anything newer than this is unread. */
   seenAt?: number;
+  /** When it became done (the hour after which it takes itself down); older books have none: its last change then. */
+  doneAt?: number;
+  /** Workers the app bound to it that have not ended yet (`bind`); with none and one end seen (`endedAt`), the card waits on nobody. */
+  live?: string[];
+  endedAt?: number;
+  /** Marked 可能已過時 when its workers all ended and it said nothing for STALE_MS: the value is its `updatedAt` then, so any later change clears the mark. */
+  stale?: number;
+  /** Its workers all reported and it is still running: the bot is asked (next briefing) to mark it done or say what is left. Cleared by the bot's own word or done. */
+  nudge?: true;
 }
 /** A card taken off the strip, kept briefly so 釘回 puts it back. */
-export interface Removed { pin: Pin; at: number; by: "user" | "seen" | "bot" }
+export interface Removed {
+  pin: Pin; at: number; by: "user" | "seen" | "bot" | "auto";
+  /** Set when the card was merged into another (`mergeCards`): the card it went into, the turns and workers that were copied there (taken out again by 釘回). */
+  merged?: { into: string; rids: string[]; from: string[] };
+}
+/**
+ * What the app only suggests for a plain line of the user's, until they tap (`classify.ts`): a new card for it, or two cards that look like one thing.
+ * Nothing moves by itself for these. `text`: the line (cut short); `card`/`card2`: the cards to merge (`card` stays).
+ */
+export interface Suggest { id: string; kind: "new" | "merge"; text: string; at: number; card?: string; card2?: string }
 /** A guess of the automatic routing the user corrected (the bot is told, so it guesses better). `from`/`to`: a card id, or "chat". */
 export interface Fix { text: string; from: string; to: string; at: number }
-export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[] }
+export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[]; suggest?: Suggest[] }
 
 export const MAX_PINS = 8;
 /** Cards a bot made that still are not done: a bot cannot fill the strip. */
 export const MAX_BOT_OPEN = 3;
 export const MAX_TURNS = 50;
 export const MAX_UPDATES = 50;
-export const MAX_REMOVED = 3;
-/** Workers / sub bots one card may follow. */
+/** Cards taken down that 釘回 can still bring back: as many as the strip holds, so one sweep that puts away every done card (the user's 24 hours of 釘回) loses none. */
+export const MAX_REMOVED = MAX_PINS;
+/** Workers / sub bots one card may follow by a bot's tag (the oldest go over it); `MAX_LINKED` when the app binds them by their job name. */
 export const MAX_FROM = 4;
+export const MAX_LINKED = 12;
+/** Longest worker report kept in a card's thread (the bot got all of it; a card shows this much). */
+export const MAX_REPORT = 12_000;
+/** A card whose workers all ended and that said nothing for this long is marked 可能已過時. */
+export const STALE_MS = 20 * 60_000;
+/** A card done for this long takes itself down (釘回 puts it back). */
+export const DONE_CLOSE_MS = 60 * 60_000;
+/** How long a card taken down by itself is still offered back on the strip. */
+export const CLOSED_SHOW_MS = 24 * 3_600_000;
 export const MAX_FIXES = 3;
+/** Suggestions waiting for a tap (the oldest goes over it), and how long one stays. */
+export const MAX_SUGGEST = 2;
+export const SUGGEST_MS = 30 * 60_000;
+const SUGGEST_TEXT = 80;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
 export const MAX_Q = 2_000;
@@ -110,12 +146,14 @@ function readTurn(raw: unknown): Turn | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
   if (!isRid(t.rid) || typeof t.q !== "string") return null;
-  const a = typeof t.a === "string" ? t.a.slice(0, MAX_A) : null;
+  const a = typeof t.a === "string" ? t.a.slice(0, t.via === "worker" ? MAX_REPORT : MAX_A) : null;
+  const wkind = (["final", "failed", "note", "question"] as const).find((kind) => kind === t.wkind);
   const time = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
   return {
     rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt),
-    via: t.via === "auto" ? "auto" : "at", ...(t.moved === true ? { moved: true } : {}),
+    via: t.via === "auto" ? "auto" : t.via === "worker" && isFrom(t.worker) && wkind ? "worker" : "at", ...(t.moved === true ? { moved: true } : {}),
     ...(typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}), ...(t.redirected === true ? { redirected: true } : {}),
+    ...(t.via === "worker" && isFrom(t.worker) && wkind ? { worker: t.worker, wkind, ...(typeof t.say === "string" && t.say ? { say: t.say.slice(0, MAX_A) } : {}) } : {}),
   };
 }
 function readUpdate(raw: unknown): Update | null {
@@ -135,8 +173,10 @@ export function readPin(raw: unknown): Pin | null {
   const handle = oneLine(p.handle, MAX_TITLE).replace(/\s+/g, "-");
   if (!isId(p.id) || !state || !source || !title || !handle || (p.origin !== "user" && p.origin !== "bot")) return null;
   const step = readStep(p.step);
-  const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_FROM);
+  const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_LINKED);
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
+  const at = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined);
+  const live = (Array.isArray(p.live) ? p.live : []).filter(isFrom).slice(0, MAX_LINKED);
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
     source, ...(step ? { step } : {}), ...(state === "wait" ? { waitingSince: num(p.waitingSince) } : {}),
@@ -144,6 +184,8 @@ export function readPin(raw: unknown): Pin | null {
     updates: (Array.isArray(p.updates) ? p.updates.slice(-MAX_UPDATES) : []).map(readUpdate).filter((x): x is Update => !!x),
     ...(typeof p.msgRef === "string" && p.msgRef ? { msgRef: p.msgRef.slice(0, 200) } : {}), createdAt: num(p.createdAt), updatedAt: num(p.updatedAt), ...seenSeen,
     ...(from.length ? { from } : {}),
+    ...(state === "done" && at(p.doneAt) ? { doneAt: at(p.doneAt)! } : {}), ...(live.length ? { live } : {}), ...(at(p.endedAt) ? { endedAt: at(p.endedAt)! } : {}),
+    ...(state !== "done" && at(p.stale) ? { stale: at(p.stale)! } : {}), ...(state === "run" && p.nudge === true ? { nudge: true as const } : {}),
   };
 }
 /** What storage holds, trimmed to a book: anything that is not a pin of the shape above is dropped (a hand-edited or older file). */
@@ -165,8 +207,21 @@ export function readBook(raw: unknown): Book {
     const entry = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const pin = entry ? take(entry.pin) : null;
     if (!entry || !pin) continue;
-    book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" ? entry.by : "user" });
+    const merged = entry.merged && typeof entry.merged === "object" ? entry.merged as Record<string, unknown> : null;
+    const into = merged && isId(merged.into) ? merged.into : "";
+    book.removed.push({
+      pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" || entry.by === "auto" ? entry.by : "user",
+      ...(merged && into ? { merged: { into, rids: (Array.isArray(merged.rids) ? merged.rids : []).filter(isRid).slice(0, MAX_TURNS), from: (Array.isArray(merged.from) ? merged.from : []).filter(isFrom).slice(0, MAX_LINKED) } } : {}),
+    });
   }
+  const suggest = (Array.isArray(r.suggest) ? r.suggest : []).flatMap((item): Suggest[] => {
+    const g = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    const text = g ? oneLine(g.text, SUGGEST_TEXT) : "";
+    if (!g || !text || !isRid(g.id) || (g.kind !== "new" && g.kind !== "merge")) return [];
+    if (g.kind === "merge" && !(isId(g.card) && isId(g.card2) && g.card !== g.card2)) return [];
+    return [{ id: g.id, kind: g.kind, text, at: num(g.at), ...(g.kind === "merge" ? { card: g.card as string, card2: g.card2 as string } : {}) }];
+  }).slice(-MAX_SUGGEST);
+  if (suggest.length) book.suggest = suggest;
   const fixes = (Array.isArray(r.fixes) ? r.fixes : []).flatMap((item): Fix[] => {
     const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const text = f ? oneLine(f.text, 30) : "";
@@ -228,6 +283,10 @@ export function applyUpdate(pin: Pin, input: UpdateInput, now: number): boolean 
   if (pin.prev === undefined) delete pin.prev;
   if (state === "wait" && pin.state !== "wait") pin.waitingSince = now;
   if (state !== "wait") delete pin.waitingSince;
+  if (state === "done" && pin.state !== "done") pin.doneAt = now;
+  if (state !== "done") delete pin.doneAt;
+  // the bot's own word on a card (or its being done) answers the nudge
+  if (input.source === "bot" || state !== "run") delete pin.nudge;
   pin.state = state;
   pin.status = status;
   pin.source = input.source;
@@ -262,7 +321,7 @@ export function addPin(book: Book, input: NewPin, now: number): { pin: Pin } | {
   const pin: Pin = {
     id, ...(input.botKey ? { botKey: input.botKey } : {}), origin: input.origin, title, handle: uniqueHandle(book, title), state: input.state,
     status: oneLine(input.status, MAX_STATUS), source: input.source, ...(input.step ? { step: input.step } : {}), ...(input.state === "wait" ? { waitingSince: now } : {}),
-    thread: [], updates: [], ...(input.msgRef ? { msgRef: input.msgRef.slice(0, 200) } : {}), createdAt: now, updatedAt: now,
+    thread: [], updates: [], ...(input.msgRef ? { msgRef: input.msgRef.slice(0, 200) } : {}), createdAt: now, updatedAt: now, ...(input.state === "done" ? { doneAt: now } : {}),
   };
   pin.updates.push({ at: now, state: pin.state, status: pin.status, source: pin.source });
   book.pins.push(pin);
@@ -275,7 +334,11 @@ export function remove(book: Book, id: string, now: number, by: Removed["by"]): 
   if (!pin) return null;
   book.pins = book.pins.filter((candidate) => candidate !== pin);
   book.removed.push({ pin, at: now, by });
-  if (book.removed.length > MAX_REMOVED) book.removed.splice(0, book.removed.length - MAX_REMOVED);
+  // over the limit the oldest goes, but a card the app put away by itself (offered back for a day) goes last
+  while (book.removed.length > MAX_REMOVED) {
+    const index = book.removed.slice(0, -1).findIndex((entry) => entry.by !== "auto" && !entry.merged);
+    book.removed.splice(index >= 0 ? index : 0, 1);
+  }
   return pin;
 }
 
@@ -285,8 +348,18 @@ export function restore(book: Book, id: string, now: number): Pin | null {
   if (!entry || book.pins.length >= MAX_PINS) return null;
   book.removed = book.removed.filter((candidate) => candidate !== entry);
   const pin = entry.pin;
+  // a card that was merged away takes back what it gave: the turns and workers copied into the other card are taken out of it again
+  const into = entry.merged ? book.pins.find((candidate) => candidate.id === entry.merged!.into) : undefined;
+  if (entry.merged && into) {
+    into.thread = into.thread.filter((turn) => !entry.merged!.rids.includes(turn.rid));
+    if (into.from) into.from = into.from.filter((id) => !entry.merged!.from.includes(id));
+    if (into.live) into.live = into.live.filter((id) => !entry.merged!.from.includes(id));
+    into.updatedAt = now;
+  }
   pin.handle = uniqueHandle(book, pin.title, pin.id);
   pin.updatedAt = now;
+  // put back, a done card has its hour again (it would go away at once otherwise)
+  if (pin.state === "done") pin.doneAt = now;
   book.pins.push(pin);
   return pin;
 }
@@ -352,11 +425,92 @@ export function parseFrom(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).filter(isFrom))].slice(0, MAX_FROM);
 }
 /** Adds ids to the card's links (the oldest go when over MAX_FROM). True when something was added. */
-export function linkFrom(pin: Pin, ids: string[]): boolean {
+export function linkFrom(pin: Pin, ids: string[], cap = MAX_FROM): boolean {
   const fresh = ids.filter((id) => !(pin.from ?? []).includes(id));
   if (!fresh.length) return false;
-  pin.from = [...(pin.from ?? []), ...fresh].slice(-MAX_FROM);
+  pin.from = [...(pin.from ?? []), ...fresh].slice(-cap);
   return true;
+}
+
+// ---- a worker bound to a card by the job name its bot gave (app_handoff's `group`), and what it says into the card ----
+
+/** A name as compared for a match: no case, no spaces or punctuation. */
+const fold = (value: string): string => value.toLowerCase().replace(/[\s\-_·:：,，.。、/\\|()（）「」『』"'`]+/g, "");
+/**
+ * The open card a worker's job name points at: its p-0001 id, else its title, key or handle, exactly (ignoring case, spaces and punctuation). No
+ * partial match: "rebuild cache" is not the card "Build", so a worker never lands in a card that only shares a word with its job. The head
+ * bot is told to give the card's title, key or id as the group. Two cards alike, or none, give null (the worker then stays in the chat).
+ * A done card is never bound.
+ */
+export function cardForGroup(book: Book, group: string): Pin | null {
+  const raw = oneLine(group, 80);
+  const wanted = fold(raw);
+  if (!wanted) return null;
+  const rank = (pin: Pin): number => {
+    if (raw.toLowerCase() === pin.id) return 3;
+    const names = [pin.title, pin.botKey ?? "", pin.handle].map(fold).filter(Boolean);
+    return names.includes(wanted) ? 2 : 0;
+  };
+  const ranked = book.pins.filter((pin) => pin.state !== "done").map((pin) => ({ pin, rank: rank(pin) })).filter((item) => item.rank > 0);
+  const best = Math.max(0, ...ranked.map((item) => item.rank));
+  const top = ranked.filter((item) => item.rank === best);
+  return top.length === 1 ? top[0]!.pin : null;
+}
+/** A worker the app bound to a card is now at work: the card is not waiting on nobody. */
+export function workerLive(pin: Pin, workerId: string): void {
+  if (!isFrom(workerId) || (pin.live ?? []).includes(workerId)) return;
+  pin.live = [...(pin.live ?? []), workerId].slice(-MAX_LINKED);
+}
+/**
+ * A worker this card follows ended a run (a note is not an end). When no bound worker is left at work, the card is waiting on nobody: a running card whose
+ * last worker reported completed is nudged (the bot is asked to mark it done or say what is left, `briefing`). Does not touch `updatedAt`.
+ */
+export function workerEnded(pin: Pin, workerId: string, kind: NewsKind, now: number): boolean {
+  let changed = false;
+  if (pin.live?.includes(workerId)) { pin.live = pin.live.filter((id) => id !== workerId); if (!pin.live.length) delete pin.live; changed = true; }
+  if (pin.endedAt === undefined) { pin.endedAt = now; changed = true; }
+  if (kind === "completed" && pin.state === "run" && !pin.live?.length && !pin.nudge) { pin.nudge = true; changed = true; }
+  return changed;
+}
+/** Whether a card shows 可能已過時 now: marked, and not changed since. */
+export const isStale = (pin: Pin): boolean => pin.state !== "done" && pin.stale !== undefined && pin.updatedAt <= pin.stale;
+
+/**
+ * What time does to the cards: a card done for DONE_CLOSE_MS takes itself down (by "auto", 釘回 puts it back; a card the user pinned too);
+ * a card that is not done, has seen a worker end, has none at work and has said nothing for STALE_MS is marked stale (so the strip says 可能已過時
+ * and the next briefing tells the bot). Returns the ids taken down, and whether anything changed (the book must be saved then).
+ */
+export function sweep(book: Book, now: number): { changed: boolean; closed: string[] } {
+  let changed = false;
+  const closed: string[] = [];
+  for (const pin of [...book.pins]) {
+    if (pin.state === "done") {
+      if (now - (pin.doneAt ?? pin.updatedAt) >= DONE_CLOSE_MS && remove(book, pin.id, now, "auto")) { closed.push(pin.id); changed = true; }
+    } else if (pin.endedAt !== undefined && !pin.live?.length && now - pin.updatedAt >= STALE_MS && !isStale(pin)) {
+      pin.stale = pin.updatedAt;
+      changed = true;
+    }
+  }
+  return { changed, closed };
+}
+
+/** The card that follows `workerId`, if any. */
+export const cardOfWorker = (book: Book, workerId: string): Pin | null => book.pins.find((pin) => pin.from?.includes(workerId)) ?? null;
+
+/**
+ * What a worker said goes into the card's thread as a turn of its own (`via: "worker"`, no words of the user's), full length up to
+ * MAX_REPORT. The same words of the same worker twice are one. Null: nothing was added.
+ */
+export function addWorkerTurn(pin: Pin, workerId: string, kind: WorkerKind, text: string, now: number): Turn | null {
+  const words = clean(text, MAX_REPORT * 2).trim().slice(0, MAX_REPORT);
+  if (!words || !isFrom(workerId)) return null;
+  if (pin.thread.some((turn) => turn.via === "worker" && turn.worker === workerId && turn.wkind === kind && turn.a === words)) return null;
+  const turn = addTurn(pin, `w${now.toString(36)}-${pin.thread.length}-${workerId.slice(0, 12).replace(/[^A-Za-z0-9_-]/g, "_")}`, "", now, "worker");
+  turn.a = words;
+  turn.aAt = now;
+  turn.worker = workerId;
+  turn.wkind = kind;
+  return turn;
 }
 /** Every id a book's cards follow, by card: for the host's index. */
 export function linksOf(book: Book): string[] {
@@ -397,6 +551,31 @@ export function applyNews(pin: Pin, news: { kind: NewsKind; from: "worker" | "bo
   }
   const failed = news.kind === "failed" || news.kind === "stopped" || news.kind === "interrupted";
   return applyUpdate(pin, { status, source: "app", ...(failed ? { state: "wait" as const } : {}) }, now);
+}
+
+/** What a worker's end is, as a thread entry. */
+export const workerKindOf = (kind: NewsKind): WorkerKind => (kind === "completed" || kind === "reply" ? "final" : "failed");
+/** A line in the card's 過程 log only (no change of state or words): a worker started, a note came. */
+export function logLine(pin: Pin, status: string, now: number): boolean {
+  const line = oneLine(status, MAX_STATUS);
+  const last = pin.updates[pin.updates.length - 1];
+  if (!line || (last && last.status === line && last.source === "app")) return false;
+  pin.updates.push({ at: now, state: pin.state, status: line, source: "app" });
+  if (pin.updates.length > MAX_UPDATES) pin.updates.splice(0, pin.updates.length - MAX_UPDATES);
+  pin.updatedAt = now;
+  return true;
+}
+/**
+ * A worker at work sent a note (app_notify_owner) to a card that follows it: the words go into the thread, a line into the log. A question
+ * makes a running card wait for the user (the user may have to answer). A done card keeps its state. True when anything changed.
+ */
+export function applyWorkerNote(pin: Pin, workerId: string, kind: "report" | "question", message: string, now: number): boolean {
+  const turn = addWorkerTurn(pin, workerId, kind === "question" ? "question" : "note", message, now);
+  const line = firstLine(message, 80);
+  const head = kind === "question" ? "worker 問" : "worker 進度";
+  const status = oneLine(line ? `${head}：${line}` : head, MAX_STATUS);
+  if (kind === "question" && pin.state === "run") return applyUpdate(pin, { state: "wait", status, source: "app" }, now) || !!turn;
+  return logLine(pin, status, now) || !!turn;
 }
 
 // ---- the user's messages into a card ----
@@ -484,12 +663,16 @@ export function markSeen(book: Book, now: number): boolean {
   }
   return any;
 }
-/** The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. */
-export function markPosted(book: Book, id: string, now: number): boolean {
+/**
+ * The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. `msgId` (the line's id in the
+ * chat) is kept for an automatic turn: that line folds behind the trace (`tracesOf`), as the line the bot moved did.
+ */
+export function markPosted(book: Book, id: string, now: number, msgId?: string): boolean {
   const pin = book.pins.find((candidate) => candidate.id === id);
   const turn = pin ? pin.thread.find((candidate) => waits(candidate) && candidate.postedAt === null) : undefined;
   if (!turn || turn.postedAt !== null) return false;
   turn.postedAt = now;
+  if (turn.via === "auto" && msgId && msgId.length <= 200 && !lineUsed(book, msgId)) turn.msgId = msgId;
   return true;
 }
 
@@ -502,12 +685,12 @@ const FIX_WORD = (book: Book, id: string): string => (id === "chat" ? "聊天" :
 /** The briefing for a bot's next plain message: one line per card (id, title, state, status), the last guesses the user corrected, and how to answer. "" with no cards. */
 export function briefing(book: Book, now: number): string {
   if (!book.pins.length) return "";
-  const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}`);
+  const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}${pin.stale ? ` · 可能已過時（它的 worker 都結束了，${Math.max(1, Math.floor((now - pin.updatedAt) / 60_000))} 分鐘沒更新）` : ""}${pin.nudge ? " · worker 都回報完了但卡片還在進行中：做完請標 state=\"done\"，沒做完請寫還差什麼" : ""}`);
   const fixes = (book.fixes ?? []).filter((fix) => now - fix.at < 86_400_000);
   const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
   // the note goes out inside the user's message, which the core reads for @Name call-ins: a title like "@DAFAWU 看一下" must not call that bot in
   return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}`.replace(/@/g, "＠")
-    + `\n（這句若明顯在講其中一張卡，用 <pin-say id="p-…" move="yes">回答</pin-say>；拿不準就照常在聊天回答。以最後一則現況為準。）`;
+    + `\n（以最後一則現況為準。）`;
 }
 /** A plain message with the briefing after it; the user's own words cannot fake the marker. */
 export function withBriefing(text: string, brief: string): string {
@@ -570,10 +753,29 @@ function addFix(book: Book, text: string, from: string, to: string, now: number)
 /** 移回聊天: the turn stays in the card's data (so the chat can show its answer) but leaves its thread. False: not an automatic turn of a live card, or already back. */
 export function moveBack(book: Book, rid: string, now: number): boolean {
   const hit = findTurn(book, rid);
-  if (!hit || hit.removed || hit.turn.via !== "auto" || hit.turn.moved) return false;
+  // a worker's report the bot's reply was folded for is taken back too (no guess of the bot's to correct: nothing is noted for it)
+  if (!hit || hit.removed || (hit.turn.via !== "auto" && !(hit.turn.via === "worker" && hit.turn.msgId)) || hit.turn.moved) return false;
   hit.turn.moved = true;
   hit.pin.updatedAt = now;
-  addFix(book, hit.turn.q, hit.pin.id, "chat", now);
+  if (hit.turn.via === "auto") addFix(book, hit.turn.q, hit.pin.id, "chat", now);
+  return true;
+}
+/**
+ * The bot's reply in the chat to a worker's report (or note) turn: its message is folded behind a one-line trace (the full words are in the card), `say` is
+ * what it said. It goes with the newest report of one of `workers` not yet filed with a reply; false when there is none.
+ */
+export function attachReply(book: Book, workers: string[], msgId: string, say: string, now: number): boolean {
+  if (!msgId || msgId.length > 200 || lineUsed(book, msgId)) return false;
+  let found: Turn | null = null;
+  for (const pin of book.pins) for (const turn of pin.thread) {
+    if (turn.via === "worker" && !turn.msgId && !turn.moved && turn.worker && workers.includes(turn.worker) && (!found || turn.aAt! >= found.aAt!)) found = turn;
+  }
+  if (!found) return false;
+  found.msgId = msgId;
+  const line = clean(say, MAX_A).trim();
+  if (line) found.say = line;
+  const pin = book.pins.find((candidate) => candidate.thread.includes(found!));
+  if (pin) pin.updatedAt = now;
   return true;
 }
 /** 改到…: the turn, with its answer, goes to another live card. False: no such turn or card, the same card, or the turn is back in the chat. */
@@ -596,18 +798,85 @@ export function moveTo(book: Book, rid: string, to: string, now: number): boolea
 }
 
 /** What the chat draws for the lines the bot moved (`chat.decorate`): a one-line trace in place of the user's line, or, once moved back, the answer under it. */
-export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user" }
+export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user"; /** The line is the bot's reply to a worker's report that went into the card (q: the report's first line). */ worker?: true }
 export const MAX_TRACES = 120;
 export function tracesOf(book: Book): { key: string; fold?: string[]; after?: string; data: TraceData }[] {
   const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
-  for (const pin of book.pins) for (const turn of pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin, turn, live: true });
+  for (const pin of book.pins) for (const turn of pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin, turn, live: true });
   // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
-  for (const entry of book.removed) for (const turn of entry.pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
+  // (a card merged into another has its turns there already)
+  for (const entry of book.removed) if (!entry.merged) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
   return all.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
     const back = turn.moved === true || !live;
-    const data: TraceData = { kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot", ...(back && turn.a ? { a: clean(turn.a, 600) } : {}) };
+    const worker = turn.via === "worker";
+    const shown = worker ? turn.say ?? turn.a : turn.a;
+    const data: TraceData = {
+      kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot",
+      ...(back && shown ? { a: clean(shown, 600) } : {}), ...(worker ? { worker: true as const } : {}),
+    };
     return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: [turn.msgId!], data };
   });
+}
+
+// ---- what the app only suggests (a new card, a merge): nothing happens until the user taps ----
+
+/** The suggestions still worth showing: not older than SUGGEST_MS, and (a merge) both cards still on the strip. */
+export const liveSuggest = (book: Book, now: number): Suggest[] =>
+  (book.suggest ?? []).filter((item) => now - item.at < SUGGEST_MS
+    && (item.kind === "new" || (book.pins.some((pin) => pin.id === item.card) && book.pins.some((pin) => pin.id === item.card2))));
+const suggestView = (book: Book, now: number): SuggestView[] =>
+  liveSuggest(book, now).map((item) => ({
+    id: item.id, kind: item.kind, text: item.text,
+    ...(item.kind === "merge" ? { title: book.pins.find((pin) => pin.id === item.card)?.title ?? "", title2: book.pins.find((pin) => pin.id === item.card2)?.title ?? "" } : {}),
+  }));
+/** Keeps a suggestion for the user to tap. False: the same one is already shown (so a second line about it does not stack another). */
+export function addSuggest(book: Book, input: { kind: "new" | "merge"; text: string; card?: string; card2?: string }, rid: string, now: number): boolean {
+  const text = oneLine(input.text, SUGGEST_TEXT);
+  if (!text || !isRid(rid)) return false;
+  if (input.kind === "merge" && !(isId(input.card) && isId(input.card2) && input.card !== input.card2)) return false;
+  const kept = liveSuggest(book, now);
+  const same = (item: Suggest) => item.kind === input.kind && (input.kind === "new" ? item.text === text : [item.card, item.card2].sort().join() === [input.card, input.card2].sort().join());
+  if (kept.some(same)) { book.suggest = kept; return false; }
+  book.suggest = [...kept, { id: rid, kind: input.kind, text, at: now, ...(input.kind === "merge" ? { card: input.card!, card2: input.card2! } : {}) }].slice(-MAX_SUGGEST);
+  return true;
+}
+/** Takes one suggestion out of the book (tapped, or turned down); null when it is not (or no longer) there. */
+export function takeSuggest(book: Book, id: string, now: number): Suggest | null {
+  const item = liveSuggest(book, now).find((candidate) => candidate.id === id);
+  if (!item) return null;
+  book.suggest = (book.suggest ?? []).filter((candidate) => candidate.id !== id);
+  if (!book.suggest.length) delete book.suggest;
+  return item;
+}
+/** Card `dropId` goes into card `keepId`: its thread and workers are copied there, and it is taken down with a note of what to take back (釘回 undoes it). */
+export function mergeCards(book: Book, keepId: string, dropId: string, now: number): Pin | null {
+  const keep = book.pins.find((pin) => pin.id === keepId);
+  const drop = book.pins.find((pin) => pin.id === dropId);
+  if (!keep || !drop || keep === drop) return null;
+  const have = new Set(keep.thread.map((turn) => turn.rid));
+  const copies = drop.thread.filter((turn) => !have.has(turn.rid)).map((turn): Turn => ({ ...turn }));
+  keep.thread = [...keep.thread, ...copies].sort((a, b) => a.qAt - b.qAt);
+  while (keep.thread.length > MAX_TURNS) {
+    const old = keep.thread.findIndex((turn) => turn.a !== null);
+    keep.thread.splice(old >= 0 ? old : 0, 1);
+  }
+  const kept = new Set(keep.thread.map((turn) => turn.rid));
+  const rids = copies.map((turn) => turn.rid).filter((rid) => kept.has(rid));
+  const before = new Set(keep.from ?? []);
+  linkFrom(keep, drop.from ?? [], MAX_LINKED);
+  const from = (keep.from ?? []).filter((id) => !before.has(id));
+  for (const id of drop.live ?? []) if (!keep.live?.includes(id)) keep.live = [...(keep.live ?? []), id];
+  logLine(keep, `合併了「${oneLine(drop.title, MAX_TITLE)}」`, now);
+  keep.updatedAt = now;
+  remove(book, dropId, now, "user");
+  const entry = book.removed.find((candidate) => candidate.pin === drop);
+  if (entry) entry.merged = { into: keep.id, rids, from };
+  return keep;
+}
+/** Tapping 「建立卡片」: a card of the user's for that line. Refused (nothing changes) when the strip is full or the line has no words. */
+export function cardFromSuggestion(book: Book, item: Suggest, now: number): { pin: Pin } | { refused: Refusal } {
+  const { title, status } = fromMessage(item.text);
+  return addPin(book, { origin: "user", title, status, state: "run", source: "user" }, now);
 }
 
 // ---- what the page draws ----
@@ -615,12 +884,26 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
 export interface PinView {
   id: string; title: string; handle: string; origin: "user" | "bot"; state: State; status: string; prev?: string; source: Source; step?: Step;
   waitingSince?: number; unread: boolean; thread: Turn[]; updates: Update[]; createdAt: number; updatedAt: number;
+  /** 可能已過時 (`isStale`), and the bot being asked to close the card (`nudge`). */
+  stale?: true; nudge?: true;
 }
-export interface BookView { v: 1; pins: PinView[] }
+/** `into`: the title of the card it was merged into (a merge; else the app put it away because it was done). */
+export interface ClosedView { id: string; title: string; at: number; into?: string }
+/** A suggestion as the strip draws it: for a merge the titles of the two cards (`card` stays). */
+export interface SuggestView { id: string; kind: "new" | "merge"; text: string; title?: string; title2?: string }
+/** `closed`: cards the app took down by itself lately (the strip offers 釘回). */
+export interface BookView { v: 1; pins: PinView[]; closed?: ClosedView[]; suggest?: SuggestView[] }
 const ORDER: Record<State, number> = { wait: 0, run: 1, done: 2 };
 
+/** The cards the app took down by itself in the last day (newest last): the strip offers them back. */
+export const closedOf = (book: Book, now: number): ClosedView[] =>
+  book.removed.filter((entry) => (entry.by === "auto" || entry.merged) && now - entry.at < CLOSED_SHOW_MS).map((entry) => {
+    const into = entry.merged ? book.pins.find((pin) => pin.id === entry.merged!.into)?.title : undefined;
+    return { id: entry.pin.id, title: entry.pin.title, at: entry.at, ...(into ? { into } : {}) };
+  });
+
 /** The cards in the order the strip shows them: waiting, then running, then done (each oldest first so a row keeps its place). */
-export function viewOf(book: Book): BookView {
+export function viewOf(book: Book, now?: number): BookView {
   const pins = [...book.pins].sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.createdAt - b.createdAt);
   return {
     v: 1,
@@ -628,7 +911,10 @@ export function viewOf(book: Book): BookView {
       id: pin.id, title: pin.title, handle: pin.handle, origin: pin.origin, state: pin.state, status: pin.status, ...(pin.prev ? { prev: pin.prev } : {}), source: pin.source,
       ...(pin.step ? { step: pin.step } : {}), ...(pin.waitingSince !== undefined ? { waitingSince: pin.waitingSince } : {}),
       unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread.filter((turn) => !turn.moved), updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
+      ...(isStale(pin) ? { stale: true as const } : {}), ...(pin.nudge ? { nudge: true as const } : {}),
     })),
+    ...(now !== undefined && closedOf(book, now).length ? { closed: closedOf(book, now) } : {}),
+    ...(now !== undefined && suggestView(book, now).length ? { suggest: suggestView(book, now) } : {}),
   };
 }
 

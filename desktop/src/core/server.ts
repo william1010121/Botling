@@ -598,6 +598,8 @@ export class Core {
 
   replied(...a: Parameters<CorePluginSide["replied"]>) { return this.corePluginSide.replied(...a); }
 
+  workerNoted(...a: Parameters<CorePluginSide["workerNoted"]>) { return this.corePluginSide.workerNoted(...a); }
+
   serverSend(...a: Parameters<CorePluginSide["serverSend"]>) { return this.corePluginSide.serverSend(...a); }
 
   serverUserLine(...a: Parameters<CorePluginSide["serverUserLine"]>) { return this.corePluginSide.serverUserLine(...a); }

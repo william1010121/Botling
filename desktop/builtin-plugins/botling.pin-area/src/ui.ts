@@ -58,6 +58,9 @@ export const tagKey = (pin: Pick<PinView, "source">): "tag.user" | "tag.bot" | "
 /** "HH:MM" of a time. */
 export const clock = (at: number): string => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
+/** What a worker's line in a card's thread says it is. */
+const WORKER_WORD = { final: "worker.final", failed: "worker.failed", note: "worker.note", question: "worker.question" } as const;
+
 export class PinUi {
   private botId = "";
   private data: PinsView = { v: 1, pins: [] };
@@ -72,8 +75,12 @@ export class PinUi {
   private readonly below = el("div", "pt-below");
   private readonly more = el("button", "pt-more");
   private readonly toastLine = el("div", "pt-toast");
+  /** Cards the app put away by itself (done for an hour): one line each, with 釘回. */
+  private readonly closedLines = el("div", "pt-closed");
+  /** What the app only suggests (a new card for the user's line, two cards to merge): one line each, nothing happens until the user taps. */
+  private readonly suggestLines = el("div", "pt-suggest");
   private panel: HTMLElement | null = null;
-  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
+  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; stale: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
   private toast: { text: string; undo?: { id: string }; until: number } | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private updatesOpen = false;
@@ -96,7 +103,7 @@ export class PinUi {
     this.more.type = "button";
     this.more.addEventListener("click", () => { this.showAll = !this.showAll; this.draw(); });
     this.rows.append(this.above, this.below, this.more);
-    this.section.append(this.head, this.rows, this.toastLine);
+    this.section.append(this.head, this.rows, this.suggestLines, this.closedLines, this.toastLine);
     this.top.append(this.digest, this.section);
     const { signal } = this.listeners;
     // A plain primary-button press on the chat's empty space leaves the open card (not a press on a message, a button, the input box or the
@@ -184,7 +191,9 @@ export class PinUi {
     const { words } = this.deps;
     const pins = this.data.pins;
     this.drawDigest();
-    this.section.hidden = pins.length === 0 && !this.toast;
+    const closed = this.closed();
+    const suggest = this.suggestions();
+    this.section.hidden = pins.length === 0 && !this.toast && closed.length === 0 && suggest.length === 0;
     const waiting = pins.filter((pin) => pin.state === "wait").length;
     this.head.replaceChildren();
     if (pins.length) {
@@ -210,6 +219,8 @@ export class PinUi {
     const focusId = this.lastFocusId ?? active;
     this.lastFocusId = null;
     if (focusId) (Array.from(this.rows.querySelectorAll<HTMLElement>(".pt-row"))).find((row) => row.dataset.pin === focusId)?.focus({ preventScroll: true });
+    this.drawSuggest(suggest);
+    this.drawClosed(closed);
     this.drawToast();
     this.drawChip();
     if (this.openId) this.drawPanel();
@@ -228,6 +239,7 @@ export class PinUi {
       el("span", `pt-dot pt-dot-${pin.state}`),
       el("b", "pt-title", pin.title),
       el("span", "pt-short", pin.status),
+      ...(pin.stale ? [el("span", "pt-stale", words("row.stale"))] : []),
       el("span", `pt-meta${pin.unread ? " fresh" : ""}`, pin.unread ? `${when} ${words("row.fresh")}` : when),
       icon(["M6 9l6 6 6-6"], 14),
     );
@@ -361,6 +373,62 @@ export class PinUi {
     this.draw();
   }
 
+  /** The cards the program part says it took down by itself in the last day: three at most, each shaped and checked. */
+  private closed(): { id: string; title: string; into?: string }[] {
+    const list = Array.isArray(this.data.closed) ? this.data.closed : [];
+    const day = 24 * 3_600_000;
+    return list.flatMap((item) => (item && typeof item.id === "string" && /^p-\d{4,}$/.test(item.id) && typeof item.title === "string" && typeof item.at === "number" && this.deps.now() - item.at < day
+      ? [{ id: item.id, title: item.title.slice(0, 40), ...(typeof item.into === "string" && item.into ? { into: item.into.slice(0, 40) } : {}) }] : [])).slice(-3);
+  }
+  /** The suggestions the program part sent, each shaped and checked (two at most). */
+  private suggestions(): { id: string; kind: "new" | "merge"; text: string; title: string; title2: string }[] {
+    const list = Array.isArray(this.data.suggest) ? this.data.suggest : [];
+    return list.flatMap((item) => (item && typeof item.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(item.id) && (item.kind === "new" || item.kind === "merge") && typeof item.text === "string"
+      ? [{ id: item.id, kind: item.kind, text: item.text.slice(0, 80), title: typeof item.title === "string" ? item.title.slice(0, 40) : "", title2: typeof item.title2 === "string" ? item.title2.slice(0, 40) : "" }] : [])).slice(-2);
+  }
+  private drawSuggest(list: { id: string; kind: "new" | "merge"; text: string; title: string; title2: string }[]): void {
+    const { words } = this.deps;
+    this.suggestLines.replaceChildren();
+    this.suggestLines.hidden = list.length === 0;
+    for (const item of list) {
+      const line = el("div", "pt-suggest-line");
+      const act = (label: string, method: "acceptSuggest" | "dismissSuggest") => {
+        const button = el("button", "pt-toast-act", label);
+        button.type = "button";
+        button.addEventListener("click", () => {
+          if (this.moving.has(item.id)) return;
+          this.moving.add(item.id);
+          void this.deps.call(method, { botId: this.botId, id: item.id })
+            .then((made) => { const id = (made as { id?: unknown } | null)?.id; if (typeof id === "string") this.open(id); }, (error) => this.failed(error))
+            .finally(() => this.moving.delete(item.id));
+        });
+        return button;
+      };
+      line.append(
+        el("span", "pt-toast-text", item.kind === "new" ? words("suggest.new", { text: item.text }) : words("suggest.merge", { title: item.title, title2: item.title2 })),
+        act(words(item.kind === "new" ? "suggest.yes.new" : "suggest.yes.merge"), "acceptSuggest"), act(words("suggest.no"), "dismissSuggest"),
+      );
+      this.suggestLines.append(line);
+    }
+  }
+  private drawClosed(closed: { id: string; title: string; into?: string }[]): void {
+    this.closedLines.replaceChildren();
+    this.closedLines.hidden = closed.length === 0;
+    for (const item of closed) {
+      const line = el("div", "pt-closed-line");
+      const back = el("button", "pt-toast-act", this.deps.words("toast.undo"));
+      back.type = "button";
+      back.dataset.pin = item.id;
+      back.addEventListener("click", () => {
+        if (this.moving.has(item.id)) return;
+        this.moving.add(item.id);
+        void this.deps.call("repin", { botId: this.botId, id: item.id }).then(() => this.open(item.id), (error) => this.failed(error)).finally(() => this.moving.delete(item.id));
+      });
+      line.append(el("span", "pt-toast-text", item.into ? this.deps.words("closed.merged", { title: item.title, into: item.into }) : this.deps.words("closed.line", { title: item.title })), back);
+      this.closedLines.append(line);
+    }
+  }
+
   private drawToast(): void {
     this.toastLine.replaceChildren();
     this.toastLine.hidden = !this.toast;
@@ -454,9 +522,10 @@ export class PinUi {
     parts.tag.className = `pt-ptag pt-ptag-${pin.source}`;
     parts.at.textContent = words("card.at", { time: this.when(pin.updatedAt) });
     parts.fresh.hidden = !this.fresh.has(pin.id);
+    parts.stale.hidden = !pin.stale;
     parts.status.textContent = pin.status;
     parts.before.hidden = !pin.prev;
-    parts.note.hidden = parts.fresh.hidden && !pin.prev;
+    parts.note.hidden = parts.fresh.hidden && !pin.prev && !pin.stale;
     parts.before.replaceChildren();
     if (pin.prev) { parts.before.append(document.createTextNode(words("panel.before")), el("s", "", pin.prev)); }
     parts.bars.replaceChildren();
@@ -493,10 +562,12 @@ export class PinUi {
     head.append(dot, title, tag, el("span", "pt-grow"), at, unpin, close);
     const status = el("span", "pt-pstatus");
     const fresh = el("span", "pt-pill", words("row.fresh"));
+    const stale = el("span", "pt-pill pt-stale", words("row.stale"));
+    stale.hidden = true;
     const before = el("span", "pt-pbefore");
     const bars = el("div", "pt-pbars");
     const note = el("div", "pt-pnote");
-    note.append(fresh, before);
+    note.append(fresh, stale, before);
     const summary = el("div", "pt-psummary");
     summary.append(note, status, bars);
     const thread = el("div", "pt-thread");
@@ -504,7 +575,7 @@ export class PinUi {
     const updates = el("div", "pt-updates");
     panel.append(head, summary, thread, updates);
     this.panel = panel;
-    this.panelParts = { title, tag, dot, at, note, fresh, status, before, bars, thread, updates };
+    this.panelParts = { title, tag, dot, at, note, fresh, stale, status, before, bars, thread, updates };
   }
 
   private drawThread(pin: PinView, parts: NonNullable<PinUi["panelParts"]>): void {
@@ -527,8 +598,17 @@ export class PinUi {
         parts.thread.append(mine);
       }
       if (turn.a !== null) {
-        const bot = el("div", "pt-msg pt-bot");
-        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
+        const worker = turn.via === "worker";
+        const bot = el("div", `pt-msg pt-bot${worker ? " pt-worker" : ""}`);
+        // what a worker said (its whole report, a note, a question) is the worker's, not the bot's
+        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${worker ? words(WORKER_WORD[turn.wkind ?? "final"]) : words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
+        // a report whose reply in the chat was folded to one line: one tap brings it back
+        if (worker && turn.msgId) {
+          const back = el("button", "pt-mv-act", words("trace.backBtn"));
+          back.type = "button";
+          back.addEventListener("click", () => this.moveBack(turn.rid));
+          bot.append(back);
+        }
         parts.thread.append(bot);
       }
     }
@@ -571,7 +651,7 @@ export class PinUi {
       if (data.a) root.append(el("div", "pt-mv-ans", `${words("bot.name")}：${data.a}`));
       return;
     }
-    const open = el("button", "pt-mv-open", words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
+    const open = el("button", "pt-mv-open", data.worker ? words("trace.worker", { q: data.q, title: data.title }) : words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
     open.type = "button";
     open.title = words("trace.open", { title: data.title });
     open.addEventListener("click", () => this.open(data.pin));
@@ -582,7 +662,9 @@ export class PinUi {
     other.type = "button";
     other.setAttribute("aria-expanded", String(this.alts.has(data.rid)));
     other.addEventListener("click", () => { if (this.alts.has(data.rid)) this.alts.delete(data.rid); else this.alts.add(data.rid); this.trace(root, data); });
-    line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
+    // a worker's report has no other card to go to: only back to the chat
+    if (data.worker) line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back);
+    else line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
     root.append(line);
     if (this.alts.has(data.rid)) {
       const list = el("div", "pt-mv-alts");

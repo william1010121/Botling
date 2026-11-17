@@ -66,6 +66,33 @@ export class CorePluginSide {
   /** The workers seen at work, so each one's end is told once (`workerDone`). */
   private readonly workersAtWork = new Set<string>();
 
+  /** The runs whose start was announced (`workerStarted`), so a repeated view of a run is not told again. */
+  private readonly workersStarted = new Set<string>();
+
+  /**
+   * The task ids named by the app messages a turn carries: a worker's final report or an interim note (`<app_task_result task_id="…">`). Only a turn the app began
+   * (`origin: "app"`) is read: the user's own words (a pasted old report) name no worker. The turn's words may start with a restart note or saved memory, so the
+   * whole text is read (cut at 40,000 characters), not only its start.
+   */
+  private reportsOf(turnOf: () => { words?: unknown; origin?: unknown } | null | undefined): string[] {
+    let words = "";
+    try { const turn = turnOf(); words = turn?.origin === "app" && typeof turn.words === "string" ? turn.words.slice(0, 40_000) : ""; } catch { /* no turn to read: no reports */ }
+    const ids: string[] = [];
+    for (const m of words.matchAll(/<app_(?:task_result|worker_note) task_id="([A-Za-z0-9_.:-]{1,100})"/g)) if (!ids.includes(m[1]!) && ids.length < 8) ids.push(m[1]!);
+    return ids;
+  }
+
+  /** The job name a worker's bot gave it with app_handoff's `group` (undefined: none, or the bot's records cannot be read now). */
+  private jobNameOf(botId: string, workerId: string): string | undefined {
+    try { return this.bots.get(botId)?.subagents.get(workerId)?.group; } catch { return undefined; }
+  }
+
+  /** The owner's side of a worker's note (app_notify_owner): plugins listening hear it, with its words. */
+  workerNoted(botId: string, note: { id?: string; kind: "report" | "question"; message: string }) {
+    if (!note.id) return;
+    this.plugins.event("workerNote", { botId: this.outId(botId), workerId: note.id, kind: note.kind, message: note.message.slice(0, 20_000) });
+  }
+
   /** What plugins listening with `events.on` hear of a core event. */
   pluginEvent(event: Event) {
     if (!("botId" in event)) return;
@@ -73,7 +100,10 @@ export class CorePluginSide {
     if (event.type === "message.added" && event.message.role === "user") {
       this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
     } else if (event.type === "turn.started") {
-      this.plugins.event("turnStarted", { botId, turnId: event.turnId });
+      // The workers whose report or note this turn carries (the app's own message names them): the pin area files the bot's reply with them.
+      const owner = event.botId;
+      const reports = this.reportsOf(() => this.bots.get(owner)?.turn);
+      this.plugins.event("turnStarted", { botId, turnId: event.turnId, ...(reports.length ? { reports } : {}) });
     } else if (event.type === "turn.finished") {
       if (event.status === "done" && event.text) this.plugins.event("messagePosted", { botId, role: "bot", text: event.text, id: event.messageId });
       this.plugins.event("turnFinished", { botId, ok: event.status === "done", reply: event.text });
@@ -81,7 +111,17 @@ export class CorePluginSide {
       // Keyed by the worker and its run: the copy for an agent's owner, and views sent again, are not new ends.
       const key = `${event.subagent.id}/${event.subagent.execution?.run ?? 0}`;
       if (event.subagent.status === "running") {
+        const fresh = !this.workersAtWork.has(key);
         if (this.workersAtWork.size < 2_000) this.workersAtWork.add(key);
+        // A worker that began a run for a job its bot named (`group`): announced once (a restart, or a copy of the view, is the same run).
+        if (fresh && !this.workersStarted.has(key)) {
+          const group = this.jobNameOf(event.botId, event.subagent.id);
+          if (typeof group === "string" && group.trim()) {
+            if (this.workersStarted.size >= 2_000) this.workersStarted.delete(this.workersStarted.values().next().value!);
+            this.workersStarted.add(key);
+            this.plugins.event("workerStarted", { botId, workerId: event.subagent.id, group: group.trim().slice(0, 80), title: event.subagent.title.slice(0, 200) });
+          }
+        }
       } else {
         // `workerReport` has its own book (a cursor per run), so it does not depend on the 2,000 above.
         this.plugins.workerEnded(event.subagent.id, event.subagent.execution?.run ?? 0, event.subagent.status, event.subagent.result ?? "");

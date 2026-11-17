@@ -1,15 +1,19 @@
 // @vitest-environment node
 // botling.pin-area's program part (src/pins.ts) against a fake Botling API: what bots may do with their tags, how "@card words" is
 // rewritten and answered, who may touch which bot's book, and that a restart draws the cards again.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { BotlingApi } from "../../../../Web/host/src/api";
 import { activate } from "../src/host";
 import { activatePins } from "../src/pins";
 import * as D from "../src/digest";
 import * as M from "../src/model";
+import * as C from "../src/classify";
+import type { Ask } from "../src/sorter-call";
 
 type Handler = (data: never) => unknown;
-function setup(seed: Record<string, unknown> = {}) {
+function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
   const exposed = new Map<string, (params: unknown) => unknown>();
   const events = new Map<string, Handler>();
   const tags = new Map<string, Handler>();
@@ -22,10 +26,16 @@ function setup(seed: Record<string, unknown> = {}) {
   const family: { id: string; parent: string | null; name?: string }[] = [];
   // what workspace.waiting() gives: each bot's open question, or the lines of its memory.md "Waiting on you"
   const waitingItems: { botId: string; text: string; messageId?: string | null }[] = [];
+  // what chat.messages gives (the lines the classifier reads as the chat's newest)
+  const chatLines: { id?: string; role: string; text: string }[] = [];
+  // this plugin's settings as the user set them (none: every default)
+  // (the sort is off by default: the tests of the sort turn it on)
+  const settings: Record<string, unknown> = { [C.SETTING.enabled]: true };
   const api = {
+    settings: { get: (key: string) => settings[key] },
     subscriptions: [] as unknown[],
     storage: { dir: "/s", get: (key: string) => (stored.has(key) ? JSON.parse(JSON.stringify(stored.get(key))) : undefined), set: (key: string, value: unknown) => { stored.set(key, JSON.parse(JSON.stringify(value))); } },
-    chat: { setData, decorate },
+    chat: { setData, decorate, messages: vi.fn(async (botId: string) => ({ botId, name: botId, unread: 0, messages: chatLines, tasks: [] })) },
     workspace: {
       bots: vi.fn(async () => family.map((bot) => ({ ...bot, name: bot.name ?? bot.id, role: "bot" }))),
       waiting: vi.fn(async () => ({ items: waitingItems.map((item) => ({ messageId: null, ...item })), doing: {} })),
@@ -37,21 +47,22 @@ function setup(seed: Record<string, unknown> = {}) {
   };
   let clock = 1_000_000;
   const expose = (method: string, fn: (params: Record<string, unknown>) => unknown) => api.ui.expose(method, (params) => fn((params ?? {}) as Record<string, unknown>));
-  const subs = activatePins(api as unknown as BotlingApi, expose, () => clock);
+  const subs = activatePins(api as unknown as BotlingApi, expose, () => clock, ask);
   const bot = (id: string) => ({ id, name: id, role: "bot" as const, awake: true });
   const call = (method: string, params: Record<string, unknown>) => exposed.get(method)!(params) as never;
   const emit = (event: string, data: Record<string, unknown>) => events.get(event)!(data as never);
   const tag = (botId: string, name: string, attributes: Record<string, string>, body = "") => tags.get(name)!({ bot: bot(botId), tag: name, attributes, body } as never);
   const send = (botId: string, text: string) => hooks[0]!({ bot: bot(botId), text } as never) as string | false | undefined;
+  const sendAsync = async (botId: string, text: string) => (await hooks[0]!({ bot: bot(botId), text } as never)) as string | false | undefined;
   const book = (botId: string) => M.readBook(stored.get(`pins:${botId}`));
-  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
+  return { api, settings, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, chatLines, call, emit, tag, send, sendAsync, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 describe("the program part", () => {
-  it("registers the nine methods, the four events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the eleven methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
-    expect([...exposed.keys()].sort()).toEqual(["collapse", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
-    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone"]);
+    expect([...exposed.keys()].sort()).toEqual(["acceptSuggest", "collapse", "dismissSuggest", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
+    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone", "workerNote", "workerStarted"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
     const real = setup();
@@ -913,5 +924,621 @@ describe("「你不在時」: the digest of what happened while the user was awa
     const t = setup({ presence: "garbage" });
     await expect(t.call("touch", {})).rejects.toThrow("No bot.");
     expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
+  });
+});
+
+// ---- Step 1 of the routing work: a worker is bound to a card by the job name its bot gave, and its words go into the card ----
+describe("a worker bound to a card by its job name", () => {
+  const started = (botId: string, workerId: string, group: string) => ({ botId, workerId, group, title: "worker" });
+  const card = (t = setup(), title = "Build 報告") => {
+    t.tag("B1", "pin-card", { id: "job", title, state: "run", min: "30" }, "進行中");
+    t.tick(1_000);
+    return t;
+  };
+
+  it("a worker whose group is the card's title follows it from then on; its final report goes into the thread whole and the status line gets the first line", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toEqual(["t-1"]);
+    expect(t.book("B1").pins[0]!.updates.at(-1)!.status).toBe("worker 開工：build 報告");
+    const report = "# 結果\n第一段\n\n第二段 ".repeat(50);
+    t.emit("workerDone", ended("B1", "t-1", report));
+    const pin = t.book("B1").pins[0]!;
+    expect(pin.status).toBe("worker 回報：結果");
+    expect(pin.thread).toHaveLength(1);
+    expect(pin.thread[0]).toMatchObject({ via: "worker", worker: "t-1", wkind: "final", q: "", a: report.trim() });
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect(view.pins[0]!.thread[0]!.a).toBe(report.trim());
+    // told again: nothing more
+    const draws = t.setData.mock.calls.length;
+    t.emit("workerDone", ended("B1", "t-1", report));
+    expect(t.setData.mock.calls.length).toBe(draws);
+  });
+
+  it("no card of that name, two cards alike, a done card, a worker of another bot: the worker is not bound and nothing changes", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-2", "完全不同的工作"));
+    t.emit("workerStarted", started("B2", "t-3", "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toBeUndefined();
+    t.emit("workerDone", ended("B1", "t-2", "別的結果"));
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(0);
+    t.tag("B1", "pin-card", { id: "job2", title: "Build 報告二", state: "run", min: "30" }, "另一張");
+    t.emit("workerStarted", started("B1", "t-4", "build 報告")); // the exact title still wins over the longer one
+    expect(t.book("B1").pins.find((pin) => pin.title === "Build 報告")!.from).toEqual(["t-4"]);
+    t.tag("B1", "pin-card", { id: "twin", title: "Build 報告", state: "run", min: "30" }, "同名"); // handle differs, title the same
+    t.emit("workerStarted", started("B1", "t-5", "build 報告"));
+    expect(M.linksOf(t.book("B1"))).toEqual(["t-4"]);
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    t.emit("workerStarted", started("B1", "t-6", "build 報告二"));
+    expect(t.book("B1").pins.find((pin) => pin.title === "Build 報告二")!.from).toEqual(["t-6"]);
+  });
+
+  it("a worker that ended before it was bound lands at once, and a bad id or group is dropped", () => {
+    const t = card();
+    t.emit("workerDone", ended("B1", "t-early", "早就好了"));
+    t.emit("workerStarted", started("B1", "t-early", "build 報告"));
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ worker: "t-early", a: "早就好了" });
+    t.emit("workerStarted", started("B1", "../x", "build 報告"));
+    t.emit("workerStarted", { botId: "B1", workerId: "t-9", group: 5, title: "x" });
+    expect(t.book("B1").pins[0]!.from).toEqual(["t-early"]);
+  });
+
+  it("a worker is bound once: a second start of the same worker (any group) adds no log line and no second binding (review P11)", () => {
+    const t = card();
+    t.tag("B1", "pin-card", { id: "job2", title: "Build 報告二", state: "run", min: "30" }, "另一張");
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    const before = t.book("B1");
+    const logs = before.pins[0]!.updates.length;
+    t.tick(1_000);
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerStarted", started("B1", "t-1", "build 報告二"));
+    const after = t.book("B1");
+    expect(after.pins[0]!.updates).toHaveLength(logs);
+    expect(after.pins[0]!.from).toEqual(["t-1"]);
+    expect(after.pins[1]!.from).toBeUndefined();
+    expect(after.pins[1]!.updates).toHaveLength(before.pins[1]!.updates.length);
+  });
+
+  it("a worker id that is not a plain id (a slash, a space, empty, over 100 characters, not a string) is never bound, whatever its group (review P13)", () => {
+    const t = card();
+    const before = t.book("B1").pins[0]!.updates.length;
+    for (const workerId of ["a/b", "../x", "a b", "", "x".repeat(101), 5, null, { id: "t" }]) t.emit("workerStarted", { botId: "B1", workerId, group: "build 報告", title: "w" });
+    const pin = t.book("B1").pins[0]!;
+    expect(pin.from).toBeUndefined();
+    expect(pin.updates).toHaveLength(before);
+    // a plain id of the longest length is fine
+    t.emit("workerStarted", started("B1", "x".repeat(100), "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toEqual(["x".repeat(100)]);
+  });
+
+  it("a done card keeps the report in its thread without changing its words; a failed run turns a running card into a waiting one", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "壞了\n細節很多", "failed"));
+    expect(t.book("B1").pins[0]).toMatchObject({ state: "wait", status: "worker 失敗：壞了" });
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ wkind: "failed", a: "壞了\n細節很多" });
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "收工");
+    t.emit("workerDone", ended("B1", "t-1", "遲來的報告"));
+    const pin = t.book("B1").pins[0]!;
+    expect([pin.state, pin.status]).toEqual(["done", "收工"]);
+    expect(pin.thread.map((turn) => turn.a)).toEqual(["壞了\n細節很多", "遲來的報告"]);
+  });
+
+  it("a note of a bound worker goes into the thread and the log; a question makes a running card wait; an unbound worker's note is ignored", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerNote", { botId: "B1", workerId: "t-1", kind: "report", message: "做到一半\n已經有三個檔案" });
+    let pin = t.book("B1").pins[0]!;
+    expect(pin.state).toBe("run");
+    expect(pin.updates.at(-1)).toMatchObject({ status: "worker 進度：做到一半", source: "app" });
+    expect(pin.thread.at(-1)).toMatchObject({ via: "worker", wkind: "note", a: "做到一半\n已經有三個檔案" });
+    t.emit("workerNote", { botId: "B1", workerId: "t-1", kind: "question", message: "用 A 還是 B？" });
+    pin = t.book("B1").pins[0]!;
+    expect([pin.state, pin.status]).toEqual(["wait", "worker 問：用 A 還是 B？"]);
+    expect(pin.thread.at(-1)).toMatchObject({ wkind: "question" });
+    const before = JSON.stringify(t.book("B1"));
+    t.emit("workerNote", { botId: "B1", workerId: "t-none", kind: "report", message: "x" });
+    t.emit("workerNote", { botId: "B2", workerId: "t-1", kind: "report", message: "x" });
+    expect(JSON.stringify(t.book("B1"))).toBe(before);
+  });
+
+  it("the bot's reply to a bound worker's report is folded behind one line (移回聊天 brings it back); a reply to anything else is not", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "完整報告\n很長"));
+    // a turn that carries no report: its reply stays in the chat
+    t.emit("turnStarted", { botId: "B1", turnId: "u1" });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "一般回覆", id: "m0" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "一般回覆" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
+    // the turn of the app's message for that worker
+    t.emit("turnStarted", { botId: "B1", turnId: "u2", reports: ["t-1"] });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "做完了，細節在卡片裡", id: "m1" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "做完了，細節在卡片裡" });
+    const turn = t.book("B1").pins[0]!.thread[0]!;
+    expect([turn.msgId, turn.say]).toEqual(["m1", "做完了，細節在卡片裡"]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({ fold: ["m1"], data: { kind: "moved", worker: true, pin: "p-0001", q: "完整報告" } });
+    // another message of that turn's chat does not fold again
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "又一句", id: "m2" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBe("m1");
+    // one tap: back in the chat, the card no longer shows it, the bot's words come back under the trace
+    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ moved: "chat" });
+    const back = t.decorate.mock.calls.at(-1)![1] as { after?: string; data: M.TraceData }[];
+    expect(back[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "做完了，細節在卡片裡" } });
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).pins[0]!.thread).toHaveLength(0);
+    // taking a worker line back is not a correction of the bot's routing guess
+    expect(t.book("B1").fixes).toBeUndefined();
+    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ unchanged: true });
+  });
+
+  it("a worker's turn with no reply of the bot yet cannot be moved back, and a reply never folds when the bot sent <no-reply/> (no message)", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "報告"));
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ unchanged: true });
+    t.emit("turnStarted", { botId: "B1", turnId: "u3", reports: ["t-1"] });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "之後的別件事", id: "m9" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
+  });
+
+  it("after a restart the binding and the thread are still there", () => {
+    const first = card();
+    first.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    const second = setup(Object.fromEntries(first.stored));
+    second.emit("workerDone", ended("B1", "t-1", "重開機後的報告"));
+    expect(second.book("B1").pins[0]!.thread[0]!.a).toBe("重開機後的報告");
+  });
+});
+
+// ---- Step 2: what time does to the cards ----
+describe("cards that close or go stale by themselves", () => {
+  const MIN = 60_000;
+  const withWorker = () => {
+    const t = setup();
+    t.tag("B1", "pin-card", { id: "job", title: "Build 報告", state: "run", min: "30" }, "進行中");
+    t.emit("workerStarted", { botId: "B1", workerId: "t-1", group: "build 報告", title: "w" });
+    return t;
+  };
+
+  it("workers all ended and 20 minutes of silence: the card is marked stale when the page asks (view), and the next briefing says so", () => {
+    const t = withWorker();
+    t.tick(5 * MIN);
+    t.emit("workerDone", ended("B1", "t-1", "報告\n細節"));
+    expect(t.book("B1").pins[0]!.nudge).toBe(true);
+    t.tick(19 * MIN);
+    (t.call("view", { botId: "B1" }) as M.BookView);
+    expect(t.book("B1").pins[0]!.stale).toBeUndefined();
+    t.tick(2 * MIN);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.pins[0]!.stale).toBe(true);
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).pins[0]!.stale).toBe(true);
+    const sent = t.send("B1", "進度如何");
+    expect(sent).toContain("可能已過時（它的 worker 都結束了，21 分鐘沒更新）");
+    expect(sent).toContain("做完請標 state=\"done\"");
+    // the bot answers by marking it done: the nudge and the mark are gone
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    const done = t.call("view", { botId: "B1" }) as M.BookView;
+    expect([done.pins[0]!.stale, done.pins[0]!.nudge]).toEqual([undefined, undefined]);
+  });
+
+  it("a worker still at work keeps the card from going stale, however long it is quiet", () => {
+    const t = withWorker();
+    t.tick(120 * MIN);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.pins[0]!.stale).toBeUndefined();
+  });
+
+  it("a card done for an hour is put away by the minute timer's sweep (here by the page's touch), is offered back, and 釘回 restores it", async () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "My own task" });
+    t.tag("B1", "pin-card", { id: "p-0001", state: "done" }, "做完");
+    t.tick(59 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect(t.book("B1").pins).toHaveLength(1);
+    t.tick(2 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect(t.book("B1").pins).toHaveLength(0);
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect(view.pins).toEqual([]);
+    expect(view.closed).toEqual([{ id: "p-0001", title: "My own task", at: t.now() }]);
+    expect(t.call("repin", { botId: "B1", id: "p-0001" })).toEqual({ id: "p-0001" });
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).closed).toBeUndefined();
+  });
+
+  it("a plain message sweeps first, so what it carries is up to date; a message to a bot with no cards is left alone", () => {
+    const t = setup();
+    t.tag("B1", "pin-card", { id: "job", title: "Job", state: "run", min: "30" }, "進行");
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    t.tick(61 * MIN);
+    expect(t.send("B1", "嗨")).toBeUndefined();
+    expect(t.book("B1").pins).toHaveLength(0);
+    expect(t.send("B3", "嗨")).toBeUndefined();
+  });
+});
+
+
+describe("a plain line sorted by the small model (4c)", () => {
+  const verdict = (value: unknown): Ask => vi.fn(async () => value);
+  const withCards = (ask: Ask | null) => {
+    const t = setup({}, ask);
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "Deploy" });
+    t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Docs" });
+    t.tick(5_000);
+    return t;
+  };
+  /** The user writes `text`; the chat shows what was sent as line `id`. */
+  const write = async (t: ReturnType<typeof setup>, text: string, id = "u1") => {
+    const sent = (await t.sendAsync("B1", text)) as string;
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id });
+    return sent;
+  };
+
+  it("a line the model assigns (confidence enough) is written into that card like an @card: the card's header goes to the bot, the turn is automatic, and the line folds behind a trace", async () => {
+    const ask = verdict({ action: "assign", card: "p-0001", confidence: 0.9 });
+    const t = withCards(ask);
+    const sent = await write(t, "部署那個好了嗎");
+    expect(sent).toBe(M.askText(t.book("B1").pins[0]!, "部署那個好了嗎"));
+    expect(sent).not.toContain(M.BRIEF);
+    const turn = t.book("B1").pins[0]!.thread[0]!;
+    expect(turn).toMatchObject({ q: "部署那個好了嗎", via: "auto", msgId: "u1" });
+    expect(t.book("B1").pins[1]!.thread).toEqual([]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces[0]).toMatchObject({ key: `mv-${turn.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", by: "bot" } });
+    // the bot's <pin-say> answers into the card, as for an @card
+    t.tag("B1", "pin-say", { id: "p-0001" }, "還沒好。");
+    expect(t.book("B1").pins[0]!.thread[0]!.a).toBe("還沒好。");
+  });
+
+  it("the model is asked once, with the cards and the newest chat lines as JSON data (no briefing or card header in them), and nothing is asked for a chat with no cards", async () => {
+    const ask = verdict({ action: "chat", confidence: 0.9 });
+    const t = withCards(ask);
+    t.chatLines.push({ role: "user", text: "早" }, { role: "bot", text: "早安" }, { role: "user", text: M.askText(t.book("B1").pins[1]!, "文件呢") }, { role: "user", text: M.withBriefing("嗨", "〔Pin 區現況〕\nx") }, { role: "bot", text: "<app_task_result task_id=\"t\">x</app_task_result>" });
+    await t.sendAsync("B1", "部署那個好了嗎");
+    expect(ask).toHaveBeenCalledTimes(1);
+    const prompt = (ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+    const data = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)) as { cards: { id: string }[]; recent: { who: string; text: string }[]; newLine: string };
+    expect(data.cards.map((card) => card.id)).toEqual(["p-0001", "p-0002"]);
+    expect(data.recent).toEqual([{ who: "user", text: "早" }, { who: "bot", text: "早安" }, { who: "user", text: "文件呢" }, { who: "user", text: "嗨" }]);
+    expect(data.newLine).toBe("部署那個好了嗎");
+    const empty = setup({}, ask);
+    expect(empty.send("B1", "嗨")).toBeUndefined();
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("low confidence, action chat, a card that does not exist, a wrong shape, a refusal and a model that fails all leave the line in the chat with the briefing (no move instruction), and write nothing", async () => {
+    const answers: unknown[] = [
+      { action: "assign", card: "p-0001", confidence: 0.5 }, { action: "chat", confidence: 1 }, { action: "assign", card: "p-0099", confidence: 1 },
+      { action: "assign", card: "constructor", confidence: 1 }, { action: "assign", card: "p-0001" }, "not json", { action: "delete", confidence: 1 }, null,
+    ];
+    for (const answer of answers) {
+      const t = withCards(verdict(answer));
+      const sent = (await t.sendAsync("B1", "部署那個好了嗎")) as string;
+      expect(M.stripBriefing(sent)).toBe("部署那個好了嗎");
+      expect(sent).toContain("p-0001「Deploy」");
+      expect(sent).not.toContain("move=");
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+      expect(t.book("B1").suggest).toBeUndefined();
+    }
+    const broken = withCards(async () => { throw new Error("timeout"); });
+    expect(M.hasBriefing((await broken.sendAsync("B1", "部署那個好了嗎")) as string)).toBe(true);
+    // no model call at all (this Botling has no claude CLI): the same
+    const none = withCards(null);
+    expect(M.hasBriefing(none.send("B1", "部署那個好了嗎") as string)).toBe(true);
+  });
+
+  it("@card and the 回覆到 chip still route by code first: the model is not asked", async () => {
+    const ask = verdict({ action: "assign", card: "p-0002", confidence: 1 });
+    const t = withCards(ask);
+    const sent = (await t.sendAsync("B1", "@Deploy 好了嗎")) as string;
+    expect(sent).toBe(M.askText(t.book("B1").pins[0]!, "好了嗎"));
+    expect(t.book("B1").pins[0]!.thread[0]!.via).toBe("at");
+    expect(ask).not.toHaveBeenCalled();
+    // a slash command and a 〔header〕 line are not asked either
+    expect(t.send("B1", "/陪讀 a.pdf")).toBeUndefined();
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  /** Lets the promises that are ready run (the hook's own steps are all promise steps). */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  /** An `ask` whose answers the test gives one by one (the calls it got are in `calls`). */
+  const manual = () => {
+    const answers: ((value: unknown) => void)[] = [];
+    const ask: Ask = vi.fn(() => new Promise((resolve) => { answers.push(resolve); }));
+    return { ask, answers, calls: () => (ask as ReturnType<typeof vi.fn>).mock.calls as [string, { engine: string; model: string; timeoutMs: number }][] };
+  };
+
+  it("a line that is too short is not asked: it goes to the chat at once", async () => {
+    const ask: Ask = vi.fn(async () => ({ action: "chat", confidence: 1 }));
+    const t = withCards(ask);
+    expect(M.hasBriefing(t.send("B1", "好") as string)).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("a second line sent while the first is being sorted waits for it: the lines are settled in the order they were sent (review S2)", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const order: string[] = [];
+    const first = t.sendAsync("B1", "部署那個好了嗎").then((sent) => { order.push("first"); return sent; });
+    await flush();
+    const second = t.sendAsync("B1", "再問一句").then((sent) => { order.push("second"); return sent; });
+    await flush();
+    expect(m.ask).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([]);
+    m.answers[0]!({ action: "assign", card: "p-0002", confidence: 0.99 });
+    await flush();
+    expect(order).toEqual(["first"]);
+    expect(await first).toBe(M.askText(t.book("B1").pins[1]!, "部署那個好了嗎"));
+    expect(m.ask).toHaveBeenCalledTimes(2);
+    m.answers[1]!({ action: "chat", confidence: 0.9 });
+    expect(M.hasBriefing((await second) as string)).toBe(true);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  it("a short line and an @card line sent behind a line being sorted wait too, and are written after it (no overtaking), then the queue is empty again", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const order: string[] = [];
+    const sends = [["部署那個好了嗎", "sorted"], ["好", "short"], ["@Deploy 好了嗎", "at"]] as const;
+    const results = sends.map(([text, name]) => t.sendAsync("B1", text).then((sent) => { order.push(name); return sent; }));
+    await flush();
+    expect(order).toEqual([]);
+    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 0]);
+    m.answers[0]!({ action: "assign", card: "p-0001", confidence: 0.99 });
+    await Promise.all(results);
+    expect(order).toEqual(["sorted", "short", "at"]);
+    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.via])).toEqual([["部署那個好了嗎", "auto"], ["好了嗎", "at"]]);
+    // nothing waits any more: a short line answers in the same call again
+    await flush();
+    expect(typeof t.send("B1", "好")).toBe("string");
+    expect(m.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("a line of another bot is not held up by this bot's line", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    t.call("pinMessage", { botId: "B2", messageId: "m1", text: "Other" });
+    t.tick(5_000);
+    const first = t.sendAsync("B1", "部署那個好了嗎");
+    await flush();
+    const other = (await t.sendAsync("B2", "好")) as string;
+    expect(M.hasBriefing(other)).toBe(true);
+    m.answers[0]!({ action: "chat", confidence: 1 });
+    await first;
+  });
+
+  it("an answer that comes after the deadline writes nothing: the core has sent the line as it is (review F1)", async () => {
+    for (const late of [{ action: "assign", card: "p-0001", confidence: 0.99 }, { action: "new", confidence: 0.99 }, { action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.99 }]) {
+      const m = manual();
+      const t = withCards(m.ask);
+      const sending = t.sendAsync("B1", "部署那個好了嗎");
+      await flush();
+      t.tick(C.SORT_DEADLINE_MS + 2_000);
+      m.answers[0]!(late);
+      const sent = (await sending) as string;
+      expect(M.stripBriefing(sent)).toBe("部署那個好了嗎");
+      expect(sent).not.toContain("move=");
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+      expect(t.book("B1").suggest).toBeUndefined();
+    }
+  });
+
+  it("a model that never answers is given up on at the deadline, well before the core's 5 s: the line goes plain with the briefing, and a late answer then writes nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = manual();
+      const t = withCards(m.ask);
+      let sent: string | false | undefined;
+      const sending = t.sendAsync("B1", "部署那個好了嗎").then((value) => { sent = value; });
+      await vi.advanceTimersByTimeAsync(C.SORT_DEADLINE_MS - 1);
+      expect(sent).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(2);
+      await sending;
+      expect(M.hasBriefing(sent as string)).toBe(true);
+      expect(C.SORT_DEADLINE_MS).toBeLessThan(5_000);
+      m.answers[0]!({ action: "assign", card: "p-0001", confidence: 1 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the model's own time limit is what is left of the line's deadline (the wait behind an earlier line counts), at most the setting; a line with next to nothing left is not asked", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = manual();
+      const t = withCards(m.ask);
+      // the injected clock moves first and the timers after it, so the numbers below are exact
+      const advance = async (ms: number) => { t.tick(ms); await vi.advanceTimersByTimeAsync(ms); };
+      const first = t.sendAsync("B1", "部署那個好了嗎");
+      await advance(1_000);
+      const second = t.sendAsync("B1", "再問一句");
+      await advance(3_001);
+      // the first was given up on at its 4 s; the second has 1 s of its own 4 s left less the 1 ms: the call gets what is left less the 300 ms margin
+      expect(M.hasBriefing((await first) as string)).toBe(true);
+      // (the first call was made after the injected clock had moved 1 s, so it had 3 s left less the margin)
+      expect(m.calls().map((call) => call[1].timeoutMs)).toEqual([2_700, 699]);
+      await advance(1_500);
+      expect(M.hasBriefing((await second) as string)).toBe(true);
+      // two lines sent together, the first never answered: the second has nothing left when the first is given up on, and is not asked
+      const third = t.sendAsync("B1", "第三句話");
+      const fourth = t.sendAsync("B1", "第四句話");
+      // let the third one's call go out with its full budget first (the clock would otherwise move before its steps run)
+      await advance(0);
+      expect(m.calls()).toHaveLength(3);
+      await advance(C.SORT_DEADLINE_MS + 1);
+      expect(M.hasBriefing((await third) as string)).toBe(true);
+      expect(M.hasBriefing((await fourth) as string)).toBe(true);
+      expect(m.calls()).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the sorter settings are read on every line: the model name and the time limit go to the call, the confidence is the bar, a change takes effect at once", async () => {
+    const ask = vi.fn(async (_prompt: string, _call: unknown) => ({ action: "assign", card: "p-0001", confidence: 0.8 }));
+    const t = withCards(ask);
+    await t.sendAsync("B1", "部署那個好了嗎");
+    expect(ask.mock.calls[0]![1]).toEqual({ engine: "claude", model: "claude-haiku-5-5", timeoutMs: 3_500 });
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    t.settings[C.SETTING.model] = "claude-sonnet-5-5";
+    t.settings[C.SETTING.timeoutMs] = 1_200;
+    t.settings[C.SETTING.confidence] = 0.9;
+    t.tick(10_000);
+    const sent = (await t.sendAsync("B1", "部署那個好了嗎，再問一次")) as string;
+    expect(ask.mock.calls[1]![1]).toEqual({ engine: "claude", model: "claude-sonnet-5-5", timeoutMs: 1_200 });
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    // a time limit set higher than the deadline allows is held to what fits under it
+    t.settings[C.SETTING.timeoutMs] = 60_000;
+    t.settings[C.SETTING.confidence] = 0.5;
+    t.tick(10_000);
+    await t.sendAsync("B1", "部署那個好了嗎，第三次");
+    expect(ask.mock.calls[2]![1]).toMatchObject({ timeoutMs: 3_500 });
+  });
+
+  it("off (the default, review R1): beforeSend answers in the same call with no promise, reads no chat, asks no model and queues nothing — also for a line sent while the setting was on and still being sorted before it was turned off", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    // nothing set at all: the manifest's default is false and the code treats anything but true as off
+    delete t.settings[C.SETTING.enabled];
+    const messages = t.api.chat.messages as ReturnType<typeof vi.fn>;
+    const reads = messages.mock.calls.length;
+    for (const text of ["部署那個好了嗎", "好", "@Deploy 好了嗎"]) {
+      const result = t.hooks[0]!({ bot: { id: "B1", name: "B1", role: "bot", awake: true }, text } as never);
+      expect(result instanceof Promise).toBe(false);
+    }
+    expect(m.ask).not.toHaveBeenCalled();
+    expect(messages.mock.calls.length).toBe(reads);
+    t.settings[C.SETTING.enabled] = false;
+    const plain = t.send("B1", "部署那個好了嗎") as string;
+    expect(M.stripBriefing(plain)).toBe("部署那個好了嗎");
+    expect(M.hasBriefing(plain)).toBe(true);
+    // the manifest says false too
+    const manifest = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as { ccb: { contributes: { settings: Record<string, { default: unknown }> } } };
+    expect(manifest.ccb.contributes.settings[C.SETTING.enabled]!.default).toBe(false);
+  });
+
+  it("an engine that is not wired: the model is not asked, the line carries the briefing at once", () => {
+    const ask: Ask = vi.fn(async () => ({ action: "assign", card: "p-0001", confidence: 1 }));
+    const t = withCards(ask);
+    t.settings[C.SETTING.engine] = "codex";
+    expect(M.hasBriefing(t.send("B1", "部署那個好了嗎") as string)).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+  });
+
+  it("the book is read again after the model answers: a card taken down meanwhile keeps the line in the chat", async () => {
+    let release: (value: unknown) => void = () => {};
+    const t = withCards(vi.fn(() => new Promise((resolve) => { release = resolve; })));
+    const sending = t.sendAsync("B1", "部署那個好了嗎");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    t.call("unpin", { botId: "B1", id: "p-0001" });
+    release({ action: "assign", card: "p-0001", confidence: 0.99 });
+    const sent = (await sending) as string;
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(sent).not.toContain("p-0001「Deploy」");
+    expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[]]);
+  });
+
+  it("what the model's answer means is decided on the book as it is after the wait (review P10): a merge whose card was taken down meanwhile is chat, not a suggestion", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const sending = t.sendAsync("B1", "Deploy 和 Docs 是同一件事");
+    await flush();
+    t.call("unpin", { botId: "B1", id: "p-0002" });
+    m.answers[0]!({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.99 });
+    expect(M.hasBriefing((await sending) as string)).toBe(true);
+    expect(t.book("B1").suggest).toBeUndefined();
+  });
+
+  it("an automatic turn can be taken back (移回聊天) or sent to another card (改到…), and the next verdict is told what the user corrected", async () => {
+    const t = withCards(verdict({ action: "assign", card: "p-0001", confidence: 0.9 }));
+    await write(t, "文件那個呢");
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0002" })).toEqual({ moved: "p-0002" });
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ rid, via: "auto", redirected: true });
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ moved: "chat" });
+    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("back");
+    const ask = verdict({ action: "chat", confidence: 1 });
+    const again = withCards(ask);
+    again.stored.set("pins:B1", { ...JSON.parse(JSON.stringify(again.stored.get("pins:B1"))), fixes: [{ text: "文件那個呢", from: "p-0001", to: "chat", at: 1 }] });
+    await again.sendAsync("B1", "文件那個呢");
+    const prompt = (ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+    expect(JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).corrected).toEqual([{ text: "文件那個呢", wasIn: "p-0001", belongsIn: "chat" }]);
+  });
+
+  it("\"new\" only suggests: the line stays in the chat, a tap makes the card, 不用 drops it, and the same line does not stack a second suggestion", async () => {
+    const t = withCards(verdict({ action: "new", confidence: 0.95 }));
+    const sent = (await t.sendAsync("B1", "幫我整理一下整個資料夾的舊報告")) as string;
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(t.book("B1").pins).toHaveLength(2);
+    await t.sendAsync("B1", "幫我整理一下整個資料夾的舊報告");
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.suggest).toHaveLength(1);
+    expect(view.suggest![0]).toMatchObject({ kind: "new", text: "幫我整理一下整個資料夾的舊報告" });
+    const id = view.suggest![0]!.id;
+    const made = t.call("acceptSuggest", { botId: "B1", id }) as { id: string };
+    expect(t.book("B1").pins.find((pin) => pin.id === made.id)).toMatchObject({ origin: "user", state: "run" });
+    expect(t.book("B1").suggest).toBeUndefined();
+    // a second tap of the same suggestion does nothing
+    expect(t.call("acceptSuggest", { botId: "B1", id })).toEqual({ unchanged: true });
+    expect(t.book("B1").pins).toHaveLength(3);
+    // turned down
+    await t.sendAsync("B1", "再來一個全新的大工作");
+    const second = (t.call("view", { botId: "B1" }) as M.BookView).suggest![0]!.id;
+    expect(t.call("dismissSuggest", { botId: "B1", id: second })).toEqual({ dismissed: true });
+    expect(t.book("B1").pins).toHaveLength(3);
+    expect((t.call("view", { botId: "B1" }) as M.BookView).suggest).toBeUndefined();
+  });
+
+  it("\"merge\" only suggests; the tap folds the second card into the first, and 釘回 of the folded card undoes it", async () => {
+    const t = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.9 }));
+    t.tag("B1", "pin-say", { id: "p-0002" }, "文件的回答");
+    await t.sendAsync("B1", "Deploy 和 Docs 其實是同一件事");
+    expect(t.book("B1").pins).toHaveLength(2);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.suggest![0]).toMatchObject({ kind: "merge", title: "Deploy", title2: "Docs" });
+    // two cards, each with a turn
+    const book = t.book("B1");
+    M.addTurn(book.pins[1]!, "r-docs", "文件進度", t.now(), "at");
+    t.stored.set("pins:B1", JSON.parse(JSON.stringify(book)));
+    expect(t.call("acceptSuggest", { botId: "B1", id: view.suggest![0]!.id })).toMatchObject({ merged: "p-0001", closed: "p-0002" });
+    const merged = t.book("B1");
+    expect(merged.pins.map((pin) => pin.id)).toEqual(["p-0001"]);
+    expect(merged.pins[0]!.thread.map((turn) => turn.rid)).toContain("r-docs");
+    expect((t.call("view", { botId: "B1" }) as M.BookView).closed).toMatchObject([{ id: "p-0002", title: "Docs", into: "Deploy" }]);
+    t.call("repin", { botId: "B1", id: "p-0002" });
+    const back = t.book("B1");
+    expect(back.pins.map((pin) => pin.id).sort()).toEqual(["p-0001", "p-0002"]);
+    expect(back.pins.find((pin) => pin.id === "p-0001")!.thread.map((turn) => turn.rid)).not.toContain("r-docs");
+    expect(back.pins.find((pin) => pin.id === "p-0002")!.thread.map((turn) => turn.rid)).toContain("r-docs");
+  });
+
+  it("a model's merge of a card with itself is only a chat line, and a merge suggestion whose card was taken down is gone from the strip and merges nothing", async () => {
+    const t = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0001", confidence: 1 }));
+    expect(M.hasBriefing((await t.sendAsync("B1", "合併這個")) as string)).toBe(true);
+    expect(t.book("B1").suggest).toBeUndefined();
+    const u = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 1 }));
+    await u.sendAsync("B1", "這兩個是同一件事");
+    const id = (u.call("view", { botId: "B1" }) as M.BookView).suggest![0]!.id;
+    u.call("unpin", { botId: "B1", id: "p-0002" });
+    expect((u.call("view", { botId: "B1" }) as M.BookView).suggest).toBeUndefined();
+    expect(u.call("acceptSuggest", { botId: "B1", id })).toEqual({ unchanged: true });
+    expect(u.book("B1").pins.map((pin) => pin.id)).toEqual(["p-0001"]);
+  });
+
+  it("suggestions are old after 30 minutes, and a stored suggestion with a bad shape is dropped on reading", () => {
+    const book = M.readBook({ seq: 2, pins: [], removed: [], suggest: [
+      { id: "s1", kind: "new", text: "ok", at: 1 }, { id: "../x", kind: "new", text: "bad id", at: 1 }, { id: "s2", kind: "merge", text: "m", card: "p-0001", card2: "p-0001", at: 1 },
+      { id: "s3", kind: "other", text: "t", at: 1 }, { id: "s4", kind: "new", text: "   ", at: 1 },
+    ] });
+    expect(book.suggest?.map((item) => item.id)).toEqual(["s1"]);
+    expect(M.liveSuggest(book, 1 + M.SUGGEST_MS - 1)).toHaveLength(1);
+    expect(M.liveSuggest(book, 1 + M.SUGGEST_MS)).toHaveLength(0);
   });
 });

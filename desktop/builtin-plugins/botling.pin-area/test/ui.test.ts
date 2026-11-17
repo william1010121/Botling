@@ -745,6 +745,108 @@ describe("a line the bot put into a card, in the card's thread", () => {
   });
 });
 
+describe("what a worker said, in the card's thread and as a trace in the chat", () => {
+  const report = (over: Partial<import("../src/model").Turn> = {}) => ({ rid: "w1", q: "", a: "完整報告\n第二行", qAt: clock, postedAt: null, seenAt: null, aAt: clock, via: "worker" as const, worker: "t-1", wkind: "final" as const, ...over });
+
+  it("shows the whole report as the worker's own words (labelled by what it is), and a 移回聊天 only once the bot's reply was folded", async () => {
+    ui.update("B1", view(pin("p-0001", { thread: [report(), report({ rid: "w2", wkind: "question", a: "用 A 還是 B？" }), report({ rid: "w3", wkind: "failed", a: "壞了", msgId: "m1" })] })));
+    ui.open("p-0001");
+    const bubbles = [...panel()!.querySelectorAll<HTMLElement>(".pt-worker")];
+    expect(bubbles.map((node) => node.querySelector(".pt-bubble")!.textContent)).toEqual(["完整報告\n第二行", "用 A 還是 B？", "壞了"]);
+    expect(bubbles.map((node) => node.querySelector(".pt-receipt")!.textContent!.split(" · ")[0])).toEqual(["worker 回報", "worker 提問", "worker 沒做完"]);
+    expect(bubbles.map((node) => node.querySelectorAll(".pt-mv-act").length)).toEqual([0, 0, 1]);
+    bubbles[2]!.querySelector<HTMLButtonElement>(".pt-mv-act")!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "w3" }]]);
+    await flush();
+  });
+
+  it("the trace of a worker's report says where the full words are, and offers only 移回聊天 (no other card to move it to)", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
+    ui.trace(root, { kind: "moved", rid: "w1", pin: "p-0001", title: "Title p-0001", q: "完整報告", by: "bot", worker: true });
+    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("worker 回報「完整報告」→ 完整內容在「Title p-0001」的卡片");
+    expect([...root.querySelectorAll(".pt-mv-act")].map((node) => node.textContent)).toEqual(["移回聊天"]);
+  });
+});
+
+describe("a card that may be outdated, and a card the app put away", () => {
+  it("a stale card says 可能已過時 on its row and in its open card; one that is not does not", () => {
+    ui.update("B1", view(pin("p-0001", { stale: true }), pin("p-0002")));
+    expect(rows().map((row) => row.querySelector(".pt-stale")?.textContent ?? null)).toEqual(["可能已過時", null]);
+    ui.open("p-0001");
+    expect(panel()!.querySelector<HTMLElement>(".pt-stale")!.hidden).toBe(false);
+    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
+    expect(panel()!.querySelector<HTMLElement>(".pt-stale")!.hidden).toBe(true);
+  });
+
+  it("a card put away by itself in the last day is offered back with 釘回 (also when it was the only card); a malformed or old entry is not drawn", async () => {
+    const hidden = () => top.querySelector<HTMLElement>(".pt-strip")!.hidden;
+    const lines = () => [...top.querySelectorAll<HTMLElement>(".pt-closed-line")];
+    const closed = [
+      { id: "p-0007", title: "做完的卡", at: clock - 3_600_000 },
+      { id: "p-0008", title: "太舊", at: clock - 25 * 3_600_000 },
+      { id: "../x", title: "壞 id", at: clock },
+      { id: "p-0009", title: 5, at: clock },
+      null,
+    ] as unknown as { id: string; title: string; at: number }[];
+    ui.update("B1", { ...view(), closed });
+    expect(hidden()).toBe(false);
+    expect(lines().map((line) => line.querySelector(".pt-toast-text")!.textContent)).toEqual(["「做完的卡」完成超過 1 小時，已自動收起"]);
+    lines()[0]!.querySelector<HTMLButtonElement>("button")!.click();
+    lines()[0]!.querySelector<HTMLButtonElement>("button")!.click(); // a double tap asks once
+    expect(call.mock.calls.filter(([method]) => method === "repin")).toEqual([["repin", { botId: "B1", id: "p-0007" }]]);
+    await flush();
+    ui.update("B1", view(pin("p-0007", { state: "done" })));
+    expect(lines()).toHaveLength(0);
+    ui.update("B1", view());
+    expect(hidden()).toBe(true);
+  });
+});
+
+describe("what the app only suggests, and a merge put away", () => {
+  const hidden = () => top.querySelector<HTMLElement>(".pt-strip")!.hidden;
+  const lines = () => [...top.querySelectorAll<HTMLElement>(".pt-suggest-line")];
+  const buttons = (line: HTMLElement) => [...line.querySelectorAll<HTMLButtonElement>("button")];
+
+  it("a suggestion is a line with two buttons (also with no card on the strip); a malformed one is not drawn, and only two show", () => {
+    const suggest = [
+      { id: "s1", kind: "new", text: "整理舊報告" }, { id: "s2", kind: "merge", text: "同一件", title: "Deploy", title2: "Docs" },
+      { id: "../x", kind: "new", text: "壞 id" }, { id: "s3", kind: "other", text: "x" }, { id: "s4", kind: "new", text: 5 }, null,
+    ] as unknown as { id: string; kind: "new"; text: string }[];
+    ui.update("B1", { ...view(), suggest });
+    expect(hidden()).toBe(false);
+    expect(lines().map((line) => line.querySelector(".pt-toast-text")!.textContent)).toEqual(["要把「整理舊報告」做成新卡片嗎？", "「Deploy」和「Docs」好像是同一件事，要合併嗎？"]);
+    expect(lines().map((line) => buttons(line).map((button) => button.textContent))).toEqual([["建立卡片", "不用"], ["合併", "不用"]]);
+    ui.update("B1", view());
+    expect(hidden()).toBe(true);
+  });
+
+  it("a tap asks the program part once (a double tap too), a new card opens, and 不用 only dismisses", async () => {
+    call.mockClear();
+    call.mockImplementation(async (method: string) => (method === "acceptSuggest" ? { id: "p-0005" } : {}));
+    try {
+      ui.update("B1", { ...view(pin("p-0005")), suggest: [{ id: "s1", kind: "new", text: "整理舊報告" }, { id: "s2", kind: "merge", text: "同一件", title: "A", title2: "B" }] });
+      const [make, no] = buttons(lines()[0]!);
+      make!.click();
+      make!.click();
+      expect(call.mock.calls.filter(([method]) => method === "acceptSuggest")).toEqual([["acceptSuggest", { botId: "B1", id: "s1" }]]);
+      await flush();
+      expect(panel()?.dataset.pin).toBe("p-0005");
+      buttons(lines()[1]!)[1]!.click();
+      expect(call.mock.calls.at(-1)).toEqual(["dismissSuggest", { botId: "B1", id: "s2" }]);
+      expect(no).toBeTruthy();
+    } finally {
+      call.mockImplementation(async (method: string) => { if (failing.has(method)) throw new Error(`${method} failed`); return {}; });
+    }
+  });
+
+  it("a card merged into another is offered back (釘回) with where it went", () => {
+    ui.update("B1", { ...view(pin("p-0001")), closed: [{ id: "p-0002", title: "Docs", at: clock - 1_000, into: "Deploy" }] });
+    expect([...top.querySelectorAll(".pt-closed-line .pt-toast-text")].map((node) => node.textContent)).toEqual(["「Docs」已併入「Deploy」"]);
+  });
+});
+
 describe("「你不在時」: the digest above the strip", () => {
   const H = 3_600_000;
   beforeEach(() => { clock = 20_000_000; });
