@@ -66,6 +66,19 @@ describe("the plugin's name reaches the world's workers() check", () => {
   });
 });
 
+describe("pickUp asks the world about the plugin that started the worker", () => {
+  it("a worker that is still open is looked up with its own plugin name (review: mutant M5 survived without this)", async () => {
+    const asked: Array<[string, string | undefined]> = [];
+    const port: WorkerPort = { id: "b1", start: async () => ({ task_id: "T1", run: 1 }), send: async () => ({ ok: true, how: "steered", run: 1 }), stop: async () => true, look: () => ({ run: 1, running: true, status: "running", report: "" }) };
+    const world: OrchestrationWorld = { granted: () => true, workers: (bot, plugin) => { asked.push([bot, plugin]); return port; }, made: () => true, quota: () => ({ atOnce: 4 }), specWriters: () => ["opus"] };
+    const workers = new PluginWorkers({ world, facts: () => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: false }), ask: async () => ({ index: 0 }), tell: () => {}, warn: () => {} });
+    await workers.start("p", { bot: "b1", instructions: "x" });
+    asked.length = 0;
+    workers.pickUp();
+    expect(asked).toEqual([["b1", "p"]]);
+  });
+});
+
 describe("F6: a worker the bot starts after a plugin's message goes through the checks of workers.start", () => {
   it("is refused without the permission (not declared, or not granted), and the handoff never runs", async () => {
     for (const options of [{ permissions: ["exec", "files", "bots"] }, { granted: false }]) {
