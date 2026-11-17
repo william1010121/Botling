@@ -283,6 +283,44 @@ describe("§11.3 apply at the owner, branch by branch", () => {
       expect(await h.send(choose(4))).toMatchObject({ message: { outcome: { reason: "changed" } } });
     });
 
+    // A component card (`<show name=… command=…>`) is a plain line, not a `cards` row (only buttons, questions and approvals are);
+    // its "Allow and run" sends component.approve with the line's id, which used to be refused as "card … is closed" (eeg, 2026-11-18).
+    describe("component.approve on a component card (a line with no `cards` row)", () => {
+      const approve = (n: number, messageId: string, basis?: { logId: string; seq: number }): CmdBody =>
+        ({ slot: slot(n), floor: n, inc: "inc-00000001", cmd: { type: "component.approve", botId: "b1", messageId, index: 0, command: "python3 s.py", folder: "/p" }, ...(basis ? { basis } : {}) } as CmdBody);
+      const line = (h: Harness, id: string) => h.db.exec(`INSERT INTO messages (botId, msgId, rev, seq, body) VALUES ('b1', '${id}', 1, 1, '{}')`);
+
+      it("a line that exists (no card row) is approved; with a basis too, since there is no revision to compare", async () => {
+        const h = harness();
+        line(h, "c1");
+        expect(await h.send(approve(1, "c1"))).toMatchObject({ message: { outcome: { kind: "applied" } } });
+        expect(await h.send(approve(2, "c1", { logId: "log-botb1-1", seq: 3 }))).toMatchObject({ message: { outcome: { kind: "applied" } } });
+        expect(h.applied).toEqual([1, 2]);
+      });
+
+      it("a line that does not exist is still refused{changed}; so is one whose card row is closed or newer than the basis", async () => {
+        const h = harness();
+        expect(await h.send(approve(1, "gone"))).toMatchObject({ message: { outcome: { reason: "changed", detail: "card gone is closed" } } });
+        line(h, "q1");
+        h.db.exec("INSERT INTO cards (botId, cardId, rev, state, body) VALUES ('b1', 'q1', 7, 'closed', '{}')");
+        expect(await h.send(approve(2, "q1"))).toMatchObject({ message: { outcome: { reason: "changed" } } });
+        h.db.exec("UPDATE cards SET state = 'open'");
+        expect(await h.send(approve(3, "q1", { logId: "log-botb1-1", seq: 6 }))).toMatchObject({ message: { outcome: { reason: "changed", detail: "card q1 has a newer revision" } } });
+        expect(await h.send(approve(4, "q1", { logId: "log-botb1-1", seq: 7 }))).toMatchObject({ message: { outcome: { kind: "applied" } } });
+      });
+
+      it("only component.approve gets this: an answer (chat.choose) to a line with no card row is still refused", async () => {
+        const h = harness();
+        line(h, "q1");
+        expect(await h.send(choose(1))).toMatchObject({ message: { outcome: { reason: "changed" } } });
+      });
+
+      it("a reader that cannot tell whether the line exists refuses (fail closed)", async () => {
+        const h = harness({ basis: reader({ card: null }) });
+        expect(await h.send(approve(1, "c1"))).toMatchObject({ message: { outcome: { reason: "changed" } } });
+      });
+    });
+
     it("any other command with a basis of a retired logId → refused{changed}; the current logId → applied", async () => {
       const h = harness();
       expect(await h.send(react(1, { basis: { logId: "log-botb1-0", seq: 1 } }))).toMatchObject({ message: { outcome: { reason: "changed" } } });
