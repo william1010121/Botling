@@ -26,6 +26,13 @@ export interface PluginSetting {
   hidden?: boolean;
 }
 
+/**
+ * `contributes.componentTokens`: CSS variables this plugin sets in every component frame (Web/src/component-tokens.ts), chosen by one of
+ * its own settings: `sets[<the setting's value>]` is the token set in effect (names `--ccb-…`, values short CSS values); a value with
+ * no set adds nothing. The core ships none of its own.
+ */
+export interface PluginComponentTokens { setting: string; sets: Record<string, Record<string, string>> }
+
 export interface PluginCommand { id: string; title: string; key?: string }
 export interface PluginPanel { id: string; title: string; icon?: string }
 
@@ -56,6 +63,8 @@ export interface PluginManifest {
       settings?: Record<string, PluginSetting>;
       /** A folder of components (`<name>/template.html` and `about.md`). */
       components?: string;
+      /** CSS variables pushed into every component frame, by one of this plugin's settings (`PluginComponentTokens`). */
+      componentTokens?: PluginComponentTokens;
       /** Pages drawn by the web part (`ccb.panels.register`). */
       panels?: PluginPanel[];
     };
@@ -157,6 +166,17 @@ function decodeManifest(value: unknown): PluginManifest {
           if (setting.hidden != null) { if (typeof setting.hidden !== "boolean") throw new DecodeError(`${at([...p, "hidden"])} has the wrong type`); out.hidden = setting.hidden; }
           contributes.settings[name] = out;
         }
+      }
+      if (c.componentTokens != null) {
+        const p = [...path, "componentTokens"];
+        const given = dict(c.componentTokens, p);
+        const sets: Record<string, Record<string, string>> = {};
+        for (const [value, raw] of Object.entries(dict(need(given, "sets", p), [...p, "sets"]))) {
+          const set = dict(raw, [...p, "sets", value]);
+          // A number is spelled as written (1.4); the names and values are checked where they are used (`cleanTokens`).
+          sets[value] = Object.fromEntries(Object.entries(set).map(([name, token]) => [name, typeof token === "number" && Number.isFinite(token) ? String(token) : string(token, [...p, "sets", value, name])]));
+        }
+        contributes.componentTokens = { setting: string(need(given, "setting", p), [...p, "setting"]), sets };
       }
       const components = optString(c, "components", path);
       if (components !== undefined) contributes.components = components;

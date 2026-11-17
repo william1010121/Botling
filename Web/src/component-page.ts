@@ -1,6 +1,7 @@
 import { sourceSnapshotScript } from "./source-snapshot";
 import { shared } from "./contract";
 import { imeGuardScript } from "./ime";
+import { componentTokensCss, tokenListenerScript } from "./component-tokens";
 import { kitV1 } from "../kit/generated/kit-v1";
 import type { ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
@@ -63,6 +64,8 @@ import type { ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
  * a Zhuyin or Pinyin candidate never reaches the template's keydown/keypress handlers or submits
  * its form, so a template's "send on Enter" is safe without checking anything itself.
  *
+ * Tokens a plugin pushed (`component-tokens.ts`) come as `<style id="ccb-tokens">:root{…}</style>` right after that style, with a
+ * listener that takes later changes from the parent; with none the page is byte for byte what it was.
  * A template with `<meta name="ccb-kit" content="1">` also gets the component kit (Web/kit,
  * README.md there): its text right after the ccb runtime, in <head>, and `<html data-theme="dark">`
  * for its tokens. A template without that meta gets exactly the page it got before the kit.
@@ -70,12 +73,15 @@ import type { ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
   const kit = kitScript(template);
+  // The tokens plugins push (component-tokens.ts): none, and the page is what it was before they existed.
+  const tokenCss = componentTokensCss();
+  const tokens = tokenCss ? `<style id="ccb-tokens">${tokenCss}</style><script>${tokenListenerScript}</script>` : "";
   return `<!doctype html><html${kit ? ` data-theme="${kitTheme}"` : ""} data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
 #ccb-root{container-type:inline-size;container-name:ccb}
 html[data-surface="board"] #ccb-root{height:100%}
 html[data-fill],html[data-fill] body,html[data-fill] #ccb-root{height:100%}html[data-fill] #ccb-root{container-type:size}
-html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>
+html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>${tokens}
 <script>
 ${sourceSnapshotScript}
 // First of all: an input method's Return (Zhuyin, Pinyin) never reaches the template's handlers.
@@ -420,7 +426,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbImages?: Record<string, string> };
+export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbImages?: Record<string, string>; ccbBuild?: () => string; ccbTokens?: boolean };
 
 /** What a frame's `ccb.setStatus(...)` is told to: `{clear}` or `{text, tone}` as the frame sent them. */
 export type StatusHandler = (message: { clear?: unknown; text?: unknown; tone?: unknown }) => void;

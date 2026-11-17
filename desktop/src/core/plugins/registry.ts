@@ -14,6 +14,7 @@ import { dirname, extname, join, normalize, relative, resolve, sep } from "node:
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, diskFolder, loadPlugin, presentNameWarning, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { Contribution } from "./contributions";
+import { cleanTokens } from "../../../../Web/src/component-tokens";
 import { ContributionKernel } from "./kernel-list";
 import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
@@ -417,6 +418,22 @@ export class PluginRegistry {
         ...(plugin.builtIn ? { appDataDir: dirname(dataRoot) } : {}),
       }];
     });
+  }
+
+  /**
+   * The component tokens in effect (`contributes.componentTokens`): for each plugin that is on and not broken, the set its own setting
+   * chooses, cleaned (Web/src/component-tokens.ts), merged in plugin-name order (the later name wins a clash). `{}` when no plugin gives any.
+   */
+  componentTokens(): Record<string, string> {
+    const merged: Record<string, string> = {};
+    for (const plugin of [...this.plugins].sort((a, b) => (a.manifest.name < b.manifest.name ? -1 : a.manifest.name > b.manifest.name ? 1 : 0))) {
+      const tokens = plugin.manifest.ccb?.contributes?.componentTokens;
+      if (!tokens || !plugin.enabled || plugin.failure) continue;
+      const chosen = this.resolvedSettings(plugin)[tokens.setting];
+      if (typeof chosen !== "string" || !Object.hasOwn(tokens.sets, chosen)) continue;
+      Object.assign(merged, cleanTokens(tokens.sets[chosen]));
+    }
+    return cleanTokens(merged);
   }
 
   /** The settings a page may see (never secrets: only whether each is set). */
