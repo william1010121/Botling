@@ -729,6 +729,7 @@ export class Plugins {
       // there, and a write there would count as told while nobody listening is the plugin (the report would be lost).
       tell: (plugin, event, data) => { const host = this.hostFor(plugin); return host.runs(plugin) && host.deliver(event, data); },
       log: (line) => this.options.world.log(line),
+      warn: (_plugin, text) => this.options.world.notice(text),
       file: { read: () => { try { return readFileSync(file, "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; } }, write: (text) => writeFileAtomic(file, text) },
     });
   }

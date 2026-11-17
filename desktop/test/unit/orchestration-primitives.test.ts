@@ -49,12 +49,12 @@ async function setup(dir: string, withWorld = true) {
   const workers = fakeWorkers();
   const options: Setup = { grants: new Set(), quota: {}, specWriters: ["opus"] };
   const questions: { question: AppQuestion; answer: (answer: AppAnswer) => void }[] = [];
-  const sentToUser: string[] = [];
+  const sentToUser: string[] = [], notices: string[] = [];
   const world = {
     bots: () => [{ id: "main", name: "Main bot", role: "main", awake: true }],
     send: (_bot: string, text: string) => { sentToUser.push(text); return { messageId: "M1" }; },
     ask: (question: AppQuestion) => new Promise<AppAnswer>((resolve) => questions.push({ question, answer: resolve })),
-    notice: () => {}, interrupt: async () => null, openPanel: () => {}, appSettings: () => ({}), shortcutOverrides: () => ({}),
+    notice: (text: string) => { notices.push(text); }, interrupt: async () => null, openPanel: () => {}, appSettings: () => ({}), shortcutOverrides: () => ({}),
     commandApproval: () => null, approveCommand: () => false, commandRun: () => null, component: () => null, imageUrls: () => null,
     createBot: () => { throw new Error("not here"); }, addRoutine: () => "added", changed: () => {}, broken: () => {}, log: () => {},
     workspace: {}, workspaceWatch: () => {},
@@ -103,7 +103,7 @@ async function setup(dir: string, withWorld = true) {
   };
   const tell = (method: string, params: unknown) => line({ method, params });
   const reports = () => sent.filter((m) => m.method === "event" && m.params.name === "workerReport").map((m) => m.params.data);
-  return { plugins, ask, tell, reports, options, questions, sentToUser, ...workers };
+  return { plugins, ask, tell, reports, options, questions, sentToUser, notices, ...workers };
 }
 
 const start = (name: string, extra: Record<string, unknown> = {}) => ({ plugin: name, bot: "main", instructions: "Check the build", name: "Build check", ...extra });
@@ -171,28 +171,48 @@ describe("a worker a plugin starts", () => {
     expect(t.log.stopped).toEqual(["T1"]);
   });
 
-  it("is refused past the quota: at once and in a day, never queued, a refused one takes none, a second cancel gives nothing back twice", async () => {
+  it("is never refused past 4 at once or 40 a day (no cap since 2026-11-17), and warns nothing under the defaults' thresholds (8 at once, 60 a day)", async () => {
+    const dir = tempDir("orch-prim");
+    plugin(dir, "needy", ALL, "builtin");
+    const t = await setup(dir);
+    t.options.grants.add("needy");
+    // Eight asks at once (the old cap was 4): all start, and 8 is not more than 8, so nobody is warned.
+    const eight = await Promise.allSettled(Array.from({ length: 8 }, () => t.ask("workers.start", start("needy"))));
+    expect(eight.every((answer) => answer.status === "fulfilled")).toBe(true);
+    expect(t.log.started).toHaveLength(8);
+    expect(t.notices).toEqual([]);
+    // 45 more in the same day (the old cap was 40 a day): every one starts, one at a time; 53 is not more than 60.
+    for (let i = 0; i < 45; i++) await t.ask("workers.start", start("needy"));
+    expect(t.log.started).toHaveLength(53);
+    // The ninth at work crossed 8 at once: one notice for it, not one per start after.
+    expect(t.notices).toHaveLength(1);
+    expect(t.notices[0]).toMatch(/9 workers at work at once \(more than 8\)/);
+  });
+
+  it("warns once per crossing, at once and in a day, with the thresholds from settings; the starts that cross still succeed, a cancel twice gives nothing back twice", async () => {
     const dir = tempDir("orch-prim");
     plugin(dir, "needy", ALL, "builtin");
     const t = await setup(dir);
     t.options.grants.add("needy");
     t.options.quota = { atOnce: 3, perDay: 5 };
-    // Eight asks at once: exactly three are started (the room is taken before the first await).
+    // Eight asks at once: all eight start (the place is counted before the first await); the 4th crosses 3 at once, the 6th crosses 5 a day.
     const answers = await Promise.allSettled(Array.from({ length: 8 }, () => t.ask("workers.start", start("needy"))));
-    expect(answers.filter((answer) => answer.status === "fulfilled")).toHaveLength(3);
-    expect(answers.filter((answer): answer is PromiseRejectedResult => answer.status === "rejected").every((answer) => /3 workers at work/.test(answer.reason.message))).toBe(true);
-    expect(t.log.started).toHaveLength(3);
-    // One cancelled twice frees one place, not two.
+    expect(answers.every((answer) => answer.status === "fulfilled")).toBe(true);
+    expect(t.log.started).toHaveLength(8);
+    expect(t.notices).toHaveLength(2);
+    expect(t.notices[0]).toMatch(/4 workers at work at once \(more than 3\)/);
+    expect(t.notices[1]).toMatch(/6 workers in the last 24 hours \(more than 5\)/);
+    // Still over: more starts say nothing new.
+    await t.ask("workers.start", start("needy"));
+    expect(t.notices).toHaveLength(2);
+    // One cancelled twice frees one place, not two: 9 at work, 8 after the cancel; still over 3, no new notice until it dips to 3 and rises again.
     await t.ask("workers.cancel", { plugin: "needy", taskId: "T1" });
     await t.ask("workers.cancel", { plugin: "needy", taskId: "T1" });
+    for (const id of ["T2", "T3", "T4", "T5", "T6"]) await t.ask("workers.cancel", { plugin: "needy", taskId: id });
+    // 3 at work (T7, T8, T9): not past 3. The next start makes 4: a new crossing, a new notice (the day's was told once and stays told).
     await t.ask("workers.start", start("needy"));
-    await expect(t.ask("workers.start", start("needy"))).rejects.toThrow("3 workers at work");
-    // The day's count: T1-T3, the one above and one more make five; then no more, though places are free.
-    await t.ask("workers.cancel", { plugin: "needy", taskId: "T2" });
-    await t.ask("workers.start", start("needy"));
-    await t.ask("workers.cancel", { plugin: "needy", taskId: "T3" });
-    await expect(t.ask("workers.start", start("needy"))).rejects.toThrow("5 workers in the last 24 hours");
-    expect(t.log.started).toHaveLength(5);
+    expect(t.notices).toHaveLength(3);
+    expect(t.notices[2]).toMatch(/4 workers at work at once/);
   });
 
   it("gives its place back when it could not be started", async () => {

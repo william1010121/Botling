@@ -167,15 +167,16 @@ function fakeCore() {
 function book(core = fakeCore(), file: { text: string | null } = { text: null }, init: { present?: boolean; identity?: string; taken?: boolean; quota?: { atOnce?: number; perDay?: number }; write?: (n: number) => void } = {}) {
   let writes = 0;
   const state = { present: init.present ?? true, identity: init.identity ?? H1, taken: init.taken ?? true, quota: init.quota ?? {} };
-  const told: Record<string, unknown>[] = [];
+  const told: Record<string, unknown>[] = [], warns: string[] = [];
   const workers = new PluginWorkers({
     world: { granted: () => true, workers: () => (core.state.available ? core.port : "No such bot."), quota: () => state.quota },
     facts: (): PluginFacts | null => (state.present ? { name: "p", identity: state.identity, permissions: ALL, botWritten: false } : null),
     ask: async () => ({ index: 0 }),
     tell: (_plugin, _event, data) => { if (!state.taken) return false; told.push(data); },
+    warn: (_plugin, text) => { warns.push(text); },
     file: { read: () => file.text, write: (text) => { init.write?.(++writes); file.text = text; } },
   });
-  return { workers, core, file, state, told, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
+  return { workers, core, file, state, told, warns, rows: () => JSON.parse(file.text ?? "[]") as Record<string, unknown>[] };
 }
 const params = { bot: "main", instructions: "Do it", name: "n" };
 
@@ -221,18 +222,21 @@ describe("a plugin that goes hands its workers back to core", () => {
     expect(await t.workers.send("p", "T2", "more")).toEqual({ run: 1, how: "steered" });
   });
 
-  it("a worker the old version has handed back still counts at work for the plugin's name until it ends: a new hash does not get the room again", async () => {
+  it("a worker the old version has handed back still counts at work for the plugin's name until it ends: a new hash is warned about it, not refused", async () => {
     const t = book(undefined, undefined, { quota: { atOnce: 2 } });
     await t.workers.start("p", params);
     await t.workers.start("p", params);
     t.state.identity = H2;
     t.workers.reconcile();
-    await expect(t.workers.start("p", params)).rejects.toThrow("2 workers at work");
+    expect(t.warns).toEqual([]);
+    await t.workers.start("p", params); // the handed-back two still count: 3 at work, past 2
+    expect(t.warns).toHaveLength(1);
     t.core.ledger.get("T1")!.running = false;
     t.workers.ended("T1", 1, "completed", "done");
     expect(t.told).toEqual([]);
+    // T1's end dipped the count back to 2, so the next start crosses again (3 > 2) and warns again: once per crossing.
     await t.workers.start("p", params);
-    await expect(t.workers.start("p", params)).rejects.toThrow("2 workers at work");
+    expect(t.warns).toHaveLength(2);
   });
 
   it("a book older than this one (no hash on its rows) is handed back, not guessed to be the plugin's", async () => {
@@ -322,7 +326,9 @@ describe("after a restart a plugin's workers are picked up, once", () => {
     const file = { text: JSON.stringify([{ plugin: "p", bot: "main", task: null, at: Date.now(), open: true, reported: 0, stopped: false, hash: H1 }]) };
     const t = book(undefined, file, { quota: { atOnce: 1, perDay: 2 } });
     await t.workers.start("p", params);
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    expect(t.warns).toEqual([]); // the cut-off row is not at work (1 at work) and the day has 2, not more than 2
+    await t.workers.start("p", params);
+    expect(t.warns).toHaveLength(2); // 2 at work now, past 1, and the day's 3 is past 2: both crossings are told
   });
 });
 
@@ -373,8 +379,9 @@ describe("the book keeps the truth when things go wrong", () => {
     const t = book(undefined, undefined, { quota: { atOnce: 1 }, write: (n) => { if (n === 2) throw new Error("disk full"); } });
     expect(await t.workers.start("p", params)).toEqual({ taskId: "T1", run: 1 });
     expect(t.core.log.started).toHaveLength(1);
-    // Counted at work (the plugin cannot start a second one past its limit), though the row on disk has no task id yet.
-    await expect(t.workers.start("p", params)).rejects.toThrow("1 workers at work");
+    // Counted at work (a second one goes past the threshold and is warned about), though the row on disk has no task id yet.
+    await t.workers.start("p", params);
+    expect(t.warns).toHaveLength(1);
     // Its own: it can send, and that write keeps the row with its task id.
     expect(await t.workers.send("p", "T1", "go on")).toEqual({ run: 1, how: "steered" });
     expect(t.rows()[0]).toMatchObject({ task: "T1", open: true });

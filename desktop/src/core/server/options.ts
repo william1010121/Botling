@@ -175,7 +175,7 @@ export interface CoreOptions {
    * start workers at all; `installed` (2026-11-16): the user allowed it once, so a plugin a bot wrote needs no card per worker. Unset: nobody has it.
    */
   pluginCapability?: (name: string, capability: "orchestrate" | "installed") => boolean;
-  /** The quota of `workers.start` (workers at once, workers a day); unset: the defaults in orchestration/plugin-workers.ts. */
+  /** Where `workers.start` starts to warn (workers at once, workers a day; never a refusal); unset: WARN_AT in orchestration/plugin-workers.ts. */
   orchestrateQuota?: () => { atOnce?: number; perDay?: number };
   /** Botling 3's server only: what this plugin asks at its running hash, for the window's approval (`PluginView.asks`). */
   pluginAsks?: (name: string) => PluginView["asks"] | null;

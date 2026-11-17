@@ -19,7 +19,7 @@ type Handoff = { task_id: string; run: number };
 
 /** `PluginWorkers` over fakes. `written`: the plugin is one a bot wrote; `made`: the bots it made. */
 function book(options: { written?: boolean; installed?: boolean; made?: string[]; granted?: boolean; atOnce?: number; ask?: (q: AppQuestion) => Promise<AppAnswer | null>; permissions?: string[] } = {}) {
-  const log = { started: [] as Record<string, unknown>[], sent: [] as string[], cards: [] as string[] };
+  const log = { started: [] as Record<string, unknown>[], sent: [] as string[], cards: [] as string[], warns: [] as string[] };
   const port: WorkerPort = {
     id: "b1",
     start: async (args) => { log.started.push(args); return { task_id: `T${log.started.length}`, run: 1 }; },
@@ -39,6 +39,7 @@ function book(options: { written?: boolean; installed?: boolean; made?: string[]
     world, facts,
     ask: options.ask ?? (async (question) => { log.cards.push(question.text); return { index: 0 }; }),
     tell: () => {},
+    warn: (_plugin, text) => { log.warns.push(text); },
   });
   return { workers, log };
 }
@@ -78,20 +79,23 @@ describe("F6: a worker the bot starts after a plugin's message goes through the 
     }
   });
 
-  it("runs with fewer rights (the pluginStarted mark) and takes a place of the quota, given back when the worker ends", async () => {
-    const { workers } = book({ atOnce: 2 });
+  it("runs with fewer rights (the pluginStarted mark); a place past the warning threshold is only warned about (once), never refused", async () => {
+    const { workers, log } = book({ atOnce: 2 });
     const first = handoff(workers, { instructions: "one", name: "n", model: "sonnet", effort: "low", group: "g" });
     await expect(first.result).resolves.toMatchObject({ task_id: "H1" });
     expect(first.ran.args).toMatchObject({ instructions: "one", pluginStarted: true });
     await handoff(workers, { instructions: "two" }).result;
+    expect(log.warns).toEqual([]);
     const third = handoff(workers, { instructions: "three" });
-    await expect(third.result).rejects.toThrow(/2 workers at work/);
-    expect(third.ran.n).toBe(0);
-    workers.ended("H1", 1, "done", "report");
+    await expect(third.result).resolves.toMatchObject({ task_id: "H3" });
+    expect(third.ran.n).toBe(1);
+    expect(log.warns).toHaveLength(1);
+    expect(log.warns[0]).toMatch(/3 workers at work at once \(more than 2\)/);
     await expect(handoff(workers, { instructions: "four" }).result).resolves.toBeTruthy();
+    expect(log.warns).toHaveLength(1);
   });
 
-  it("gives the room back when the handoff fails", async () => {
+  it("gives the place back when the handoff fails", async () => {
     const { workers } = book({ atOnce: 1 });
     await expect(workers.admitHeard("p", "b1", "claude-process", { instructions: "x" }, async () => { throw new Error("no head"); })).rejects.toThrow("no head");
     await expect(handoff(workers, { instructions: "y" }).result).resolves.toBeTruthy();
