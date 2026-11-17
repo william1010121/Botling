@@ -239,7 +239,7 @@ describe("the chips above the input box", () => {
   });
 
   it("a chat that cannot pin (a subagent watched) shows no strip at all", () => {
-    setUp().update(state({ subagent: true }));
+    setUp().update(state({ subagent: { id: "sub" } as BoardState["subagent"] }));
     expect(document.querySelector<HTMLElement>(".pin-dock")!.hidden).toBe(true);
   });
 
