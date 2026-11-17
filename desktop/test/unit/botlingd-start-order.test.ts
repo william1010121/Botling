@@ -82,7 +82,7 @@ describe("M7-S84: Botlingd start / stop order", () => {
   });
 
   /** One start and stop on a fresh data folder, with the order of what happened. */
-  async function record(tag: string): Promise<{ start: string[]; stop: string[] }> {
+  async function record(tag: string): Promise<{ start: string[]; stop: string[]; timing: string[] }> {
     const root = testRoot(`start-order-${tag}`);
     cleanups.push(() => rmSync(root, { recursive: true, force: true }));
     const dataDir = join(root, "data");
@@ -128,12 +128,16 @@ describe("M7-S84: Botlingd start / stop order", () => {
       return (realListen as (...a: unknown[]) => net.Server).apply(this, args);
     } as unknown as typeof net.Server.prototype.listen);
 
+    const timing: string[] = [];
     const daemon = await Botlingd.start({
       env: botlingdEnv(dataDir),
       outDir: join(desktop, "out"),
       // "start: <phase> took N ms" / "stop: <step> took N ms" (phase-clock.ts) appear only when a phase is slow: not part of the order.
       // Nor are the "timing: <phase> N ms" lines of the startup phases (core/phase-marks.ts).
-      log: (line) => { if (!/^(start|stop): .+ took \d+ ms$/.test(line) && !line.startsWith("timing: ")) mark(`log ${line.split(/[:,(]/)[0]}`); },
+      log: (line) => {
+        if (line.startsWith("timing: ")) { timing.push(line); return; }
+        if (!/^(start|stop): .+ took \d+ ms$/.test(line)) mark(`log ${line.split(/[:,(]/)[0]}`);
+      },
     });
     mark(null);
     const start = events;
@@ -142,7 +146,7 @@ describe("M7-S84: Botlingd start / stop order", () => {
     mark(null);
     const stop = events;
     vi.restoreAllMocks();
-    return { start, stop };
+    return { start, stop, timing };
   }
 
   it("starts and stops in the same order every time", async () => {
@@ -151,5 +155,9 @@ describe("M7-S84: Botlingd start / stop order", () => {
     expect(runs[2]).toEqual(runs[0]);
     expect(runs[0].start).toEqual(EXPECTED_START);
     expect(runs[0].stop).toEqual(EXPECTED_STOP);
+    // The startup phases say where the time went (core/phase-marks.ts): startCore, startRuntime, startPush and the core itself.
+    for (const label of ["startCore: new Core", "startRuntime: runtime.start", "startPush: seed and reconcile", "core construct: constructor total", "core activate: activate total"]) {
+      expect(runs[0].timing.some((line) => line.startsWith(`timing: ${label}`)), label).toBe(true);
+    }
   }, 120_000);
 });
