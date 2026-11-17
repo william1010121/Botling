@@ -5,7 +5,7 @@ import type { BotlingApi } from "../../../../Web/host/src/api";
 import * as M from "./model";
 import * as D from "./digest";
 import * as C from "./classify";
-import { askHaiku, type Ask } from "./haiku";
+import { askModel, type Ask } from "./sorter-call";
 
 export const PLUGIN = "botling.pin-area";
 const INDEX = "pins:bots";
@@ -31,18 +31,21 @@ const botOf = (params: Params): string => {
 };
 const own = (attributes: Record<string, string>, name: string): string => (Object.hasOwn(attributes, name) ? attributes[name]! : "");
 
-/** The classifier's model call: the claude CLI as Botling starts it (null: this Botling has none, and plain lines stay in the chat). */
-const viaClaude = (api: BotlingApi): Ask | null =>
+/** The sorter's model call: the engine's CLI as Botling starts it (null: this Botling has none, and plain lines stay in the chat). The model comes with the call (a setting). */
+const viaCli = (api: BotlingApi): Ask | null =>
   typeof api.engines?.cli === "function"
-    ? async (prompt) => {
-        const cli = await api.engines.cli("claude");
-        if (!cli) throw new Error("no claude");
-        return askHaiku(cli, prompt);
+    ? async (prompt, call) => {
+        const cli = await api.engines.cli(call.engine);
+        if (!cli) throw new Error("no cli");
+        return askModel(cli, prompt, call);
       }
     : null;
 
+/** What the hook gives back for a line (the core sends this instead of the user's text; false: nothing is sent). */
+type Sent = string | false | undefined;
+
 /** `ask`: the model call for the lines of the user's no @card names (tests give a fake one; null: none, so no line is sorted). */
-export function activatePins(api: BotlingApi, expose: Expose, now: () => number = Date.now, ask: Ask | null = viaClaude(api)) {
+export function activatePins(api: BotlingApi, expose: Expose, now: () => number = Date.now, ask: Ask | null = viaCli(api)) {
   const load = (botId: string): M.Book => M.readBook(typeof api.storage?.get === "function" ? api.storage.get(keyOf(botId)) : null);
 
   // The bots that have a book (events of other bots cost nothing); kept in storage so a restart still hears the answers.
@@ -231,39 +234,74 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       return [];
     }
   };
-  /** Bots whose line is being sorted now: a second line meanwhile goes to the chat unsorted (the order of the user's lines is kept). */
-  const sorting = new Set<string>();
+  /** The line as it goes when nothing was done for it: the briefing carried with it (none: the text as it is). */
+  const plainLine = (botId: string, text: string): Sent => {
+    const brief = M.briefing(load(botId), now());
+    return brief ? M.withBriefing(text, brief) : undefined;
+  };
   /**
    * A plain line of a chat that has cards, asked of the small model (no tools): assign (written into the card like an @card, with an automatic turn the user can
    * take back), new or merge (only suggested; the user taps), or chat. Any failure, a slow answer or a low confidence leaves the line in the chat, with the briefing.
+   *
+   * The core gives a `beforeSend` hook 5 s and then sends the line as it is, so this has until `deadline` (4 s from the hook's start) for everything: a guard
+   * timer gives the plain line at the deadline, and every step after a wait checks the clock again, so an answer that comes late writes nothing (no orphan turn,
+   * no suggestion for a line the core already sent). The model's own time limit is what is left of the deadline, at most the setting's.
    */
-  const sortLine = async (botId: string, text: string): Promise<string | false | undefined> => {
-    sorting.add(botId);
-    const plain = (): string | undefined => {
-      const brief = M.briefing(load(botId), now());
-      return brief ? M.withBriefing(text, brief) : undefined;
-    };
-    try {
-      const book = load(botId);
-      const verdict = C.parseVerdict(await ask!(C.classifyPrompt(book, await recentLines(botId), text)));
-      // after the waits: the book as it is now decides (a card may be gone, the user may have written into it)
-      const fresh = load(botId);
-      const decision = C.decide(fresh, verdict);
-      if (decision.kind === "assign" && text.length <= M.MAX_ROUTED) {
-        const sent = writeInto(botId, decision.pin.id, text, "auto");
-        if (sent !== undefined) return sent;
-      } else if (decision.kind === "new" || decision.kind === "merge") {
-        const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text } : { kind: "merge", text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
-        if (made) save(botId, fresh);
+  const sortLine = (botId: string, text: string, settings: C.SorterSettings, deadline: number): Promise<Sent> => {
+    let over = false;
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    const alive = () => !over && now() < deadline;
+    const expired = new Promise<Sent>((resolve) => {
+      guard = setTimeout(() => { over = true; resolve(plainLine(botId, text)); }, Math.max(0, deadline - now()));
+      (guard as { unref?: () => void }).unref?.();
+    });
+    const run = async (): Promise<Sent> => {
+      try {
+        const book = load(botId);
+        const recent = await recentLines(botId);
+        const left = deadline - now();
+        if (!alive() || left < C.MIN_BUDGET_MS) return plainLine(botId, text);
+        const answer = await ask!(C.classifyPrompt(book, recent, text), { engine: settings.engine!, model: settings.model, timeoutMs: Math.min(settings.timeoutMs, left - 300) });
+        // after the waits: if the deadline passed the core has sent the line already, so nothing is written for it
+        if (!alive()) return plainLine(botId, text);
+        // the book as it is now decides (a card may be gone, the user may have written into it)
+        const fresh = load(botId);
+        const decision = C.decide(fresh, C.parseVerdict(answer), settings.confidence);
+        if (decision.kind === "assign" && text.length <= M.MAX_ROUTED) {
+          const sent = writeInto(botId, decision.pin.id, text, "auto");
+          if (sent !== undefined) return sent;
+        } else if (decision.kind === "new" || decision.kind === "merge") {
+          const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text } : { kind: "merge", text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
+          if (made) save(botId, fresh);
+        }
+        return plainLine(botId, text);
+      } catch (error) {
+        console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
+        return plainLine(botId, text);
       }
-      return plain();
-    } catch (error) {
-      console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
-      return plain();
-    } finally {
-      sorting.delete(botId);
-    }
+    };
+    return Promise.race([run(), expired]).finally(() => clearTimeout(guard));
   };
+  const readSetting = (key: string): unknown => (typeof api.settings?.get === "function" ? api.settings.get(key) : undefined);
+
+  /** What the hook does with a message: the @card or the 回覆到 chip is written into its card by code, a plain line is sorted (a promise), anything else carries the briefing. */
+  const handleLine = (message: { bot: { id: string }; text: string }, deadline: number): Sent | Promise<Sent> => {
+    const botId = message.bot.id;
+    sweepBook(botId);
+    const book = load(botId);
+    const hit = M.route(book, message.text);
+    if (!hit && M.briefable(message.text)) {
+      const brief = M.briefing(book, now());
+      if (!brief) return undefined;
+      const settings = ask ? C.sorterSettings(readSetting) : null;
+      if (!ask || !settings?.enabled || !settings.engine || message.text.trim().length < C.MIN_LINE) return M.withBriefing(message.text, brief);
+      return sortLine(botId, message.text, settings, deadline);
+    }
+    if (!hit || hit.rest.length > M.MAX_ROUTED) return;
+    return writeInto(botId, hit.pin.id, hit.rest, "at");
+  };
+  /** Each bot's lines in the order they were sent: a line behind one that is still being sorted waits for it (it has to be settled before this one is). */
+  const lineQueue = new Map<string, Promise<unknown>>();
 
   const subs = [
     // the bot's turn began: what was in the chat before it has been seen
@@ -405,17 +443,23 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.hooks.beforeSend((message) => {
       const botId = message.bot.id;
       if (!bots.has(botId)) return;
-      sweepBook(botId);
-      const book = load(botId);
-      const hit = M.route(book, message.text);
-      if (!hit && M.briefable(message.text)) {
-        const brief = M.briefing(book, now());
-        if (!brief) return undefined;
-        if (!ask || message.text.trim().length < C.MIN_LINE || sorting.has(botId)) return M.withBriefing(message.text, brief);
-        return sortLine(botId, message.text);
+      const deadline = now() + C.SORT_DEADLINE_MS;
+      const behind = lineQueue.get(botId);
+      let result: Sent | Promise<Sent>;
+      if (!behind) result = handleLine(message, deadline);
+      else {
+        // behind a line still being sorted: wait for it (it is settled within its own deadline, which is earlier than this one), then do what a first line does
+        let guard: ReturnType<typeof setTimeout> | undefined;
+        let over = false;
+        const expired = new Promise<Sent>((resolve) => { guard = setTimeout(() => { over = true; resolve(plainLine(botId, message.text)); }, Math.max(0, deadline - now())); (guard as { unref?: () => void }).unref?.(); });
+        // a line that waited past its deadline was sent as it is: nothing is written for it afterwards
+        result = Promise.race([behind.then(() => (over ? undefined : handleLine(message, deadline))), expired]).finally(() => clearTimeout(guard));
       }
-      if (!hit || hit.rest.length > M.MAX_ROUTED) return;
-      return writeInto(botId, hit.pin.id, hit.rest, "at");
+      if (!(result instanceof Promise)) return result;
+      const tail = result.then(() => undefined, () => undefined);
+      lineQueue.set(botId, tail);
+      void tail.then(() => { if (lineQueue.get(botId) === tail) lineQueue.delete(botId); });
+      return result;
     }),
   ];
 

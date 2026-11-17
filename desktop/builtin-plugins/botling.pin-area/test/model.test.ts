@@ -190,13 +190,15 @@ describe("the strip's limits", () => {
 
   it("keeps the last MAX_REMOVED removed cards for 釘回, puts one back with a handle that is free, and refuses when the strip is full", () => {
     const b = book();
-    const ids = ["a", "b", "c", "d"].map((title) => make(b, { title }).id);
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"].map((title) => make(b, { title }).id);
     for (const id of ids) M.remove(b, id, T0, "user");
-    expect(b.removed.map((entry) => entry.pin.title)).toEqual(["b", "c", "d"]);
-    const other = make(b, { title: "d" });
-    expect(M.restore(b, ids[3]!, T0)!.handle).toBe("d-2");
-    expect(other.handle).toBe("d");
-    expect(M.restore(b, ids[3]!, T0)).toBeNull();
+    expect(b.removed).toHaveLength(M.MAX_REMOVED);
+    M.remove(b, make(b, { title: "i" }).id, T0, "user");
+    expect(b.removed.map((entry) => entry.pin.title)).toEqual(["b", "c", "d", "e", "f", "g", "h", "i"]);
+    const other = make(b, { title: "h" });
+    expect(M.restore(b, ids[7]!, T0)!.handle).toBe("h-2");
+    expect(other.handle).toBe("h");
+    expect(M.restore(b, ids[7]!, T0)).toBeNull();
     for (let n = 0; n < M.MAX_PINS; n++) if (b.pins.length < M.MAX_PINS) make(b, { title: `x${n}` });
     expect(M.restore(b, ids[2]!, T0)).toBeNull();
   });
@@ -698,15 +700,15 @@ describe("a plain message the bot moves into a card", () => {
 });
 
 describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)", () => {
-  it("finds the open card by its id, then its title, key or handle (ignoring case and punctuation), then a title that contains the name; ties and nothing give null", () => {
+  it("finds the open card by its id, then its title, key or handle (ignoring case and punctuation) and nothing looser; ties and nothing give null", () => {
     const b = book();
     const a = make(b, { title: "Build 報告" });
     const c = make(b, { title: "Deploy staging", botKey: "deploy" });
     expect(M.cardForGroup(b, "p-0001")).toBe(a);
     expect(M.cardForGroup(b, "BUILD-報告")).toBe(a);
     expect(M.cardForGroup(b, "deploy")).toBe(c);
-    expect(M.cardForGroup(b, "deploy staging env")).toBe(c);
-    expect(M.cardForGroup(b, "報告")).toBeNull(); // too short to be a containment match
+    expect(M.cardForGroup(b, "deploy staging env")).toBeNull(); // no containment match
+    expect(M.cardForGroup(b, "報告")).toBeNull();
     expect(M.cardForGroup(b, "")).toBeNull();
     expect(M.cardForGroup(b, "something else")).toBeNull();
     const twin = make(b, { title: "Build 報告" });
@@ -716,6 +718,15 @@ describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)
     twin.state = "done";
     expect(M.cardForGroup(b, "build 報告")).toBeNull();
     expect(M.cardForGroup(b, "p-0001")).toBeNull();
+  });
+
+  it("(review S3) a job name that only shares a word with a card's title binds to no card, in either direction", () => {
+    const names = (title: string, group: string) => M.cardForGroup(M.readBook({ seq: 1, pins: [{ id: "p-0001", origin: "bot", title, handle: title, state: "run", status: "s", source: "bot", thread: [], updates: [], createdAt: 1, updatedAt: 1 }], removed: [] }), group);
+    expect(names("Build", "rebuild cache")).toBeNull();
+    expect(names("Review", "pin-area review")).toBeNull();
+    expect(names("測試報告", "寫測試報告的模板")).toBeNull();
+    expect(names("Deploy staging environment", "deploy")).toBeNull();
+    expect(names("Build", "build")?.id).toBe("p-0001");
   });
 
   it("puts a worker's words into the thread as one turn each (same words once), cut at MAX_REPORT, and reads them back", () => {
@@ -878,5 +889,40 @@ describe("cards that close or go stale by themselves (sweep, workerEnded, briefi
     const wait = M.readPin({ ...base, state: "wait", nudge: true, doneAt: "x" })!;
     expect([wait.nudge, wait.doneAt]).toEqual([undefined, undefined]);
     expect(M.readBook({ pins: [], removed: [{ pin: { ...base, state: "done" }, at: 3, by: "auto" }] }).removed[0]!.by).toBe("auto");
+  });
+});
+
+
+describe("cards put away keep their 釘回 (review S4)", () => {
+  const H = 3_600_000;
+  const done = (n: number) => ({ id: `p-000${n}`, origin: n === 1 ? "user" : "bot", title: `Job ${n}`, handle: `Job-${n}`, state: "done", status: "s", source: "bot", thread: [], updates: [], createdAt: 1, updatedAt: 1, doneAt: 1 });
+  it("one sweep that puts away four done cards (a user's among them) keeps all four for 釘回 and in the strip's closed list", () => {
+    const b = M.readBook({ seq: 4, pins: [1, 2, 3, 4].map(done), removed: [] });
+    const swept = M.sweep(b, 2 * H);
+    expect(swept.closed).toHaveLength(4);
+    expect(b.removed).toHaveLength(4);
+    expect(M.closedOf(b, 2 * H).map((item) => item.id)).toEqual(["p-0001", "p-0002", "p-0003", "p-0004"]);
+    expect(b.removed[0]).toMatchObject({ by: "auto", pin: { origin: "user" } });
+    for (const id of ["p-0001", "p-0002", "p-0003", "p-0004"]) expect(M.restore(b, id, 2 * H)).toBeTruthy();
+  });
+  it("over the limit a card the user took down goes before one the app put away by itself", () => {
+    const b = M.readBook({ seq: 0, pins: [], removed: [] });
+    for (let n = 0; n < M.MAX_REMOVED; n++) b.removed.push({ pin: M.readPin({ ...done(n + 1), id: `p-00${n + 1}0`, title: `T${n}` })!, at: T0, by: n === 0 ? "user" : "auto" });
+    b.pins.push(M.readPin({ ...done(9), state: "run" })!);
+    M.remove(b, "p-0009", T0 + 1, "user");
+    expect(b.removed).toHaveLength(M.MAX_REMOVED);
+    expect(b.removed.some((entry) => entry.pin.title === "T0")).toBe(false);
+    expect(b.removed.filter((entry) => entry.by === "auto")).toHaveLength(M.MAX_REMOVED - 1);
+    expect(b.removed.at(-1)!.pin.id).toBe("p-0009");
+  });
+  it("(review M15) a done card the bot marks done again, with other words, keeps the hour it began with: the sweep still puts it away on time", () => {
+    const b = book();
+    const pin = make(b, { title: "Job" });
+    M.applyUpdate(pin, { state: "done", status: "好了", source: "bot" }, T0);
+    expect(pin.doneAt).toBe(T0);
+    M.applyUpdate(pin, { state: "done", status: "好了，補充說明", source: "bot" }, T0 + 30 * 60_000);
+    expect(pin.doneAt).toBe(T0);
+    expect(M.sweep(b, T0 + 59 * 60_000).closed).toEqual([]);
+    expect(M.sweep(b, T0 + 61 * 60_000).closed).toEqual([pin.id]);
   });
 });

@@ -1,12 +1,58 @@
-// botling.pin-area, the pure part of the line classifier (Phase 4c): what the small model is asked about a plain line of the user's, how its answer is
-// read, and what the app does with it. No Botling API, no process, no clock: pins.ts asks (haiku.ts runs the model) and applies the decision.
-// Rules and limits: ../DESIGN.md "4c".
+// botling.pin-area, the pure part of the line sorter (Phase 4c): what the small model is asked about a plain line of the user's, how its answer is
+// read, what the app does with it, and the settings that say which model sorts and how sure it must be. No Botling API, no process, no clock: pins.ts asks
+// (sorter-call.ts runs the model) and applies the decision. Rules and limits: ../DESIGN.md "4c".
 import { clean, isId, oneLine, MAX_TITLE, type Book, type Pin } from "./model";
 
-/** The model that sorts the lines: small and fast (the user's send waits for it), and called with no tools. */
-export const CLASSIFIER_MODEL = "claude-haiku-5-5";
-/** Below this the line stays in the chat, whatever the model said it was. */
+/** The model that sorts the lines unless the setting names another: small and fast (the user's send waits for it), and called with no tools. */
+export const DEFAULT_SORTER_MODEL = "claude-haiku-5-5";
+/** Below this the line stays in the chat, whatever the model said it was (the setting moves it between CONFIDENCE_MIN and CONFIDENCE_MAX). */
 export const CONFIDENCE = 0.75;
+export const CONFIDENCE_MIN = 0.5;
+export const CONFIDENCE_MAX = 0.99;
+/**
+ * The whole sort (reading the chat, asking for the CLI, the model) must be over before the core gives up on a `beforeSend` hook (5 s,
+ * core/plugins/host-client.ts `DEFAULT_TIMING.hook`): after that the core has sent the line as it is, and nothing may be written for it.
+ */
+export const SORT_DEADLINE_MS = 4_000;
+/** The model's own time limit (the setting) stays inside the deadline, with room left for reading the chat and starting the CLI. */
+export const TIMEOUT_MIN_MS = 500;
+export const TIMEOUT_MAX_MS = 3_500;
+export const TIMEOUT_DEFAULT_MS = 3_500;
+/** With less time than this left (a line that waited behind another) the model is not asked. */
+export const MIN_BUDGET_MS = 600;
+
+/** The engines a sorter model can come from. Only claude is wired for now (a Codex one would follow catchup's `codexSummarizer`). */
+export type SorterEngine = "claude";
+/** This plugin's settings (package.json `contributes.settings`); read each time a line is sorted, so a change takes effect at once. */
+export const SETTING = {
+  enabled: "botling.pin-area.sorter.enabled",
+  engine: "botling.pin-area.sorter.engine",
+  model: "botling.pin-area.sorter.model",
+  confidence: "botling.pin-area.sorter.confidence",
+  timeoutMs: "botling.pin-area.sorter.timeoutMs",
+} as const;
+export interface SorterSettings { enabled: boolean; engine: SorterEngine | null; model: string; confidence: number; timeoutMs: number }
+/** A model name as it is passed to the CLI: letters, digits and . _ : - [ ], not starting with a dash (it must not read as a flag). */
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$/;
+/**
+ * The sorter settings, each read back to a value that is safe to use: off only when `enabled` is false; an engine that is not wired is `null` (the lines
+ * stay in the chat); a model name that is not a plain name, or a number that is not a number, falls back to its default; numbers are held to their range.
+ */
+export function sorterSettings(get: (key: string) => unknown): SorterSettings {
+  const read = (key: string): unknown => { try { return get(key); } catch { return undefined; } };
+  const engine = read(SETTING.engine);
+  const model = read(SETTING.model);
+  const confidence = read(SETTING.confidence);
+  const timeout = read(SETTING.timeoutMs);
+  const clamp = (value: unknown, min: number, max: number, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback);
+  return {
+    enabled: read(SETTING.enabled) !== false,
+    engine: engine === undefined || engine === null || engine === "" || engine === "claude" ? "claude" : null,
+    model: typeof model === "string" && MODEL_NAME.test(model.trim()) ? model.trim() : DEFAULT_SORTER_MODEL,
+    confidence: clamp(confidence, CONFIDENCE_MIN, CONFIDENCE_MAX, CONFIDENCE),
+    timeoutMs: Math.round(clamp(timeout, TIMEOUT_MIN_MS, TIMEOUT_MAX_MS, TIMEOUT_DEFAULT_MS)),
+  };
+}
 /** The newest lines of the chat the model reads with the new one, and how much of each. */
 export const RECENT_LINES = 6;
 export const RECENT_TEXT = 200;
@@ -72,12 +118,12 @@ export function parseVerdict(raw: unknown): Verdict | null {
   };
 }
 
-/** What the app does with a line: leave it in the chat, put it in a card, suggest a new card (the user taps), or suggest merging two (the user confirms). */
+/** What the app does with a line: leave it in the chat, put it in a card, suggest a new card (the user taps), or suggest merging two (the user confirms). `confidence`: the bar (the setting). */
 export type Decision = { kind: "chat" } | { kind: "assign"; pin: Pin } | { kind: "new" } | { kind: "merge"; keep: Pin; drop: Pin };
 
 /** The verdict against the book as it is now: a card it names must exist, and a low confidence is chat. Anything unclear stays in the chat. */
-export function decide(book: Book, verdict: Verdict | null): Decision {
-  if (!verdict || verdict.confidence < CONFIDENCE) return { kind: "chat" };
+export function decide(book: Book, verdict: Verdict | null, confidence = CONFIDENCE): Decision {
+  if (!verdict || verdict.confidence < confidence) return { kind: "chat" };
   const card = verdict.card ? book.pins.find((pin) => pin.id === verdict.card) : undefined;
   if (verdict.action === "assign") return card ? { kind: "assign", pin: card } : { kind: "chat" };
   if (verdict.action === "new") return { kind: "new" };

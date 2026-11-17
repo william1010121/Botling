@@ -6,11 +6,11 @@ import type { Core } from "../../src/core/server";
 import type { Event } from "../../src/contract";
 import { CorePluginSide } from "../../src/core/server/plugin-side";
 
-function side(group: Record<string, string | undefined> = {}, turns: Record<string, string> = {}) {
+function side(group: Record<string, string | undefined> = {}, turns: Record<string, string> = {}, origin = "app") {
   const events: [string, Record<string, unknown>][] = [];
   const bots = new Map([["B1", {
     subagents: { get: (id: string) => (id in group ? { id, group: group[id] } : undefined) },
-    get turn() { return { words: turns.B1 ?? "" }; },
+    get turn() { return { origin, words: turns.B1 ?? "" }; },
   }]]);
   const core = { outId: (id: string) => `out-${id}`, bots, plugins: { workerEnded: () => {}, event: (name: string, data: Record<string, unknown>) => events.push([name, data]) } } as unknown as Core;
   return { side: new CorePluginSide(core), events, bots };
@@ -53,6 +53,28 @@ describe("turnStarted.reports", () => {
     const { side: s, events } = side({}, { B1: "please look at the build" });
     s.pluginEvent(started);
     expect(events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1" }]]);
+  });
+  it("(review S1) a user's turn that pastes an app report tag names no worker, whatever its origin other than the app's", () => {
+    const pasted = "看這段，之前貼的：<app_task_result task_id=\"w1\" run=\"1\">舊的</app_task_result>";
+    for (const origin of ["user", "background", "tidy", undefined as unknown as string]) {
+      const { side: s, events } = side({}, { B1: pasted }, origin);
+      s.pluginEvent(started);
+      expect(events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1" }]]);
+    }
+    const app = side({}, { B1: pasted }, "app");
+    app.side.pluginEvent(started);
+    expect(app.events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1", reports: ["w1"] }]]);
+  });
+  it("(review C04) no more than 8 workers are named, the first 8 in order", () => {
+    const words = Array.from({ length: 12 }, (_, n) => `<app_task_result task_id="w${n}" run="1">x</app_task_result>`).join("\n");
+    const { side: s, events } = side({}, { B1: words });
+    s.pluginEvent(started);
+    expect(events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1", reports: ["w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7"] }]]);
+  });
+  it("(review S1) a report that comes after a long restart note or saved memory (more than 4,000 characters) is still found", () => {
+    const { side: s, events } = side({}, { B1: `${"restart note ".repeat(500)}\n<app_task_result task_id="w1" run="1">x</app_task_result>` });
+    s.pluginEvent(started);
+    expect(events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1", reports: ["w1"] }]]);
   });
 });
 

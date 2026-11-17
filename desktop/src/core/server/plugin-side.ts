@@ -69,10 +69,14 @@ export class CorePluginSide {
   /** The runs whose start was announced (`workerStarted`), so a repeated view of a run is not told again. */
   private readonly workersStarted = new Set<string>();
 
-  /** The task ids named by the app messages a turn carries: a worker's final report or an interim note (`<app_task_result task_id="…">`). */
-  private reportsOf(turnOf: () => { words?: unknown } | null | undefined): string[] {
+  /**
+   * The task ids named by the app messages a turn carries: a worker's final report or an interim note (`<app_task_result task_id="…">`). Only a turn the app began
+   * (`origin: "app"`) is read: the user's own words (a pasted old report) name no worker. The turn's words may start with a restart note or saved memory, so the
+   * whole text is read (cut at 40,000 characters), not only its start.
+   */
+  private reportsOf(turnOf: () => { words?: unknown; origin?: unknown } | null | undefined): string[] {
     let words = "";
-    try { const turn = turnOf(); words = typeof turn?.words === "string" ? turn.words.slice(0, 4_000) : ""; } catch { /* no turn to read: no reports */ }
+    try { const turn = turnOf(); words = turn?.origin === "app" && typeof turn.words === "string" ? turn.words.slice(0, 40_000) : ""; } catch { /* no turn to read: no reports */ }
     const ids: string[] = [];
     for (const m of words.matchAll(/<app_(?:task_result|worker_note) task_id="([A-Za-z0-9_.:-]{1,100})"/g)) if (!ids.includes(m[1]!) && ids.length < 8) ids.push(m[1]!);
     return ids;

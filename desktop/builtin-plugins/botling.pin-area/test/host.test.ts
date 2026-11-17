@@ -7,7 +7,8 @@ import { activate } from "../src/host";
 import { activatePins } from "../src/pins";
 import * as D from "../src/digest";
 import * as M from "../src/model";
-import type { Ask } from "../src/haiku";
+import * as C from "../src/classify";
+import type { Ask } from "../src/sorter-call";
 
 type Handler = (data: never) => unknown;
 function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
@@ -25,7 +26,10 @@ function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
   const waitingItems: { botId: string; text: string; messageId?: string | null }[] = [];
   // what chat.messages gives (the lines the classifier reads as the chat's newest)
   const chatLines: { id?: string; role: string; text: string }[] = [];
+  // this plugin's settings as the user set them (none: every default)
+  const settings: Record<string, unknown> = {};
   const api = {
+    settings: { get: (key: string) => settings[key] },
     subscriptions: [] as unknown[],
     storage: { dir: "/s", get: (key: string) => (stored.has(key) ? JSON.parse(JSON.stringify(stored.get(key))) : undefined), set: (key: string, value: unknown) => { stored.set(key, JSON.parse(JSON.stringify(value))); } },
     chat: { setData, decorate, messages: vi.fn(async (botId: string) => ({ botId, name: botId, unread: 0, messages: chatLines, tasks: [] })) },
@@ -48,7 +52,7 @@ function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
   const send = (botId: string, text: string) => hooks[0]!({ bot: bot(botId), text } as never) as string | false | undefined;
   const sendAsync = async (botId: string, text: string) => (await hooks[0]!({ bot: bot(botId), text } as never)) as string | false | undefined;
   const book = (botId: string) => M.readBook(stored.get(`pins:${botId}`));
-  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, chatLines, call, emit, tag, send, sendAsync, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
+  return { api, settings, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, chatLines, call, emit, tag, send, sendAsync, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 describe("the program part", () => {
@@ -976,6 +980,34 @@ describe("a worker bound to a card by its job name", () => {
     expect(t.book("B1").pins[0]!.from).toEqual(["t-early"]);
   });
 
+  it("a worker is bound once: a second start of the same worker (any group) adds no log line and no second binding (review P11)", () => {
+    const t = card();
+    t.tag("B1", "pin-card", { id: "job2", title: "Build 報告二", state: "run", min: "30" }, "另一張");
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    const before = t.book("B1");
+    const logs = before.pins[0]!.updates.length;
+    t.tick(1_000);
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerStarted", started("B1", "t-1", "build 報告二"));
+    const after = t.book("B1");
+    expect(after.pins[0]!.updates).toHaveLength(logs);
+    expect(after.pins[0]!.from).toEqual(["t-1"]);
+    expect(after.pins[1]!.from).toBeUndefined();
+    expect(after.pins[1]!.updates).toHaveLength(before.pins[1]!.updates.length);
+  });
+
+  it("a worker id that is not a plain id (a slash, a space, empty, over 100 characters, not a string) is never bound, whatever its group (review P13)", () => {
+    const t = card();
+    const before = t.book("B1").pins[0]!.updates.length;
+    for (const workerId of ["a/b", "../x", "a b", "", "x".repeat(101), 5, null, { id: "t" }]) t.emit("workerStarted", { botId: "B1", workerId, group: "build 報告", title: "w" });
+    const pin = t.book("B1").pins[0]!;
+    expect(pin.from).toBeUndefined();
+    expect(pin.updates).toHaveLength(before);
+    // a plain id of the longest length is fine
+    t.emit("workerStarted", started("B1", "x".repeat(100), "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toEqual(["x".repeat(100)]);
+  });
+
   it("a done card keeps the report in its thread without changing its words; a failed run turns a running card into a waiting one", () => {
     const t = card();
     t.emit("workerStarted", started("B1", "t-1", "build 報告"));
@@ -1207,19 +1239,171 @@ describe("a plain line sorted by the small model (4c)", () => {
     expect(ask).not.toHaveBeenCalled();
   });
 
-  it("a line that is too short, and a second line while the first is being sorted, are not asked: they go to the chat at once, in order", async () => {
-    let release: (value: unknown) => void = () => {};
-    const ask: Ask = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+  /** Lets the promises that are ready run (the hook's own steps are all promise steps). */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  /** An `ask` whose answers the test gives one by one (the calls it got are in `calls`). */
+  const manual = () => {
+    const answers: ((value: unknown) => void)[] = [];
+    const ask: Ask = vi.fn(() => new Promise((resolve) => { answers.push(resolve); }));
+    return { ask, answers, calls: () => (ask as ReturnType<typeof vi.fn>).mock.calls as [string, { engine: string; model: string; timeoutMs: number }][] };
+  };
+
+  it("a line that is too short is not asked: it goes to the chat at once", async () => {
+    const ask: Ask = vi.fn(async () => ({ action: "chat", confidence: 1 }));
     const t = withCards(ask);
     expect(M.hasBriefing(t.send("B1", "好") as string)).toBe(true);
     expect(ask).not.toHaveBeenCalled();
-    const first = t.sendAsync("B1", "部署那個好了嗎");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const second = (await t.sendAsync("B1", "再問一句")) as string;
-    expect(M.hasBriefing(second)).toBe(true);
-    expect(ask).toHaveBeenCalledTimes(1);
-    release({ action: "assign", card: "p-0002", confidence: 0.99 });
+  });
+
+  it("a second line sent while the first is being sorted waits for it: the lines are settled in the order they were sent (review S2)", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const order: string[] = [];
+    const first = t.sendAsync("B1", "部署那個好了嗎").then((sent) => { order.push("first"); return sent; });
+    await flush();
+    const second = t.sendAsync("B1", "再問一句").then((sent) => { order.push("second"); return sent; });
+    await flush();
+    expect(m.ask).toHaveBeenCalledTimes(1);
+    expect(order).toEqual([]);
+    m.answers[0]!({ action: "assign", card: "p-0002", confidence: 0.99 });
+    await flush();
+    expect(order).toEqual(["first"]);
     expect(await first).toBe(M.askText(t.book("B1").pins[1]!, "部署那個好了嗎"));
+    expect(m.ask).toHaveBeenCalledTimes(2);
+    m.answers[1]!({ action: "chat", confidence: 0.9 });
+    expect(M.hasBriefing((await second) as string)).toBe(true);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  it("a short line and an @card line sent behind a line being sorted wait too, and are written after it (no overtaking), then the queue is empty again", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const order: string[] = [];
+    const sends = [["部署那個好了嗎", "sorted"], ["好", "short"], ["@Deploy 好了嗎", "at"]] as const;
+    const results = sends.map(([text, name]) => t.sendAsync("B1", text).then((sent) => { order.push(name); return sent; }));
+    await flush();
+    expect(order).toEqual([]);
+    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 0]);
+    m.answers[0]!({ action: "assign", card: "p-0001", confidence: 0.99 });
+    await Promise.all(results);
+    expect(order).toEqual(["sorted", "short", "at"]);
+    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.via])).toEqual([["部署那個好了嗎", "auto"], ["好了嗎", "at"]]);
+    // nothing waits any more: a short line answers in the same call again
+    await flush();
+    expect(typeof t.send("B1", "好")).toBe("string");
+    expect(m.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("a line of another bot is not held up by this bot's line", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    t.call("pinMessage", { botId: "B2", messageId: "m1", text: "Other" });
+    t.tick(5_000);
+    const first = t.sendAsync("B1", "部署那個好了嗎");
+    await flush();
+    const other = (await t.sendAsync("B2", "好")) as string;
+    expect(M.hasBriefing(other)).toBe(true);
+    m.answers[0]!({ action: "chat", confidence: 1 });
+    await first;
+  });
+
+  it("an answer that comes after the deadline writes nothing: the core has sent the line as it is (review F1)", async () => {
+    for (const late of [{ action: "assign", card: "p-0001", confidence: 0.99 }, { action: "new", confidence: 0.99 }, { action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.99 }]) {
+      const m = manual();
+      const t = withCards(m.ask);
+      const sending = t.sendAsync("B1", "部署那個好了嗎");
+      await flush();
+      t.tick(C.SORT_DEADLINE_MS + 2_000);
+      m.answers[0]!(late);
+      const sent = (await sending) as string;
+      expect(M.stripBriefing(sent)).toBe("部署那個好了嗎");
+      expect(sent).not.toContain("move=");
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+      expect(t.book("B1").suggest).toBeUndefined();
+    }
+  });
+
+  it("a model that never answers is given up on at the deadline, well before the core's 5 s: the line goes plain with the briefing, and a late answer then writes nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = manual();
+      const t = withCards(m.ask);
+      let sent: string | false | undefined;
+      const sending = t.sendAsync("B1", "部署那個好了嗎").then((value) => { sent = value; });
+      await vi.advanceTimersByTimeAsync(C.SORT_DEADLINE_MS - 1);
+      expect(sent).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(2);
+      await sending;
+      expect(M.hasBriefing(sent as string)).toBe(true);
+      expect(C.SORT_DEADLINE_MS).toBeLessThan(5_000);
+      m.answers[0]!({ action: "assign", card: "p-0001", confidence: 1 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the model's own time limit is what is left of the line's deadline (the wait behind an earlier line counts), at most the setting; a line with next to nothing left is not asked", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = manual();
+      const t = withCards(m.ask);
+      // the injected clock moves first and the timers after it, so the numbers below are exact
+      const advance = async (ms: number) => { t.tick(ms); await vi.advanceTimersByTimeAsync(ms); };
+      const first = t.sendAsync("B1", "部署那個好了嗎");
+      await advance(1_000);
+      const second = t.sendAsync("B1", "再問一句");
+      await advance(3_001);
+      // the first was given up on at its 4 s; the second has 1 s of its own 4 s left less the 1 ms: the call gets what is left less the 300 ms margin
+      expect(M.hasBriefing((await first) as string)).toBe(true);
+      expect(m.calls().map((call) => call[1].timeoutMs)).toEqual([3_500, 699]);
+      await advance(1_500);
+      expect(M.hasBriefing((await second) as string)).toBe(true);
+      // two lines sent together, the first never answered: the second has nothing left when the first is given up on, and is not asked
+      const third = t.sendAsync("B1", "第三句話");
+      const fourth = t.sendAsync("B1", "第四句話");
+      await advance(C.SORT_DEADLINE_MS + 1);
+      expect(M.hasBriefing((await third) as string)).toBe(true);
+      expect(M.hasBriefing((await fourth) as string)).toBe(true);
+      expect(m.calls()).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the sorter settings are read on every line: the model name and the time limit go to the call, the confidence is the bar, a change takes effect at once", async () => {
+    const ask = vi.fn(async (_prompt: string, _call: unknown) => ({ action: "assign", card: "p-0001", confidence: 0.8 }));
+    const t = withCards(ask);
+    await t.sendAsync("B1", "部署那個好了嗎");
+    expect(ask.mock.calls[0]![1]).toEqual({ engine: "claude", model: "claude-haiku-5-5", timeoutMs: 3_500 });
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    t.settings[C.SETTING.model] = "claude-sonnet-5-5";
+    t.settings[C.SETTING.timeoutMs] = 1_200;
+    t.settings[C.SETTING.confidence] = 0.9;
+    t.tick(10_000);
+    const sent = (await t.sendAsync("B1", "部署那個好了嗎，再問一次")) as string;
+    expect(ask.mock.calls[1]![1]).toEqual({ engine: "claude", model: "claude-sonnet-5-5", timeoutMs: 1_200 });
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    // a time limit set higher than the deadline allows is held to what fits under it
+    t.settings[C.SETTING.timeoutMs] = 60_000;
+    t.settings[C.SETTING.confidence] = 0.5;
+    t.tick(10_000);
+    await t.sendAsync("B1", "部署那個好了嗎，第三次");
+    expect(ask.mock.calls[2]![1]).toMatchObject({ timeoutMs: 3_500 });
+  });
+
+  it("turned off, or an engine that is not wired: the model is not asked, the line carries the briefing at once", () => {
+    const ask: Ask = vi.fn(async () => ({ action: "assign", card: "p-0001", confidence: 1 }));
+    const t = withCards(ask);
+    t.settings[C.SETTING.enabled] = false;
+    expect(M.hasBriefing(t.send("B1", "部署那個好了嗎") as string)).toBe(true);
+    t.settings[C.SETTING.enabled] = true;
+    t.settings[C.SETTING.engine] = "codex";
+    expect(M.hasBriefing(t.send("B1", "部署那個好了嗎") as string)).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
   });
 
   it("the book is read again after the model answers: a card taken down meanwhile keeps the line in the chat", async () => {
@@ -1233,6 +1417,17 @@ describe("a plain line sorted by the small model (4c)", () => {
     expect(M.hasBriefing(sent)).toBe(true);
     expect(sent).not.toContain("p-0001「Deploy」");
     expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[]]);
+  });
+
+  it("what the model's answer means is decided on the book as it is after the wait (review P10): a merge whose card was taken down meanwhile is chat, not a suggestion", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const sending = t.sendAsync("B1", "Deploy 和 Docs 是同一件事");
+    await flush();
+    t.call("unpin", { botId: "B1", id: "p-0002" });
+    m.answers[0]!({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.99 });
+    expect(M.hasBriefing((await sending) as string)).toBe(true);
+    expect(t.book("B1").suggest).toBeUndefined();
   });
 
   it("an automatic turn can be taken back (移回聊天) or sent to another card (改到…), and the next verdict is told what the user corrected", async () => {

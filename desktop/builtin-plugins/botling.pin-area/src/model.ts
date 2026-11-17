@@ -79,7 +79,8 @@ export const MAX_PINS = 8;
 export const MAX_BOT_OPEN = 3;
 export const MAX_TURNS = 50;
 export const MAX_UPDATES = 50;
-export const MAX_REMOVED = 3;
+/** Cards taken down that 釘回 can still bring back: as many as the strip holds, so one sweep that puts away every done card (the user's 24 hours of 釘回) loses none. */
+export const MAX_REMOVED = MAX_PINS;
 /** Workers / sub bots one card may follow by a bot's tag (the oldest go over it); `MAX_LINKED` when the app binds them by their job name. */
 export const MAX_FROM = 4;
 export const MAX_LINKED = 12;
@@ -333,7 +334,11 @@ export function remove(book: Book, id: string, now: number, by: Removed["by"]): 
   if (!pin) return null;
   book.pins = book.pins.filter((candidate) => candidate !== pin);
   book.removed.push({ pin, at: now, by });
-  if (book.removed.length > MAX_REMOVED) book.removed.splice(0, book.removed.length - MAX_REMOVED);
+  // over the limit the oldest goes, but a card the app put away by itself (offered back for a day) goes last
+  while (book.removed.length > MAX_REMOVED) {
+    const index = book.removed.slice(0, -1).findIndex((entry) => entry.by !== "auto" && !entry.merged);
+    book.removed.splice(index >= 0 ? index : 0, 1);
+  }
   return pin;
 }
 
@@ -432,9 +437,10 @@ export function linkFrom(pin: Pin, ids: string[], cap = MAX_FROM): boolean {
 /** A name as compared for a match: no case, no spaces or punctuation. */
 const fold = (value: string): string => value.toLowerCase().replace(/[\s\-_·:：,，.。、/\\|()（）「」『』"'`]+/g, "");
 /**
- * The open card a worker's job name points at: its p-0001 id, else its title, key or handle (exactly, ignoring case and punctuation),
- * else a title or key that contains the name or the name contains it (3 characters or more). The best kind of match wins; two cards
- * tied on it, or none, give null (the worker then stays in the chat). A done card is never bound.
+ * The open card a worker's job name points at: its p-0001 id, else its title, key or handle, exactly (ignoring case, spaces and punctuation). No
+ * partial match: "rebuild cache" is not the card "Build", so a worker never lands in a card that only shares a word with its job. The head
+ * bot is told to give the card's title, key or id as the group. Two cards alike, or none, give null (the worker then stays in the chat).
+ * A done card is never bound.
  */
 export function cardForGroup(book: Book, group: string): Pin | null {
   const raw = oneLine(group, 80);
@@ -443,8 +449,7 @@ export function cardForGroup(book: Book, group: string): Pin | null {
   const rank = (pin: Pin): number => {
     if (raw.toLowerCase() === pin.id) return 3;
     const names = [pin.title, pin.botKey ?? "", pin.handle].map(fold).filter(Boolean);
-    if (names.includes(wanted)) return 2;
-    return names.some((name) => Math.min(name.length, wanted.length) >= 3 && (name.includes(wanted) || wanted.includes(name))) ? 1 : 0;
+    return names.includes(wanted) ? 2 : 0;
   };
   const ranked = book.pins.filter((pin) => pin.state !== "done").map((pin) => ({ pin, rank: rank(pin) })).filter((item) => item.rank > 0);
   const best = Math.max(0, ...ranked.map((item) => item.rank));
