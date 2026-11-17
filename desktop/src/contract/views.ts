@@ -45,21 +45,26 @@ export const ChoiceView = z.strictObject({
 });
 export type ChoiceView = z.infer<typeof ChoiceView>;
 
+/** The most options one question of a group carries; the parser, the answer checks and these schemas all read it. */
+export const QUESTION_OPTIONS_MAX = 12;
+/** A note on a ticked option is keyed by its index, 0 up to `QUESTION_OPTIONS_MAX - 1`. */
+export const QUESTION_OPTION_INDEX = /^(?:[0-9]|1[01])$/;
+
 /** One question of a group asked together (`<choices question="…">`): single-choice or several allowed. */
 export const QuestionView = z.strictObject({
   question: z.string().max(400),
   multiple: z.boolean(),
-  options: z.array(ChoiceView).min(2).max(6),
+  options: z.array(ChoiceView).min(2).max(QUESTION_OPTIONS_MAX),
 });
 export type QuestionView = z.infer<typeof QuestionView>;
 
 /** What the user gave one question of a group: options ticked (indices), their own words ("Other"), or a skip. */
 export const QuestionPickView = z.strictObject({
-  options: z.array(z.number().int().nonnegative().max(5)).max(6),
+  options: z.array(z.number().int().nonnegative().max(QUESTION_OPTIONS_MAX - 1)).max(QUESTION_OPTIONS_MAX),
   other: z.string().max(1_000).nullable(),
   skipped: z.boolean(),
   /** A note the user wrote on a ticked option, keyed by its index. */
-  notes: z.record(z.string().regex(/^[0-5]$/), z.string().max(1_000)).optional(),
+  notes: z.record(z.string().regex(QUESTION_OPTION_INDEX), z.string().max(1_000)).optional(),
 });
 export type QuestionPickView = z.infer<typeof QuestionPickView>;
 

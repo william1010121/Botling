@@ -2,6 +2,7 @@
 // each with its question (`<choices question="Which database?">`), and `multiple="true"` lets the user tick
 // several. A reply whose blocks carry neither attribute keeps the 1.x rule: the last block is the question.
 // The group is one decision: one card, one Submit, one answer message, one decision id.
+import { QUESTION_OPTIONS_MAX } from "../contract/views";
 
 /** One option of a question (the same shape `<choices>` always had). */
 export interface QuestionOption { label: string; detail?: string; recommended: boolean }
@@ -13,7 +14,7 @@ export interface Question { question: string; multiple: boolean; options: Questi
 export interface QuestionPick { options: number[]; other?: string; skipped?: boolean; notes?: Record<string, string> }
 
 export const MAX_QUESTIONS = 5;
-export const MAX_QUESTION_OPTIONS = 6;
+export const MAX_QUESTION_OPTIONS = QUESTION_OPTIONS_MAX;
 export const MIN_QUESTION_OPTIONS = 2;
 export const SKIPPED = "(Skipped)";
 
@@ -30,7 +31,7 @@ export function isMultiple(attributes: Record<string, string>, raw: string): boo
 }
 
 /**
- * One block as a question, or null when it is malformed (fewer than 2 options). Options past 6 are left out;
+ * One block as a question, or null when it is malformed (fewer than 2 options). Options past 12 are left out;
  * a single-choice question keeps only its first `*` as recommended, a multi-select keeps every one (optional there).
  */
 export function questionFrom(question: string, multiple: boolean, options: QuestionOption[]): Question | null {

@@ -55,7 +55,7 @@ export const QUESTION_GROUP_RULE = [
   "  - Login",
   "  - Export",
   "  </choices>",
-  "  2 to 6 options each; multiple=\"true\" lets the user tick several (* optional there, exactly one otherwise). The user answers them all with one Submit; you receive one message listing each question and its answer, \"(Skipped)\" for one they skipped.",
+  "  2 to 12 options each; multiple=\"true\" lets the user tick several (* optional there, exactly one otherwise). The user answers them all with one Submit; you receive one message listing each question and its answer, \"(Skipped)\" for one they skipped.",
 ].join("\n");
 
 /** `AppLanguage.preferred`: the first of the system's preferred languages the app has, else English. */
