@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { feedback, messageElement, messageMenu } from "../../../../Web/src/messages";
 import { studioSeam } from "../../../../Web/src/plugins";
-import { PinArea } from "../src/pins";
+import { forgetPinnableAsks, makePinnableText, PinArea } from "../src/pins";
 import { installBoard, pageCss, sent } from "./support";
 import { parseInterval, refreshWords } from "../../../../Web/src/refresh";
 import { chatSize, componentElement } from "../../../../Web/src/components";
@@ -17,6 +17,7 @@ globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {
 const components: Record<string, ComponentInfo> = {
   提交紀錄: { template: "<div>log</div>", version: 1, working: false, updated: false, hasPrevious: false },
   天氣卡片: { template: "<div>weather</div>", version: 1, working: false, updated: false, hasPrevious: false },
+  "inline-chart": { template: "<div>chart</div>", version: 1, working: false, updated: false, hasPrevious: false },
 };
 
 function message(displays: DisplayView[]): MessageView {
@@ -51,6 +52,7 @@ const click = (element: Element | null | undefined) => (element as HTMLElement).
 
 beforeEach(() => {
   installBoard();
+  forgetPinnableAsks();
   sent.length = 0;
   document.body.innerHTML = "";
   document.body.className = "";
@@ -126,6 +128,83 @@ describe("pinning from the chat", () => {
     expect(pinned.querySelector(".pin-bar .pin-badge")).not.toBeNull();
     click(pinned.querySelector("[aria-label='More']"));
     expect([...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent)).toContain("Unpin");
+  });
+});
+
+describe("making an inline block pinnable", () => {
+  const chart = '{"kind":"bars","title":"Haiku 比 Opus 快 3.1 倍","items":[{"label":"Haiku","value":182},{"label":"Opus","value":58}]}';
+  const inline = (overrides: Partial<DisplayView> = {}): DisplayView => ({ name: "inline-chart", data: chart, ...overrides });
+  const makeButton = (row: Element) => row.querySelector<HTMLButtonElement>(".pin-bar .pin-make");
+
+  it("an inline block with no command has a visible 'Make it pinnable' button (not Pin), and pressing it sends one chat message with its JSON", () => {
+    setUp().update(state());
+    const row = messageElement(message([inline()]), components);
+    document.body.append(row);
+    expect(row.querySelector("[aria-label='Pin to this bot']")).toBeNull();
+    const make = makeButton(row)!;
+    expect(make.textContent).toContain("Make it pinnable");
+    click(make);
+    expect(sent).toHaveLength(1);
+    const action = sent[0] as { type: string; text: string; to?: string };
+    expect(action.type).toBe("send");
+    expect(action.to).toBeUndefined();
+    expect(action.text).toContain(chart);
+    expect(action.text).toContain(".bot/card-scripts/inline-chart/");
+    expect(action.text).toContain("worker");
+    expect(action.text).toContain('<show name="inline-chart" command=');
+    // The tag is told closed (`/>`): the reply parser's showTag matches `<show …/>` or `<show …>JSON</show>`, never a bare `<show …>`.
+    expect(action.text).toMatch(/<show name="inline-chart" command="[^"]*"\/>/);
+    expect(document.querySelector(".pin-toast")?.textContent).toContain("ClaudeCodeBot");
+    expect(document.querySelector(".pin-toast button")).toBeNull();
+  });
+
+  it("a double tap sends once; the same words in the menu entry, which is the first entry", () => {
+    setUp().update(state());
+    const row = messageElement(message([inline()]), components);
+    document.body.append(row);
+    click(makeButton(row));
+    click(makeButton(row));
+    expect(sent.filter((a) => a.type === "send")).toHaveLength(1);
+    expect(document.querySelector(".pin-toast")?.textContent).toContain("Already asked");
+    // The ⋯ menu offers it first, then Report a problem; another card (index 1) is its own request.
+    const second = messageElement(message([inline(), inline({ data: '{"kind":"bars","title":"B","items":[]}' })]), components);
+    document.body.append(second);
+    click(second.querySelectorAll(".pin-bar [aria-label='More']")[1]);
+    const items = [...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent);
+    expect(items[0]).toBe("Make it pinnable");
+    expect(items).toContain("Report a problem…");
+    click(document.querySelector(".pin-menu button"));
+    expect(sent.filter((a) => a.type === "send")).toHaveLength(2);
+    expect((sent[1] as { text: string }).text).toContain('"title":"B"');
+  });
+
+  it("with a command it is the Pin button, as before; pinned, a badge; a component that is not an inline block, no such button", () => {
+    setUp().update(state());
+    const withCommand = messageElement(message([inline({ command: ".bot/card-scripts/inline-chart/speed.py", folder: "/p", status: "done" })]), components);
+    expect(withCommand.querySelector("[aria-label='Pin to this bot']")).not.toBeNull();
+    expect(makeButton(withCommand)).toBeNull();
+    expect(makeButton(messageElement(message([{ name: "天氣卡片", data: "{}" }]), components))).toBeNull();
+    // Waiting for its data (the "null" of a card drawn from a command), nothing to paste.
+    expect(makeButton(messageElement(message([inline({ data: "null" })]), components))).toBeNull();
+    setUp().update(state({ pins: [pin({ id: "P7", name: "inline-chart", display: { name: "inline-chart", data: chart, command: "python3 s.py", folder: "/p" } })] }));
+    const pinned = messageElement(message([inline()]), components);
+    expect(pinned.querySelector(".pin-badge")).not.toBeNull();
+    expect(makeButton(pinned)).toBeNull();
+  });
+
+  it("the request is in the page's language, and too long a JSON is left to the reply above", () => {
+    document.documentElement.lang = "zh-Hant";
+    try {
+      const text = makePinnableText("inline-chart", chart);
+      expect(text).toContain("可釘選");
+      expect(text).toContain(chart);
+      expect(text).toContain(".bot/card-scripts/inline-chart/");
+      // A pretty-printed block goes as one line (a few lines of JSON would read as the user's own text).
+      expect(makePinnableText("inline-chart", '{\n  "kind": "bars",\n  "items": []\n}')).toContain('{"kind":"bars","items":[]}');
+      // `{name}`-like text in the data is not filled in again.
+      expect(makePinnableText("inline-chart", '{"note":"{name} {json}"}')).toContain('{"note":"{name} {json}"}');
+      expect(makePinnableText("inline-chart", `{"x":"${"a".repeat(17_000)}"}`)).toContain("太長");
+    } finally { document.documentElement.lang = "en"; }
   });
 });
 

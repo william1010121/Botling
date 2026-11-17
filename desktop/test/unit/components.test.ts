@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { aboutLine, aboutSizes, ComponentLibrary, componentKnowledgeFor, knowledgeChanges, knowledgeFull, refreshSeconds, safeName, spelledSize } from "../../src/core/components/library";
 import { ComponentCommands, dataFromOutput, detailCommandLine, detailValues, execute, placeholders } from "../../src/core/components/commands";
-import { ImageRegistry } from "../../src/core/components/service";
+import { displayCommand, ImageRegistry } from "../../src/core/components/service";
 import { alive, pidsIn, sleep, tempDir, until } from "../helpers";
 
 process.env.BOTLING_PLAIN_SHELL = "1";
@@ -144,5 +144,25 @@ describe("pictures", () => {
     expect(images.file(token)).toEqual({ path: require("node:fs").realpathSync(png), type: "image/png" });
     expect(images.file("0".repeat(40))).toBeNull();
     expect(images.urls(`"no slash"`)).toEqual({});
+  });
+});
+
+describe("an inline block shown with a command (the pinnable path)", () => {
+  it("a component without a Command line takes the command the <show> tag gives, so the card has a command to pin; with none it has none", () => {
+    const root = join(tempDir("inline-command"), "components");
+    mkdirSync(join(root, "inline-chart"), { recursive: true });
+    writeFileSync(join(root, "inline-chart", "template.html"), "<div>chart</div>");
+    writeFileSync(join(root, "inline-chart", "about.md"), "圖表卡片: one small chart.\nSizes: 2x2\nBuilt-in: yes");
+    const library = new ComponentLibrary(() => [root]);
+    expect(library.command("inline-chart")).toBeNull();
+    const script = ".bot/card-scripts/inline-chart/speed.py";
+    // No data in the tag, a command: the command is the card's (its output is the data).
+    expect(displayCommand({ name: "inline-chart", data: "null", command: script }, "bot", library)).toBe(script);
+    // Data in the tag and a command: the command still wins (the pin button needs it).
+    expect(displayCommand({ name: "inline-chart", data: '{"kind":"bars"}', command: script }, "bot", library)).toBe(script);
+    // Today's inline block: JSON only, nothing to pin.
+    expect(displayCommand({ name: "inline-chart", data: '{"kind":"bars"}' }, "bot", library)).toBeNull();
+    // A user's line never has one.
+    expect(displayCommand({ name: "inline-chart", data: "null", command: script }, "user", library)).toBeNull();
   });
 });
