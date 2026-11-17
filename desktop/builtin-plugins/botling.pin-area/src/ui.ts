@@ -99,13 +99,21 @@ export class PinUi {
     this.section.append(this.head, this.rows, this.toastLine);
     this.top.append(this.digest, this.section);
     const { signal } = this.listeners;
-    // A press on the chat's empty space leaves the open card (a press on a message, a button, the input box or the list above is not that);
-    // Esc leaves it too, and ⌘1–3 open a card.
+    // A plain primary-button press on the chat's empty space leaves the open card (not a press on a message, a button, the input box or the
+    // list above; not a right-click, not a press on the scrollbar). A touch is a tap or the start of a scroll: it counts on its `click` only.
+    let lastPointer = "";
     document.addEventListener("pointerdown", (event) => {
-      if (!this.openId || !this.isBlank(event.target)) return;
+      lastPointer = (event as PointerEvent).pointerType ?? "";
+      if (!this.openId || lastPointer === "touch" || (event as MouseEvent).button !== 0 || !this.isBlank(event.target, event as MouseEvent)) return;
       this.close();
     }, { capture: true, signal });
+    document.addEventListener("click", (event) => {
+      if (!this.openId || lastPointer !== "touch" || !this.isBlank(event.target)) return;
+      this.close();
+    }, { capture: true, signal });
+    // ⌘1–3 open a card (before the page's own keys); Esc leaves it, but only when nothing else took the Esc (the input box's @ list, the model menu).
     document.addEventListener("keydown", (event) => this.onKey(event), { capture: true, signal });
+    document.addEventListener("keydown", (event) => this.onEscape(event), { signal });
     this.draw();
   }
 
@@ -121,9 +129,15 @@ export class PinUi {
   }
 
   /** The chat's empty space: its list or a message row itself, not what is drawn on a row. */
-  private isBlank(target: EventTarget | null): boolean {
+  private isBlank(target: EventTarget | null, press?: MouseEvent): boolean {
     if (!(target instanceof Element) || this.section.contains(target) || this.digest.contains(target)) return false;
-    return target.matches(BLANK) && !target.closest(OWN_THINGS) && !!target.closest("#scroller");
+    if (!target.matches(BLANK) || target.closest(OWN_THINGS) || !target.closest("#scroller")) return false;
+    // a press on the scroller's own scrollbar (beside or below its content box) is a drag of the scroll thumb, not the blank space
+    if (press && target.id === "scroller" && target.clientWidth > 0) {
+      const box = target.getBoundingClientRect();
+      if (press.clientX - box.left >= target.clientWidth || press.clientY - box.top >= target.clientHeight) return false;
+    }
+    return true;
   }
 
   /** The chat drew `botId` with these pins (null: the program part has not said yet). */
@@ -605,14 +619,16 @@ export class PinUi {
 
   // ---- keys ----
 
+  /** Esc folds the card unless something took it first (a list or menu that closed on this Esc has called preventDefault); the caret stays in the box it was in. */
+  private onEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || !this.openId || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    const target = event.target;
+    this.close(!(target instanceof Element && target.closest("input, textarea, [contenteditable]")));
+  }
+
   private onKey(event: KeyboardEvent): void {
     if (event.isComposing || event.keyCode === 229) return;
-    if (event.key === "Escape" && this.openId) {
-      event.preventDefault();
-      event.stopPropagation();
-      this.close(true);
-      return;
-    }
     if (event.metaKey && !event.shiftKey && !event.altKey && !event.ctrlKey && /^[1-9]$/.test(event.key)) {
       const pin = this.data.pins[Number(event.key) - 1];
       if (!pin || Number(event.key) > KEYS) return;

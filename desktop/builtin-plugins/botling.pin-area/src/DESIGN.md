@@ -82,8 +82,10 @@ Settled by the user (2026-11-17): plain chat organised into cards; **no input bo
   the caret there. What is typed goes into that card: the chip puts `@p-0001 ` before the words and the program part's `beforeSend` does what it
   always did for `@card words` (thread turn, header for the bot, the answer lands in the card). The chip stays across sends; ✕, Esc, the chevron, ⌘1–3 on the same card,
   another chat or a click on the chat's empty space take it away.
-- **Closing on a click**: a press on the chat's empty space (the list, a message row's own space, a stamp line; not a bubble, a link, a button or the
-  input box) folds the card back into a row. Closing a done card unpins it (with 釘回) as before.
+- **Closing on a click**: a plain primary-button press on the chat's empty space (the list, a message row's own space, a stamp line; not a bubble, a link, a button, the
+  input box, the scrollbar or a right-click; a touch counts on its tap, not on its first contact) folds the card back into a row. Esc folds it only when nothing took the Esc first
+  (the input box's @ list and the model menu close on it and the card stays), and does not move the caret out of the box. The caret is not put in the box on a phone.
+  A message that starts with an @ or a / is not given the chip's prefix (the card the user chose wins). Closing a done card unpins it (with 釘回) as before.
 - **Core hook added for this (general, tested in `test/standing-chip.test.ts`)**: `ComposerChip.standing` / `prefix()`: a chip that is not sent, is no reason
   to send an empty box, stays after a send, and puts `prefix()` before the words (never before a slash command, never with no words). A plugin's chip passes
   through `PluginHost` with `standing` and `prefix` guarded.

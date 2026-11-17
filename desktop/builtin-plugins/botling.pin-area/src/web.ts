@@ -6,6 +6,10 @@ import { PinUi, closeIcon, pinIcon } from "./ui";
 import { wordsFor } from "./words";
 
 export const PLUGIN = "botling.pin-area";
+/** A phone or tablet with no mouse (the same test as the chat page's `touchOnly`). */
+const coarsePointer = (): boolean => {
+  try { return !!window.matchMedia?.("(hover: none) and (pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches; } catch { return false; }
+};
 /** The page says the user is here at most this often. */
 export const PRESENT_EVERY_MS = 60_000;
 
@@ -40,7 +44,8 @@ export function activate(ccb: CcbWeb): () => void {
     words,
     now: () => Date.now(),
     openChat: (id, messageId) => ccb.page.openChat(id, messageId),
-    focusComposer: () => ccb.composer.view.focus(),
+    // not on a phone: the caret in the box would raise the soft keyboard each time a card opens
+    focusComposer: () => { if (!coarsePointer()) ccb.composer.view.focus(); },
     chip: (card) => {
       replyChip?.remove();
       replyChip = null;

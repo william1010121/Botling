@@ -204,6 +204,68 @@ describe("the chip in the main input box (the card has no box of its own)", () =
     expect(sends()).toEqual(["hello"]);
   });
 
+  it("switching from card A to card B leaves one chip (B's), and what is typed goes to B", () => {
+    host.chatState(stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))));
+    const rowOf = (id: string) => slots.topArea.querySelector<HTMLButtonElement>(`.pt-row[data-pin="${id}"]`)!;
+    rowOf("p-0001").click();
+    rowOf("p-0002").click();
+    expect([...composer.root.querySelectorAll(".pt-chip")].map((node) => node.textContent)).toEqual(["Reply toDocs"]);
+    expect(composer.chipsHere()).toHaveLength(1);
+    type("hello");
+    composer.submit();
+    expect(sends()).toEqual(["@p-0002 hello"]);
+  });
+
+  it("a message that starts with an @ keeps the card the user picked, not the chip's", () => {
+    host.chatState(stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))));
+    slots.topArea.querySelector<HTMLButtonElement>('.pt-row[data-pin="p-0001"]')!.click();
+    type("@Docs hello");
+    composer.submit();
+    expect(sends()).toEqual(["@Docs hello"]);
+  });
+
+  it("opening a card puts the caret in the input box (not on a phone)", () => {
+    const focus = vi.spyOn(composer.view, "focus");
+    host.chatState(stateOf(view(card("p-0001"))));
+    slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
+    expect(focus).toHaveBeenCalledTimes(1);
+    const media = window.matchMedia;
+    window.matchMedia = ((query: string) => ({ matches: query === "(hover: none) and (pointer: coarse)", media: query })) as never;
+    try {
+      composer.root.querySelector<HTMLButtonElement>(".pt-chip-x")!.click();
+      slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
+      expect(focus).toHaveBeenCalledTimes(1);
+    } finally { window.matchMedia = media; }
+  });
+
+  it("a plugin's chip whose prefix() throws does not break the send: the words go as typed", async () => {
+    const bad: PluginSpec = { ...spec, name: "test.thrower" };
+    await host.sync([spec, bad], async (item) => (item.name === bad.name
+      ? ((ccb: Parameters<typeof activate>[0]) => { ccb.composer.chips.add({ standing: true, prefix: () => { throw new Error("no prefix"); }, serialize: () => "", render: () => document.createElement("span") }); }) as never
+      : activate));
+    expect(composer.chipsHere()).toHaveLength(1);
+    type("hello");
+    composer.submit();
+    expect(sends()).toEqual(["hello"]);
+    expect(sent.some((action) => action.type === "pluginError" && (action as unknown as { name: string }).name === "test.thrower")).toBe(true);
+  });
+
+  it("Esc closes the input box's @ list first and leaves the card and its chip; the next Esc folds the card", () => {
+    host.chatState(stateOf(view(card("p-0001"))));
+    slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
+    type("@");
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    expect(list.hidden).toBe(false);
+    const esc = () => composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    esc();
+    expect(list.hidden).toBe(true);
+    expect(slots.topArea.querySelector(".pt-card")).not.toBeNull();
+    expect(chipText()).toBe("Reply toDeploy");
+    esc();
+    expect(slots.topArea.querySelector(".pt-card")).toBeNull();
+    expect(chipText()).toBeNull();
+  });
+
   it("another chat has no chip, and the chip speaks the page's language", () => {
     host.chatState(stateOf(view(card("p-0001"))));
     slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();

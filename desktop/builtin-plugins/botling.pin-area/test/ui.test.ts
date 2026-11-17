@@ -40,7 +40,12 @@ const order = (): string[] => {
 };
 const flush = async () => { for (let n = 0; n < 5; n++) await Promise.resolve(); };
 const key = (init: KeyboardEventInit, target: EventTarget = document.body) => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
-const press = (target: Element) => target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+/** A pointer press as a mouse makes it (primary button); `pointerType` makes it a touch or a pen. */
+const press = (target: Element, init: MouseEventInit & { pointerType?: string } = {}) => {
+  const event = new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, ...init });
+  if (init.pointerType) Object.defineProperty(event, "pointerType", { value: init.pointerType });
+  target.dispatchEvent(event);
+};
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -185,6 +190,17 @@ describe("more than four cards: the first rows and 「還有 N 件」", () => {
     ui.update("B1", view(...many(6)));
     ui.open("p-0006");
     expect(order()).toEqual(["p-0001", "p-0002", "p-0003", "p-0004", "p-0005", "[p-0006]", "只看前 4 件"]);
+  });
+
+  it("opening the fifth card (the first one behind the fold, index 4) shows every row", () => {
+    ui.update("B1", view(...many(6)));
+    ui.open("p-0005");
+    expect(order()).toEqual(["p-0001", "p-0002", "p-0003", "p-0004", "[p-0005]", "p-0006", "只看前 4 件"]);
+    ui.close();
+    ui.update("B2", view(...many(6)));
+    ui.open("p-0004");
+    // index 3 is still in the first four: the fold stays
+    expect(order()).toEqual(["p-0001", "p-0002", "p-0003", "[p-0004]", "還有 2 件"]);
   });
 
   it("an open card in the first rows counts as one of the four, in its own place, with the others around it", () => {
@@ -359,7 +375,7 @@ describe("keys, and a press on the chat's empty space", () => {
   const chat = () => {
     const scroller = document.createElement("main");
     scroller.id = "scroller";
-    scroller.innerHTML = '<div id="messages"><div class="stamped"><div class="stamp">today</div></div><div class="row bot" data-id="m1"><div class="bubble"><p>hello <a href="#">link</a></p></div><button class="reply-button">r</button></div></div>';
+    scroller.innerHTML = '<div id="messages"><div class="stamped"><div class="stamp">today</div></div><div class="row bot" data-id="m1"><span class="avatar">b</span><div class="bubble"><p>hello <a href="#">link</a></p></div><button class="reply-button">r</button></div></div>';
     document.body.append(scroller);
     return scroller;
   };
@@ -382,11 +398,58 @@ describe("keys, and a press on the chat's empty space", () => {
     const outside = document.createElement("textarea");
     document.body.append(outside);
     stub();
-    for (const target of [scroller.querySelector(".bubble")!, scroller.querySelector("p")!, scroller.querySelector("a")!, scroller.querySelector(".reply-button")!, outside, document.body, panel()!.querySelector(".pt-pstatus")!, rows()[0]!]) {
+    for (const target of [scroller.querySelector(".bubble")!, scroller.querySelector("p")!, scroller.querySelector("a")!, scroller.querySelector(".reply-button")!, scroller.querySelector(".stamp")!, scroller.querySelector(".avatar")!, outside, document.body, panel()!.querySelector(".pt-pstatus")!, rows()[0]!]) {
       press(target);
       expect(panel()).not.toBeNull();
     }
     expect(ui.isOpen("p-0001")).toBe(true);
+  });
+
+  it("only the listed blank targets fold it: a press on any other thing in the chat (a stamp's words, an avatar) does not", () => {
+    const scroller = chat();
+    stub();
+    for (const target of [scroller.querySelector(".stamp")!, scroller.querySelector(".avatar")!]) {
+      press(target);
+      expect(panel()).not.toBeNull();
+    }
+  });
+
+  it("only a plain primary-button press folds it: a right-click or a middle press on the blank space does not", () => {
+    const scroller = chat();
+    stub();
+    press(scroller, { button: 2 });
+    press(scroller, { button: 1 });
+    expect(panel()).not.toBeNull();
+    press(scroller, { button: 0 });
+    expect(panel()).toBeNull();
+  });
+
+  it("a press on the scroller's own scrollbar (right of or below its content) is a drag of the thumb and does not fold; a press on its content does", () => {
+    const scroller = chat();
+    Object.defineProperty(scroller, "clientWidth", { value: 500 });
+    Object.defineProperty(scroller, "clientHeight", { value: 400 });
+    stub();
+    press(scroller, { clientX: 505, clientY: 100 });
+    press(scroller, { clientX: 100, clientY: 405 });
+    expect(panel()).not.toBeNull();
+    press(scroller, { clientX: 100, clientY: 100 });
+    expect(panel()).toBeNull();
+  });
+
+  it("a touch does not fold it on contact (that may be a scroll), only on its tap (click); a mouse click alone is not a tap", () => {
+    const scroller = chat();
+    stub();
+    press(scroller, { pointerType: "touch" });
+    expect(panel()).not.toBeNull();
+    scroller.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(panel()).toBeNull();
+    stub();
+    press(scroller.querySelector(".bubble")!, { pointerType: "touch" });
+    scroller.querySelector(".bubble")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(panel()).not.toBeNull();
+    press(scroller.querySelector(".bubble")!, { pointerType: "mouse" });
+    scroller.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(panel()).not.toBeNull();
   });
 
   it("a press on the blank space with no card open does nothing (and takes no call)", () => {
@@ -416,6 +479,43 @@ describe("keys, and a press on the chat's empty space", () => {
     key({ key: "Escape" });
     expect(panel()).toBeNull();
     expect(document.activeElement).toBe(rows()[0]);
+  });
+
+  it("Esc that something else took first (the input box's @ list or the model menu calls preventDefault) leaves the card open; the next Esc folds it", () => {
+    ui.update("B1", view(pin("p-0001")));
+    ui.open("p-0001");
+    const box = document.createElement("div");
+    box.setAttribute("contenteditable", "true");
+    document.body.append(box);
+    const take = (event: Event) => event.preventDefault();
+    box.addEventListener("keydown", take);
+    key({ key: "Escape" }, box);
+    expect(panel()).not.toBeNull();
+    expect(chip).not.toHaveBeenLastCalledWith(null);
+    box.removeEventListener("keydown", take);
+    key({ key: "Escape" }, box);
+    expect(panel()).toBeNull();
+  });
+
+  it("Esc from the input box folds the card but leaves the caret in the box (it does not move to the row); Esc elsewhere puts the row in focus", () => {
+    ui.update("B1", view(pin("p-0001")));
+    ui.open("p-0001");
+    const box = document.createElement("textarea");
+    document.body.append(box);
+    box.focus();
+    key({ key: "Escape" }, box);
+    expect(panel()).toBeNull();
+    expect(document.activeElement).toBe(box);
+  });
+
+  it("Esc is not swallowed: it still reaches the page's other listeners", () => {
+    ui.update("B1", view(pin("p-0001")));
+    ui.open("p-0001");
+    const seen = vi.fn();
+    document.addEventListener("keydown", seen);
+    key({ key: "Escape" });
+    document.removeEventListener("keydown", seen);
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 
   it("⌘1–⌘3 open the cards, the same key closes it, and a fourth card or another modifier does nothing", () => {

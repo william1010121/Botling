@@ -119,8 +119,8 @@ export class ComposerSubmit {
     const original = text;
     const typed = this.answer ? answerPrefix(text, this.answer) : null;
     if (typed) text = typed.rest;
-    // a standing chip says where the words go (never for a slash command)
-    const lead = text.trim() === "" || text.trimStart().startsWith("/") ? "" : here.map((entry) => (entry.chip.standing ? entry.chip.prefix?.() ?? "" : "")).join("");
+    // a standing chip says where the words go (never for a slash command, and not when the words name their own target with an @: that one wins)
+    const lead = text.trim() === "" || text.trimStart().startsWith("/") || original.trimStart().startsWith("@") ? "" : here.map((entry) => (entry.chip.standing ? entry.chip.prefix?.() ?? "" : "")).join("");
     if (lead) text = lead + text;
     if (chips.length) text = [text.trim() === "" ? "" : text, ...chips.map((chip) => chip.text)].filter(Boolean).join("\n\n");
     const to = this.answer ? typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen : undefined;

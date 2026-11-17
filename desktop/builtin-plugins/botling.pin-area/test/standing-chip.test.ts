@@ -49,6 +49,16 @@ describe("a standing chip", () => {
     expect(sends()).toEqual(["/help"]);
   });
 
+  it("leaves words that start with an @ alone: the target the user chose wins", () => {
+    composer.addChip(standing("@p-0001 "));
+    composer.setText("  @Docs hello");
+    composer.submit();
+    expect(sends()).toEqual(["  @Docs hello"]);
+    composer.setText("hello @Docs");
+    composer.submit();
+    expect(sends()).toEqual(["  @Docs hello", "@p-0001 hello @Docs"]);
+  });
+
   it("goes when it is removed, and then the words go as typed", () => {
     const handle = composer.addChip(standing("@p-0001 "));
     handle.remove();
