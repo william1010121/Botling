@@ -3,9 +3,9 @@
 // stays after a send, and puts its prefix before the words (not before a slash command). A chip that is not standing still goes after the
 // words and is taken away when sent.
 import { beforeEach, describe, expect, it } from "vitest";
-import { sent } from "../src/bridge";
-import { Composer, type ComposerChip } from "../src/composer";
-import type { ChatState } from "../src/types";
+import { sent } from "../../../../Web/src/bridge";
+import { Composer, type ComposerChip } from "../../../../Web/src/composer";
+import type { ChatState } from "../../../../Web/src/types";
 
 let composer: Composer;
 const state = { botID: "B1", botName: "B1", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components: {} } as unknown as ChatState;

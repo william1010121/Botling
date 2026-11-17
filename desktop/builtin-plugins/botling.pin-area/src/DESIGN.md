@@ -84,7 +84,7 @@ Settled by the user (2026-11-17): plain chat organised into cards; **no input bo
   another chat or a click on the chat's empty space take it away.
 - **Closing on a click**: a press on the chat's empty space (the list, a message row's own space, a stamp line; not a bubble, a link, a button or the
   input box) folds the card back into a row. Closing a done card unpins it (with 釘回) as before.
-- **Core hook added for this (general, tested in `Web/test/standing-chip.test.ts`)**: `ComposerChip.standing` / `prefix()`: a chip that is not sent, is no reason
+- **Core hook added for this (general, tested in `test/standing-chip.test.ts`)**: `ComposerChip.standing` / `prefix()`: a chip that is not sent, is no reason
   to send an empty box, stays after a send, and puts `prefix()` before the words (never before a slash command, never with no words). A plugin's chip passes
   through `PluginHost` with `standing` and `prefix` guarded.
 - **Removed**: the floating panel (`.pt-panel`, `body.pt-panel-open`, the page yielding 452 px), the panel's input and its send guard (the chat's box has its own),
