@@ -287,6 +287,7 @@ describe("Settings' model, effort and permission choices", () => {
       await press(box(host, "Summary model")!, "Enter");
       expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
       expect(sent.length).toBe(before);
+      await press(box(host, "Summary model")!, "Escape");
       // What the plugin keeps comes back in its view.
       await rerender(sheet({ "botling.catchup.model": "sonnet", "botling.catchup.engine": "claude" }));
       expect(select(host, "Summary model").value).toBe("claude:sonnet");
