@@ -124,8 +124,7 @@ it("an old worker re-projected unchanged at the head's start only tells the regi
 // so the first projection after it must tell it in full: the log, the plugins (workerEnded) and the windows hold "running".
 it("a row the start changed (a worker cut off by a crash) is told in full by the next projection, once", () => {
   const f = fixture();
-  const bot = f.partner as any;
-  bot.options.agents = { observed: vi.fn(), ended: vi.fn(), retained: () => [], movedOut: () => new Set() };
+  const bot = f.partner as any; // no registry here: the row is still told (the test of the guard on `agents`)
   bot.onSubagentItem({ kind: "subagentStarted", id: "w2", description: "cut-off", type: "agy-worker", prompt: "Work", background: true });
   const cut = { v: 3, id: "w2", engine: "agy", adapter: "agy-acp", name: "cut-off", status: "interrupted", interruptedBy: "crash", run: 1,
     report: { status: "interrupted", state: "none", text: "The app went away.", attempts: 0 }, createdAt: 1, endedAt: 2 };
