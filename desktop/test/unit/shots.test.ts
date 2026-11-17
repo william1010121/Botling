@@ -253,6 +253,7 @@ describe("component shots (ComponentShot.swift)", () => {
     writeFileSync(join(plugin, "board.css"), ".pin{}");
     writeFileSync(join(plugin, "ok.woff2"), "font");
     writeFileSync(join(plugin, "extra.css"), ".more{}");
+    mkdirSync(join(plugin, "sub", "dir.woff2"));
     writeFileSync(join(plugin, "sub", "ok.woff2"), "font");
     writeFileSync(join(plugin, ".hidden.woff2"), "font");
     writeFileSync(join(plugin, "sub", ".hidden.woff2"), "font");
@@ -260,7 +261,7 @@ describe("component shots (ComponentShot.swift)", () => {
     writeFileSync(join(base, "outside.js"), "export const secret = 1;");
     // A stylesheet at the top of the folder: any font or picture in the folder is "beside" it, except hidden ones and anything outside.
     for (const served of ["board.css", "ok.woff2", "sub/ok.woff2", "./sub/../ok.woff2"]) expect(shotPluginFile(base, SHOT_PLUGIN, served), served).not.toBeNull();
-    for (const refused of [".hidden.woff2", "sub/.hidden.woff2", "/ok.woff2", "../outside.woff2", "sub/../../outside.woff2", "sub", "board.css/../.hidden.woff2", "extra.css"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
+    for (const refused of [".hidden.woff2", "sub/.hidden.woff2", "/ok.woff2", "../outside.woff2", "sub/../../outside.woff2", "sub", "sub/dir.woff2", "board.css/../.hidden.woff2", "extra.css"]) expect(shotPluginFile(base, SHOT_PLUGIN, refused), refused).toBeNull();
     expect(shotWebSpecs(base)).toHaveLength(1);
     // The web part must be a regular file inside the plugin: outside by "..", a link out, a folder, a missing file.
     manifest("../outside.js");
