@@ -13,6 +13,7 @@ import { Bot, type PresetTurnIds } from "../bot";
 import type { Engine, Heads } from "../heads";
 import type { OrchestrationRules } from "../orchestration/default-rules";
 import { builtinSource, chosenSource, OrchestrationRulesBook } from "../orchestration/plugin-rules";
+import { inlineBlocksFor } from "../inline-blocks";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts } from "../prompts";
 import { readJSON } from "../store/bot-store";
 import { Layout, type BotProfile } from "../store/workspace";
@@ -176,8 +177,10 @@ export class CoreSend {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
     const rules = this.orchestrationRules();
+    // The inline block guidance (settings.json `inlineBlockGuidance`, inline-blocks.ts): a trial first; Antigravity draws no components, so it never gets it.
+    const inlineBlocks = engine !== "agy" && inlineBlocksFor(this.settingsFile(), profile.folder);
     return desktopPrompts(botPrompts({
-      rules,
+      rules, inlineBlocks,
       profile: { ...profile, instructions: profile.instructions ?? null },
       language: savedLanguage(settings.language) ?? preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
@@ -185,7 +188,7 @@ export class CoreSend {
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
       parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()), rules);
+    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()), rules, inlineBlocks);
   }
 
   /** The prompt sections plugins give, each that names a command with that command's line and guide (none without one). */

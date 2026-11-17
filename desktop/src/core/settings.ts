@@ -232,7 +232,9 @@ export function launchSettings(raw: RawSettings) {
     // Hidden (debugging only): "native" gives Claude heads their own Agent tool back instead of app-managed workers.
     claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw),
     // Which models' app-managed workers may write spec/ (spec-guard.ts); bot heads are not restricted.
-    specWriters: specWriters(raw) };
+    specWriters: specWriters(raw),
+    // Which bots are told the inline block guidance (inline-blocks.ts); the bots' component note says no lookup is needed for those examples.
+    inlineBlockGuidance: (raw as Record<string, unknown>).inlineBlockGuidance };
 }
 
 /** settings.json's `claudeWorkerLimit`: how many Claude workers of one bot may be at work at once (1–16; default 4); more wait for a slot. */

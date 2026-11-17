@@ -2,6 +2,34 @@
   {
     "kind": "card",
     "plugin": "botling.cards",
+    "id": "botling.cards.inline-report-block",
+    "title": "inline-report-block",
+    "component": {
+      "name": "inline-report-block",
+      "dir": "components/inline-report-block"
+    }
+  },
+  {
+    "kind": "tile",
+    "plugin": "botling.cards",
+    "id": "botling.cards.inline-report-block",
+    "title": "inline-report-block",
+    "sizes": [
+      "2x2"
+    ],
+    "surfaces": [
+      "board",
+      "whiteboard",
+      "pin"
+    ],
+    "component": {
+      "name": "inline-report-block",
+      "dir": "components/inline-report-block"
+    }
+  },
+  {
+    "kind": "card",
+    "plugin": "botling.cards",
     "id": "botling.cards.網頁預覽卡片",
     "title": "網頁預覽卡片",
     "component": {

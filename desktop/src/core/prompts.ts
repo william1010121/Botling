@@ -10,6 +10,7 @@
 // The Maintainer's component-editor rule is not here (2.0 has no Maintainer).
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
+import { INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, renderFragments, type OrchestrationRules } from "./orchestration/default-rules";
@@ -200,7 +201,7 @@ export function localPage(folder: string): string {
 
 export const ARTIFACT_PAGE = "one page published as a claude.ai Artifact with the Artifact tool (private by default; follow the tool's own instructions, which load its design skill first); link it in your reply as [name](the https://claude.ai/… link it returns).";
 
-export function resultsRule(choice: ResultPublishing, folder: string): string {
+export function resultsRule(choice: ResultPublishing, folder: string, inlineBlocks = false): string {
   const local = localPage(folder);
   const artifact = ARTIFACT_PAGE;
   const rule = choice === "artifactUnlessSensitive"
@@ -208,7 +209,7 @@ export function resultsRule(choice: ResultPublishing, folder: string): string {
     : choice === "localOnly"
       ? `go into ${local} The user chose to keep results local: do not publish them with the Artifact tool.`
       : `go into ${artifact} The user chose this for every result, sensitive or not. Only when the Artifact tool is unavailable or fails (offline, not signed in), make it ${local}`;
-  return `Results meant for the user (reports, comparisons, screenshots, previews) ${rule} Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`;
+  return `${inlineBlocks ? RESULTS_LIST_INLINE : RESULTS_LIST} ${rule} Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`;
 }
 
 /**
@@ -310,6 +311,8 @@ export interface PromptInput {
   workingFolder?: string | null;
   /** The orchestration rules the delegation text comes from (default: core's own, M7-O02). */
   rules?: OrchestrationRules;
+  /** The inline block guidance is told (inline-blocks.ts `inlineBlocksFor`; Claude and Codex only, Antigravity draws no components). */
+  inlineBlocks?: boolean;
 }
 
 export interface BotPrompts {
@@ -331,7 +334,7 @@ export const SITE_TOOLS_RULE = "Browser site tools (the puzzle tools in Botling'
 export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a report page (see the results rule), and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
 /** The main bot's own app actions on Antigravity (<new-bot>, <new-project>): the app does them, no worker or Claude behind them. Component and plugin tags stay Claude-only. */
 const AGY_MAIN_APP_ACTIONS = "As the main bot you may ask the app itself (no worker) for two things. A bot of the user's own with no folder (a morning news bot, a reading coach): end your reply with <new-bot name=\"short name, no quotes\">its job in a few sentences, including when it should work</new-bot>; never for a name the list already has. A folder on the user's Mac that should get a manager (a project): end your reply with <new-project folder=\"full path of the folder\">what its manager should do first</new-project>, or <new-project folder=\"...\"/> when there is nothing to do yet; folder=\"~/tool/**\" adds every project under a folder, folder=\"~/tool/*\" the folders directly inside it, and one tag per named folder. The app asks the user on a card. Say so in one sentence only when this reply carries the tag, and never write these tags inside code or examples.";
-export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null, rules = DEFAULT_ORCHESTRATION_RULES }: PromptInput): BotPrompts {
+export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null, rules = DEFAULT_ORCHESTRATION_RULES, inlineBlocks = false }: PromptInput): BotPrompts {
   // Only a project or bot session can stand in an app worktree; the main bot never does.
   const tree = profile.role === "main" || !attached || attached === profile.folder ? null : attached;
   if (engine === "agy") {
@@ -370,7 +373,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
   const isMain = profile.role === "main";
   const results = isMain
     ? "- You are the single point of contact. Your job is to hand work over: anything to be built (pages, reports, code, comparisons) goes to a project, or to a subagent you start yourself, and the result link comes back to you. Look things up yourself (files, the web) when that answers the user or tells you where the work belongs."
-    : `- ${resultsRule(publishing, paths.artifacts)} Do not paste long text.`;
+    : `- ${resultsRule(publishing, paths.artifacts, inlineBlocks)} Do not paste long text.`;
   const completionFollowUp = codex ? "." : "; then check its work yourself and say what you found.";
   const waiting = MEMORY_SECTIONS[2].heading;
   const decided = MEMORY_SECTIONS[3].heading;
@@ -406,15 +409,16 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     "  What to do can be a one-line prompt, or @file-path (follow that file when the time comes). A leading # pauses a job; deleting the whole line removes it.",
     "  Claude may edit this legacy file for recurring jobs; Codex uses app_routines instead. Never encode a one-time request as a yearly cron job. For one-time scheduling on Claude, use the app’s Routines settings. Say what changed only after it is saved.",
     "- Write math in LaTeX: inline $…$, display $$…$$ on its own line; the app typesets it.",
-    "- The in-chat components (buttons, cards and the like) belong to \"Maintainer\"; when you are woken up the app attaches the component list.",
+    `- The in-chat components (buttons, cards and the like) belong to "Maintainer"; when you are woken up the app attaches the component list.${inlineBlocks ? INLINE_COMPONENTS_NOTE : ""}`,
     "  To show data with a component: add <show name=\"component name\">JSON matching its format</show> to your reply.",
     "  To get a component changed, a new one made, or one from the shared library added to your own list: end your reply with <component name=\"component name\">what you need</component>; do not change the app yourself.",
     "  Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.",
     "  When what you just showed is something the user will likely ask for again (a status, a summary of a command's output), you may offer to make it a component: end that reply with <suggest-component name=\"short-english-name\">one line: what it would show and the command that gives its data</suggest-component>. The app only adds a small chip under your reply; nothing happens until the user presses it, and only then does Maintainer build a first version. At most one per reply, not for one-off answers, and never inside code or examples.",
+    ...(inlineBlocks ? [INLINE_BLOCK_GUIDANCE] : []),
     // Codex has no Artifact tool: its note hands a Design to Claude instead (audit 2026-11-11).
     ...(codex ? [] : [`- When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: ${DESIGN_STEPS}, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.`]),
     "- Botling's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.",
-    "  Only plugin-library extensions (plugin manifests, extension code, commands and hooks) belong to Maintainer: end your reply with <plugin>what is wanted</plugin>. In-chat component requests still use <component>.",
+    `  Only plugin-library extensions (plugin manifests, extension code, commands and hooks) belong to Maintainer: end your reply with <plugin>what is wanted</plugin>. In-chat component requests still use <component>.${inlineBlocks ? INLINE_PLUGIN_NOTE : ""}`,
     ...(profile.id === MAINTAINER_PROMPT_ID ? [] : [`  ${SITE_TOOLS_RULE}`]),
     "  When the user wants to install an outside plugin (git URL, npm package, zip URL): end your reply with <install>source</install>; Botling checks it and asks the user first. Never download or install it yourself.",
   ].join("\n");
@@ -598,7 +602,7 @@ export function routinesRule(routines: string): string {
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
  * Codex worker).
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent" | "instructionsFile" | "plugin">> & { delegation?: string | null }, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS, rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent" | "instructionsFile" | "plugin">> & { delegation?: string | null }, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS, rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES, inlineBlocks = false): BotPrompts {
   let system = prompts.system;
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
@@ -660,8 +664,10 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
   }
   for (const section of told.filter((entry) => entry.after === "results").reverse()) {
+    // A bot with the inline guidance is told the report rule by size (one block inline, more than that a page); a Codex worker only builds pages, so it keeps the whole rule.
     const line = fillSection(section.text, section.tool, artifacts);
-    system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, line);
+    const chatLine = inlineBlocks && engine !== "agy" && section.id === REPORT_SECTION_ID ? fillSection(inlineReportRule(section.text), section.tool, artifacts) : line;
+    system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, chatLine);
     codexWorkerSystem = insertAfterLine(codexWorkerSystem, RESULTS_ANCHOR, line);
   }
   return system === prompts.system && codexWorkerSystem === prompts.codexWorkerSystem ? prompts : { ...prompts, system, codexWorkerSystem };

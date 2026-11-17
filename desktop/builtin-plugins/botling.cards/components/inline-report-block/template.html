@@ -1,0 +1,1098 @@
+<meta name="ccb-kit" content="1">
+<style>
+/* Look and block markup: hand port of Botling's report renderer (botling.report, ReportSpec v2 blocks).
+   The stylesheet below is copied from the renderer's own output (same tokens, same block rules) so both stay identical;
+   the block HTML is rebuilt by the script (no code from the report bundle or its third-party packages is used:
+   the flowchart layout is a small layered layout written for this card). Source: Botling botling.report, GPL-3.0-or-later. */
+/* Colours come from the host: the frame injects Botling's design tokens (--bubble, --hover, --chip, --line, --border, --text, --muted,
+   --faint, --blue, --green, --orange, --error …) and sets <html data-theme="dark|light">, following the app, because of the ccb-kit marker
+   above. Only what the host lacks is defined here. */
+.ib{--unv:#6C6C75;--on-accent:#FFFFFF;
+--sys:-apple-system,BlinkMacSystemFont,"PingFang TC","Noto Sans TC","Segoe UI",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+html[data-theme="light"] .ib{--unv:#8A8A93}
+.t-good{--tone:var(--green)}.t-warn{--tone:var(--orange)}.t-bad{--tone:var(--error)}.t-info{--tone:var(--blue)}.t-neutral{--tone:var(--unv)}.t-none{--tone:var(--border)}
+.ib *{box-sizing:border-box}
+.ib{box-sizing:border-box;color:var(--text);font:15px/1.5 var(--sys);-webkit-font-smoothing:antialiased;overflow-wrap:anywhere;padding:12px;width:100%;min-width:0}
+.sr-only{position:absolute!important;left:0;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:normal;word-break:break-all;border:0}
+.ib :focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.ib code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1em .4em}
+.ib h3,.ib h4,.ib p{margin:0}
+.pill{display:inline-flex;align-items:center;flex:none;border:1px solid currentColor;border-radius:100px;padding:1px 9px;font-size:12px;font-weight:650;line-height:1.5;color:var(--tone,var(--muted));white-space:nowrap}
+.pill.t-neutral{color:var(--muted)}
+/* Blocks are sized in em (1em = 15px in a document, larger on slides) so one stylesheet serves both. */
+.blk{margin:0;min-width:0;container:blk/inline-size;font-size:15px}
+.blk>*{margin:0}
+.blk:not(.plain):not(.blk-prose):not(.blk-callout):not(.blk-quote):not(.blk-sources):not(.blk-error){background:var(--bubble);border:1px solid var(--border);border-radius:16px;padding:1.33em 1.47em}
+.bh{display:flex;align-items:baseline;justify-content:space-between;gap:.8em;margin-bottom:1.07em}
+.bh h3{font-size:1em;font-weight:600;line-height:1.4;margin:0}
+.bh p{font-size:.833em;color:var(--faint);margin:0;flex:none;max-width:45%;text-align:right}
+@container blk (max-width:420px){.bh{flex-direction:column;gap:.1em}.bh p{text-align:left;max-width:none}}
+.sw{display:inline-block;width:.6em;height:.6em;border-radius:3px;background:var(--c);flex:none}
+.legend{list-style:none;margin:-.4em 0 .9em;padding:0;display:flex;flex-wrap:wrap;gap:.3em 1.1em;font-size:.833em;color:var(--muted)}
+.legend li{display:inline-flex;align-items:center;gap:.45em}
+.dl{display:inline-flex;align-items:center;font-size:.8em;font-weight:650;color:var(--tone);background:color-mix(in srgb,var(--tone) 14%,transparent);border-radius:6px;padding:.05em .45em;font-variant-numeric:tabular-nums}
+.dl.t-neutral{color:var(--muted)}
+.segbar{display:flex;gap:3px;height:8px}
+.segbar.lg{height:10px;margin-top:1.07em}
+.seg{border-radius:5px;background:var(--tone);min-width:6px}
+.verdict-line{margin-top:1em!important;padding-top:.85em;border-top:1px solid var(--line);font-size:.93em;color:var(--text);display:flex;gap:.6em;align-items:baseline}
+.verdict-line b{flex:none;font-size:.85em;font-weight:650;color:var(--blue);letter-spacing:.04em}
+
+/* prose / callout / quote / sources */
+.blk-prose{font-size:15px;line-height:1.65;color:var(--text);max-width:42em}
+.blk-prose .md>*{margin:0 0 .6em}.blk-prose .md>*:last-child{margin-bottom:0}
+.blk-prose ul,.blk-prose ol{padding-left:1.3em}
+.blk-prose li{margin:.2em 0}
+.blk-prose li::marker{color:var(--faint)}
+.blk-prose strong{font-weight:650}
+.blk-callout{display:flex;gap:.8em;align-items:flex-start;background:color-mix(in srgb,var(--tone) 8%,var(--bubble));border:1px solid color-mix(in srgb,var(--tone) 30%,var(--border));border-left:4px solid var(--tone);border-radius:14px;padding:.95em 1.2em}
+.blk-callout .cg{font-style:normal;flex:none;width:1.4em;height:1.4em;border-radius:50%;background:var(--tone);color:var(--on-accent);font-size:.8em;font-weight:700;display:inline-flex;align-items:center;justify-content:center;margin-top:.15em}
+.blk-callout .ct{font-weight:600;margin:0 0 .15em}
+.blk-callout .cx{color:var(--muted);margin:0;font-size:.93em;line-height:1.6}
+.blk-callout.t-neutral .cg{background:var(--muted)}
+.blk-quote{border-left:3px solid var(--blue);padding:.2em 0 .2em 1.1em}
+.blk-quote p{font-size:1.2em;font-weight:500;line-height:1.55}
+.blk-quote footer{margin-top:.4em;font-size:.833em;color:var(--faint)}
+.blk-sources{padding:.27em .27em 0}
+.blk-sources h3{font-size:.833em;font-weight:600;color:var(--faint);letter-spacing:.04em;margin:0 0 .55em}
+.blk-sources ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:.4em 1.6em}
+.blk-sources li{font-size:.87em;color:var(--muted);display:flex;align-items:baseline;gap:.5em;min-width:0}
+.blk-sources code{color:var(--text);flex:none;font-size:.88em}
+@container blk (max-width:560px){.blk-sources ul{grid-template-columns:1fr}}
+.blk-error{border:1px dashed var(--error);border-radius:14px;padding:.9em 1.1em;background:color-mix(in srgb,var(--error) 6%,var(--bubble))}
+.blk-error p{margin:0;display:flex;gap:.6em;align-items:baseline;flex-wrap:wrap}
+.blk-error b{color:var(--error);font-weight:600}
+.blk-error .em{font-size:.833em;color:var(--faint);margin-top:.3em}
+
+/* kpi */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(7em,1fr));gap:1em 1.2em;margin:0}
+.kpi{display:flex;flex-direction:column;gap:.15em;min-width:0}
+.kpi dd{margin:0}
+.kpi dt{order:2;font-size:.833em;color:var(--faint)}
+.kpi .kv{order:1;display:flex;align-items:baseline;gap:.25em}
+.kpi .kv b{font-size:2em;font-weight:650;line-height:1.1;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.kpi .kv small{font-size:.93em;color:var(--muted);font-weight:500}
+.kpi[class*=" t-"] .kv b{color:var(--tone)}
+.kpi.t-neutral .kv b{color:var(--muted)}
+.kpi .kd{order:3;display:flex;flex-wrap:wrap;gap:.4em;align-items:center;margin-top:.3em}
+.kpi .tg{font-size:.8em;color:var(--faint)}
+@container blk (max-width:520px){
+  .blk-kpi .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .blk-kpi.n3 .kpis .kpi:first-child,.blk-kpi.n5 .kpis .kpi:first-child{grid-column:1/-1}
+  .kpi .kv b{font-size:1.75em}
+}
+
+/* matrix: a placement grid */
+.mx-scroll{overflow-x:auto;margin:0 -.2em;padding:0 .2em}
+.mx{border-collapse:separate;border-spacing:.45em;margin:-.45em;width:calc(100% + .9em);table-layout:fixed}
+.mx thead th{font-size:.833em;font-weight:600;color:var(--muted);text-align:center;padding:0 0 .1em}
+.mx thead td{width:3.6em}
+.mx tbody th{font-size:.87em;font-weight:600;color:var(--muted);text-align:left;white-space:nowrap;padding-right:.2em}
+.mc{height:3.3em;border-radius:12px;background:var(--hover);text-align:center;vertical-align:middle;padding:.35em}
+.mc.on{background:var(--chip)}
+.mc.num{font-size:.87em;font-weight:600;font-variant-numeric:tabular-nums;height:2.9em}
+.mx.dense .mc{height:2.2em;border-radius:6px;padding:.1em}
+.mx.dense{border-spacing:.2em;min-width:calc(var(--cols) * 2.6em + 4em)}
+.chip{display:inline-block;margin:.15em;padding:.15em .55em;border-radius:999px;font-size:.8em;font-weight:600;background:var(--tone);color:var(--on-accent);line-height:1.4}
+.chip.t-neutral{background:var(--unv)}
+
+/* timeline: event log */
+.ev{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.ev li{display:grid;grid-template-columns:6.4em 1.2em minmax(0,1fr);gap:.2em .6em;position:relative;padding-bottom:.95em}
+.ev li:last-child{padding-bottom:0}
+.ev time{font-size:.833em;color:var(--faint);text-align:right;font-variant-numeric:tabular-nums;padding-top:.15em;white-space:nowrap}
+.ev li>i{position:relative;display:flex;justify-content:center}
+.ev li>i::before{content:"";width:.75em;height:.75em;border-radius:50%;background:var(--tone);margin-top:.35em;box-shadow:0 0 0 3px var(--bubble);z-index:1}
+.ev li.t-none>i::before{background:var(--bubble);border:2px solid var(--unv)}
+.ev li>i::after{content:"";position:absolute;top:.6em;bottom:-1.3em;left:50%;border-left:1.5px solid var(--line)}
+.ev li:last-child>i::after{display:none}
+.evl{font-weight:600;line-height:1.45;margin:0}
+.evt{font-size:.87em;color:var(--muted);margin:.1em 0 0}
+@container blk (max-width:420px){.ev li{grid-template-columns:1.2em minmax(0,1fr);}.ev time{grid-column:2;text-align:left;order:-1;padding:0}.ev li>i{grid-row:1/span 3;grid-column:1}}
+
+/* timeline: gantt */
+.gt{--lab:11em;font-size:1em}
+.gx{display:grid;grid-template-columns:var(--lab) minmax(0,1fr);height:1.6em}
+.gx div{position:relative}
+.gx div span{position:absolute;transform:translateX(-50%);font-size:.75em;color:var(--faint);white-space:nowrap;font-variant-numeric:tabular-nums}
+.gb{position:relative;display:flex;flex-direction:column;gap:.3em}
+.gb>.gl,.gb>.today{position:absolute;top:0;bottom:0;border:0;border-left:1px dashed var(--line);width:0;left:calc(var(--lab) + (100% - var(--lab)) * var(--x,0))}
+.today{border-left:1.5px solid var(--error)!important;z-index:2}
+.today em{position:absolute;top:-1.6em;left:0;transform:translateX(-50%);white-space:nowrap;font-style:normal;font-size:.7em;font-weight:650;color:var(--error);background:var(--bubble);padding:0 .3em;border-radius:4px}
+.glane{display:flex;flex-direction:column;gap:.3em}
+.glane+.glane{border-top:1px solid var(--line);padding-top:.5em;margin-top:.3em}
+.glh{font-size:.75em;font-weight:650;color:var(--faint);letter-spacing:.04em;margin:0}
+.gr{display:grid;grid-template-columns:var(--lab) minmax(0,1fr);align-items:center;min-height:2em}
+.gl-l{font-size:.87em;margin:0;padding-right:.8em;line-height:1.3}
+.gtrk{position:relative;height:1.35em}
+.gbar{position:absolute;top:0;bottom:0;border-radius:6px;background:color-mix(in srgb,var(--tone) 80%,transparent);min-width:6px}
+.gbar.t-none,.gms.t-none{--tone:var(--unv)}
+.gms{position:absolute;top:50%;width:.9em;height:.9em;background:var(--tone);transform:translate(-50%,-50%) rotate(45deg);border-radius:2px}
+@container blk (max-width:520px){.gt{--lab:6.5em}.gl-l{font-size:.8em}}
+
+/* roadmap */
+.rm{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:.8em}
+.rm section{background:var(--hover);border-radius:12px;padding:.75em}
+.rm section.now{background:color-mix(in srgb,var(--blue) 8%,var(--hover))}
+.rm h4{display:flex;justify-content:space-between;align-items:baseline;font-size:.93em;font-weight:650;margin:0 0 .65em}
+.rm h4 em{font-style:normal;font-size:.8em;font-weight:500;color:var(--faint)}
+.rm ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.45em}
+.chipcard{position:relative;background:var(--bubble);border:1px solid var(--border);border-radius:10px;padding:.55em .7em .55em .95em}
+.chipcard::before{content:"";position:absolute;left:0;top:.6em;bottom:.6em;width:3px;border-radius:2px;background:var(--tone)}
+.chipcard.t-none::before{display:none}
+.chipcard.t-bad{border-color:color-mix(in srgb,var(--error) 55%,var(--border))}
+.cct{font-size:.9em;font-weight:600;margin:0;line-height:1.35}
+.ccm{font-size:.8em;color:var(--faint);margin:.15em 0 0}
+.ccm .sc{color:var(--tone)}.t-neutral .ccm .sc{color:var(--muted)}
+@container blk (max-width:560px){.rm{grid-template-columns:minmax(0,1fr)}}
+
+/* flow */
+.fl-wrap{display:flex;justify-content:center}
+.fl{display:block;width:100%;height:auto;font-family:var(--sys);overflow:visible}
+.fl.narrow{display:none}
+@container blk (max-width:560px){.has-narrow .fl.wide{display:none}.has-narrow .fl.narrow{display:block}}
+.fl .nb{fill:var(--chip);stroke:var(--border);stroke-width:1}
+.fl .k-start .nb,.fl .k-end .nb{fill:var(--hover)}
+.fl .k-decision .nb{fill:var(--bubble);stroke:var(--orange);stroke-dasharray:4 3}
+.fl .hot .nb{fill:color-mix(in srgb,var(--error) 16%,var(--bubble));stroke:var(--error);stroke-width:1.5}
+.fl .sb{fill:var(--tone)}
+.fl .nt{font-size:14px;font-weight:600;fill:var(--text)}
+.fl .ns{font-size:12px;fill:var(--faint)}
+.fl .ns .sc{fill:var(--tone);font-weight:600}
+.fl .t-neutral .ns .sc{color:var(--muted)}
+.fl .edge{fill:none;stroke:var(--faint);stroke-width:1.5;stroke-linejoin:round}
+.fl .edge.dash{stroke-dasharray:4 4}
+.fl .ah{fill:none;stroke:var(--faint);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.fl .el rect{fill:var(--bubble);stroke:var(--line)}
+.fl .el text{font-size:12px;fill:var(--muted)}
+
+/* sequence */
+.sq{--n:3;display:flex;flex-direction:column}
+.sqa,.sqs li{display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr))}
+.sqa{gap:0;margin-bottom:.3em}
+.sqa span{justify-self:center;max-width:94%;text-align:center;background:var(--chip);border-radius:10px;padding:.4em .8em;font-size:.87em;font-weight:600}
+.sqs{list-style:none;margin:0;padding:0;position:relative}
+.sqs li{position:relative;min-height:2.6em;align-items:end}
+.sqs li::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(100% / var(--n) / 2 - .5px),var(--line) calc(100% / var(--n) / 2 - .5px),var(--line) calc(100% / var(--n) / 2 + .5px),transparent calc(100% / var(--n) / 2 + .5px),transparent calc(100% / var(--n)));pointer-events:none}
+.sqm{position:relative;display:block;padding:0 var(--inset) .35em;z-index:1}
+.sqm em{display:flex;justify-content:center;align-items:baseline;gap:.4em;font-style:normal;font-size:.85em;text-align:center;line-height:1.3;padding:0 .3em .2em}
+.sqm b,.sqn b{flex:none;font-size:.8em;font-weight:650;color:var(--faint)}
+.sqm i{display:block;height:0;border-top:1.5px solid var(--tone,var(--faint));position:relative}
+.sqm.reply i{border-top-style:dashed}
+.sqm i::after{content:"";position:absolute;top:-5px;width:8px;height:8px;border:solid var(--tone,var(--faint));border-width:1.5px 1.5px 0 0}
+.sqm.r i::after{right:0;transform:rotate(45deg)}
+.sqm.l i::after{left:0;transform:rotate(-135deg)}
+.sqs li.t-none{--tone:var(--faint)}
+.sqs li.t-bad em{color:var(--error);font-weight:600}
+.sqn{z-index:1;justify-self:center;font-size:.8em;background:var(--hover);border:1px solid var(--border);border-radius:8px;padding:.25em .6em;margin-bottom:.35em;display:flex;gap:.4em;max-width:96%}
+
+/* table + options */
+.tbl-scroll{overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse;font-size:.93em}
+.tbl th,.tbl td{text-align:left;vertical-align:top;padding:.6em .7em;border-top:1px solid var(--line)}
+.tbl thead th{border-top:0;font-size:.85em;font-weight:600;color:var(--faint);padding-top:0}
+.tbl tbody th{font-weight:600}
+.tbl .r{text-align:right;font-variant-numeric:tabular-nums}
+.tbl tr.hi>*{background:color-mix(in srgb,var(--blue) 9%,transparent)}
+.tbl tr>*:first-child{padding-left:.2em}
+.cell-s{display:inline-flex;align-items:baseline;gap:.45em;color:var(--text)}
+.cell-s i{flex:none;width:.55em;height:.55em;border-radius:50%;background:var(--tone);transform:translateY(-.05em)}
+.op thead th{vertical-align:bottom;color:var(--text);font-size:.93em}
+.op thead th b{display:block;font-weight:650}
+.op thead th small{display:block;font-size:.85em;font-weight:500;color:var(--faint)}
+.op td.rec,.op th.rec{background:color-mix(in srgb,var(--blue) 8%,transparent)}
+.op thead th.rec{border-radius:10px 10px 0 0}
+.op tbody tr:last-child td.rec{border-radius:0 0 10px 10px}
+.badge{display:inline-block;font-size:.75em;font-weight:650;color:var(--on-accent);background:var(--blue);border-radius:6px;padding:.05em .45em;margin-bottom:.3em}
+.op-c{display:inline-flex;gap:.45em;align-items:baseline}
+.op-c i{font-style:normal;color:var(--tone);font-size:.85em}
+.op-c.t-neutral i{color:var(--faint)}
+.op-narrow{display:none}
+@container blk (max-width:520px){
+  .op-wide{display:none}
+  .op-narrow{display:flex;flex-direction:column;gap:.6em}
+  .op-card{border:1px solid var(--border);border-radius:12px;padding:.7em .85em}
+  .op-card.rec{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 6%,transparent)}
+  .oph{display:flex;gap:.5em;align-items:baseline;margin:0}.oph .badge{margin:0}
+  .ops{font-size:.85em;color:var(--faint);margin:.1em 0 0}
+  .op-card dl{margin:.5em 0 0;display:flex;flex-direction:column;gap:.25em}
+  .op-card dl div{display:grid;grid-template-columns:6.5em minmax(0,1fr);gap:.5em;font-size:.9em}
+  .op-card dt{color:var(--faint)}.op-card dd{margin:0}
+}
+.pc{display:grid;grid-template-columns:1fr 1fr;gap:1.2em}
+.pc h4{font-size:.833em;font-weight:650;letter-spacing:.04em;color:var(--tone);margin:0 0 .5em}
+.pc ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.45em}
+.pc li{display:flex;gap:.55em;font-size:.93em;line-height:1.45}
+.pc li i{font-style:normal;flex:none;width:1.2em;height:1.2em;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--tone) 16%,transparent);color:var(--tone);font-weight:700;font-size:.85em;margin-top:.12em}
+@container blk (max-width:420px){.pc{grid-template-columns:1fr}}
+
+/* checklist / progress / steps */
+.ck-sum{display:flex;flex-direction:column;gap:.5em;margin-bottom:.9em}
+.ck-sum b{font-size:.93em;font-weight:650}
+.ck{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.ck li{display:grid;grid-template-columns:1.5em minmax(0,1fr) auto;gap:.6em;align-items:start;padding:.55em 0;border-top:1px solid var(--line)}
+.ck li:first-child{border-top:0;padding-top:0}.ck li:last-child{padding-bottom:0}
+.ck li>i{font-style:normal;width:1.4em;height:1.4em;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.8em;font-weight:700;color:var(--tone);background:color-mix(in srgb,var(--tone) 16%,transparent);margin-top:.1em}
+.ck li.t-good>i{background:var(--tone);color:var(--on-accent)}
+.ck li.t-neutral>i{color:var(--muted)}
+.ck p{margin:0;font-size:.93em;line-height:1.45}
+.ck .ckn{font-size:.85em;color:var(--faint)}
+.cks{font-size:.75em;font-weight:650;color:var(--tone);white-space:nowrap;padding-top:.2em}
+.ck li.t-neutral .cks{color:var(--muted)}
+.pg{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.85em}
+.pg p{display:flex;justify-content:space-between;gap:.6em;margin:0 0 .35em;font-size:.93em}
+.pg b{font-weight:650;font-variant-numeric:tabular-nums;font-size:.93em}
+.track{height:.6em;border-radius:4px;background:var(--hover);overflow:hidden}
+.fill{display:block;height:100%;border-radius:4px;background:var(--tone)}
+.stp{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(11em,1fr));gap:.8em}
+.stp li{display:flex;gap:.65em;align-items:flex-start;background:var(--hover);border-radius:12px;padding:.75em .85em;position:relative}
+.stp .n{font-style:normal;flex:none;width:1.45em;height:1.45em;border-radius:50%;background:var(--blue);color:var(--on-accent);font-size:.8em;font-weight:650;display:inline-flex;align-items:center;justify-content:center;margin-top:.1em}
+.stp li.s-done .n{background:var(--green)}.stp li.s-blocked .n{background:var(--error)}
+.stp .st{display:flex;flex-wrap:wrap;gap:.4em;align-items:center;font-weight:600;font-size:.93em;margin:0;line-height:1.4}
+.stp .st .pill{font-size:.75em;padding:0 .5em}
+.stp .sx{font-size:.85em;color:var(--muted);margin:.15em 0 0;line-height:1.45}
+.stp.compact li{padding:.5em .8em}
+@container blk (max-width:460px){.stp{grid-template-columns:minmax(0,1fr)}}
+
+/* image */
+.im{position:relative;line-height:0;max-width:min(100%,40em);margin:0 auto}
+.im img{width:100%;height:auto;border-radius:10px;border:1px solid var(--border)}
+.ia{position:absolute;transform:translate(-50%,-50%);width:1.6em;height:1.6em;border-radius:50%;background:var(--orange);color:var(--on-accent);font-size:.8em;font-weight:700;line-height:1.6em;text-align:center;box-shadow:0 0 0 3px color-mix(in srgb,var(--orange) 35%,transparent)}
+.blk-image figcaption{margin-top:.75em;font-size:.87em;color:var(--muted)}
+.blk-image figcaption ol{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.3em 1.2em}
+.blk-image figcaption li{display:flex;gap:.45em;align-items:center}
+.blk-image figcaption li i{font-style:normal;width:1.45em;height:1.45em;border-radius:50%;background:var(--orange);color:var(--on-accent);font-size:.8em;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.blk-image figcaption p{margin:.4em 0 0}
+
+@container blk (max-width:460px){.tr .xl span:nth-child(even):not(.last){display:none}}
+
+
+/* glossary: term → one plain sentence */
+.blk-glossary dl{margin:0;display:flex;flex-direction:column;gap:.55em}
+.blk-glossary .gi{display:grid;grid-template-columns:minmax(4.5em,max-content) 1fr;gap:.2em .9em;align-items:baseline}
+.blk-glossary dt{font-weight:650;color:var(--text)}
+.blk-glossary dd{margin:0;color:var(--muted);line-height:1.6}
+
+/* ── inline card: the chat bubble / Board tile / pin panel is the frame, so the block's own card frame is dropped ── */
+.blk:not(.plain):not(.blk-prose):not(.blk-callout):not(.blk-quote):not(.blk-sources):not(.blk-error){background:none;border:0;border-radius:0;padding:0}
+.blk-prose{max-width:none}
+.blk-sources{padding:0}
+.ib .bh{margin-bottom:.9em}
+.ib .bh h3:empty{display:none}
+.ib .blk-error{margin:0}
+.ib .blk-error code{font-size:.9em;word-break:break-all;white-space:pre-wrap}
+.ib .blk-error .em{margin-top:.45em}
+.fl-wrap{overflow-x:auto}
+.mx-scroll{overflow-y:hidden;scrollbar-width:thin}
+.mx-scroll:not(.dense){overflow-x:hidden}
+.mini{display:none}
+html[data-surface="board"],html[data-surface="board"] body,html[data-surface="board"] #app{height:100%;margin:0}
+html[data-surface="board"] .ib{height:100%;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+html[data-surface="pinned"] .ib{overscroll-behavior:contain}
+/* narrow / tiny are decided by the script (data-narrow, data-tiny on #ib) from ccb.size, never in the chat */
+.ib[data-narrow="1"],.ib[data-narrow="1"] .blk{font-size:13.5px}
+
+/* tiny (about one cell, or very short): just the key value, big */
+.mini{flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;min-width:0;height:100%;color:var(--tone,var(--text))}
+.mini.t-none,.mini.t-info,.mini.t-neutral{--tone:var(--text)}
+.mini b{font-size:26px;line-height:1.12;font-weight:650;letter-spacing:-.01em;font-variant-numeric:tabular-nums;max-width:100%;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.mini span{font-size:12.5px;color:var(--muted);max-width:100%;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ib[data-tiny="1"]{height:100%;padding:12px}
+.ib[data-tiny="1"] .full{display:none}
+.ib[data-tiny="1"] .mini{display:flex}
+
+/* no background of its own anywhere: the reply bubble / tile / panel shows through */
+html,body,#ccb-root,.ib,.ib .full,.ib .mini{background:transparent}
+</style>
+<div id="ib" class="ib"></div>
+<script>
+(function () {
+  'use strict';
+  var root = document.getElementById('ib');
+  if (!root) { root = document.createElement('div'); root.id = 'ib'; root.className = 'ib'; (document.body || document.documentElement).appendChild(root); }
+  function fatal(e) {
+    var msg = (e && e.message) ? e.message : String(e);
+    try {
+      root.innerHTML = '<aside class="blk blk-error" role="alert"><p><b>行內報告區塊畫不出來</b><span>' + String(msg).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }) + '</span></p></aside>';
+      if (window.ccb && typeof window.ccb.setStatus === 'function') window.ccb.setStatus({ text: '資料有誤', tone: 'bad' });
+    } catch (x) { /* nothing more to do */ }
+  }
+  window.addEventListener('error', function (ev) { if (!ev.error && /ResizeObserver/.test(String(ev.message))) return; fatal(ev.error || ev.message || 'Script error'); });
+  window.addEventListener('unhandledrejection', function (ev) { fatal(ev.reason); });
+  try {
+
+  /* ───────── helpers ───────── */
+  var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  function h(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ESC[c]; }); }
+  function BlockError(path, msg) { this.path = path; this.msg = msg; }
+  function fail(path, msg) { throw new BlockError(path, msg); }
+  function isObj(v) { return v && typeof v === 'object' && !Array.isArray(v); }
+  function str(v, path, req) {
+    if (v == null || v === '') { if (req) fail(path, '缺少 ' + path); return ''; }
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (typeof v !== 'string') fail(path, path + ' 必須是文字');
+    return v;
+  }
+  function arr(v, path, min) {
+    if (!Array.isArray(v)) fail(path, path + ' 必須是陣列');
+    if (v.length < (min || 0)) fail(path, path + ' 至少要有 ' + min + ' 項');
+    return v;
+  }
+  function obj(v, path) { if (!isObj(v)) fail(path, path + ' 必須是物件'); return v; }
+  var nf = new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 });
+  function num(v) { return typeof v === 'number' && isFinite(v) ? nf.format(v) : String(v); }
+  function cut(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+
+  /* ───────── labels (zh-Hant / en) ───────── */
+  var T = {
+    zh: {
+      done: '完成', active: '進行中', pending: '待處理', blocked: '受阻', risk: '有風險', unverified: '未驗證', skipped: '略過',
+      pros: '優點', cons: '缺點', rec: '建議', verdict: '判斷', sources: '依據', today: '今天',
+      items: function (n) { return n + ' 項'; }, doneOf: function (a, b) { return a + ' / ' + b + ' 完成'; },
+      nodes: function (n) { return n + ' 個節點'; }, steps: function (n) { return n + ' 步'; }, rows: function (n) { return n + ' 列'; },
+      opts: function (n) { return n + ' 個選項'; }, terms: function (n) { return n + ' 個名詞'; }, srcs: function (n) { return n + ' 筆依據'; },
+      badData: '資料有誤', badBlock: function (t) { return '「' + t + '」區塊資料有誤'; }, example: '正確格式範例', noteLbl: '備註'
+    },
+    en: {
+      done: 'Done', active: 'In progress', pending: 'Pending', blocked: 'Blocked', risk: 'At risk', unverified: 'Unverified', skipped: 'Skipped',
+      pros: 'Pros', cons: 'Cons', rec: 'Recommended', verdict: 'Verdict', sources: 'Sources', today: 'Today',
+      items: function (n) { return n + (n === 1 ? ' item' : ' items'); }, doneOf: function (a, b) { return a + ' / ' + b + ' done'; },
+      nodes: function (n) { return n + ' nodes'; }, steps: function (n) { return n + ' steps'; }, rows: function (n) { return n + ' rows'; },
+      opts: function (n) { return n + ' options'; }, terms: function (n) { return n + ' terms'; }, srcs: function (n) { return n + ' sources'; },
+      badData: 'Bad data', badBlock: function (t) { return 'Bad "' + t + '" block'; }, example: 'Valid example', noteLbl: 'Note'
+    }
+  };
+  var L = T.zh;
+
+  var STATUSES = ['done', 'active', 'pending', 'blocked', 'risk', 'unverified', 'skipped'];
+  var ST_TONE = { done: 'good', active: 'info', pending: 'warn', blocked: 'bad', risk: 'bad', unverified: 'neutral', skipped: 'neutral' };
+  var TONES = ['good', 'warn', 'bad', 'info', 'neutral'];
+  function status(v, path) {
+    if (v == null || v === '') return '';
+    if (STATUSES.indexOf(v) < 0) fail(path, path + ' 必須是 ' + STATUSES.join(' | ') + ' 其中之一（收到 "' + v + '"）');
+    return v;
+  }
+  function tone(v, path) {
+    if (v == null || v === '') return '';
+    if (TONES.indexOf(v) < 0) fail(path, path + ' 必須是 ' + TONES.join(' | ') + ' 其中之一（收到 "' + v + '"）');
+    return v;
+  }
+  function tc(t) { return 't-' + (t || 'none'); }
+
+  /* ───────── restricted markdown (prose) ───────── */
+  function inline(s) {
+    s = h(s);
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*(?!\*)/g, '$1<em>$2</em>');
+    return s;
+  }
+  function md(text) {
+    var out = [], paras = String(text).replace(/\r/g, '').split(/\n{2,}/);
+    paras.forEach(function (p) {
+      var lines = p.split('\n').filter(function (l) { return l.trim() !== ''; });
+      if (!lines.length) return;
+      var ul = lines.every(function (l) { return /^\s*[-*]\s+/.test(l); });
+      var ol = lines.every(function (l) { return /^\s*\d+[.)]\s+/.test(l); });
+      if (ul) out.push('<ul>' + lines.map(function (l) { return '<li>' + inline(l.replace(/^\s*[-*]\s+/, '')) + '</li>'; }).join('') + '</ul>');
+      else if (ol) out.push('<ol>' + lines.map(function (l) { return '<li>' + inline(l.replace(/^\s*\d+[.)]\s+/, '')) + '</li>'; }).join('') + '</ol>');
+      else out.push('<p>' + lines.map(inline).join('<br>') + '</p>');
+    });
+    return out.join('');
+  }
+  function plainMd(text) { return String(text).replace(/[`*]/g, '').replace(/^\s*[-*]\s+|^\s*\d+[.)]\s+/gm, '').replace(/\s+/g, ' ').trim(); }
+
+  /* ───────── block frame ───────── */
+  function head(b, id) {
+    var t = str(b.title), n = str(b.note);
+    if (!t && !n) return '';
+    return '<header class="bh">' + (t ? '<h3>' + h(t) + '</h3>' : '<h3></h3>') + (n ? '<p>' + h(n) + '</p>' : '') + '</header>';
+  }
+  function fig(cls, b, inner, extra) {
+    return '<figure class="blk blk-' + cls + (extra ? ' ' + extra : '') + '">' + head(b) + inner + '</figure>';
+  }
+
+  /* ───────── renderers: each returns {html, sum:{big, sub, tone}} ───────── */
+  var R = {};
+
+  R.prose = function (b) {
+    var text = str(b.text, 'text', true);
+    return { html: '<div class="blk blk-prose"><div class="md">' + md(text) + '</div></div>', sum: { big: cut(plainMd(text), 40), sub: str(b.title), tone: '' } };
+  };
+
+  R.callout = function (b) {
+    var text = str(b.text, 'text', true), tn = tone(b.tone, 'tone') || 'info', title = str(b.title);
+    var glyph = { good: '✓', warn: '!', bad: '!', info: 'i', neutral: 'i' }[tn];
+    return {
+      html: '<aside class="blk blk-callout ' + tc(tn) + '"><i class="cg" aria-hidden="true">' + glyph + '</i><div>' +
+        (title ? '<p class="ct">' + h(title) + '</p>' : '') + '<p class="cx">' + h(text) + '</p></div></aside>',
+      sum: { big: cut(title || text, 24), sub: title ? cut(text, 30) : '', tone: tn }
+    };
+  };
+
+  R.glossary = function (b) {
+    var items = arr(b.items, 'items', 1);
+    var rows = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      return '<div class="gi"><dt>' + h(str(it.term, p + '.term', true)) + '</dt><dd>' + h(str(it.plain, p + '.plain', true)) + '</dd></div>';
+    }).join('');
+    return { html: fig('glossary', b, '<dl>' + rows + '</dl>'), sum: { big: L.terms(items.length), sub: str(b.title), tone: '' } };
+  };
+
+  R.quote = function (b) {
+    var text = str(b.text, 'text', true), src = str(b.source);
+    return { html: '<blockquote class="blk blk-quote"><p>' + h(text) + '</p>' + (src ? '<footer>' + h(src) + '</footer>' : '') + '</blockquote>', sum: { big: cut(text, 28), sub: cut(src, 24), tone: '' } };
+  };
+
+  R.sources = function (b) {
+    var items = arr(b.items, 'items', 1);
+    var li = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      return '<li><code>' + h(str(it.ref, p + '.ref', true)) + '</code><span>' + h(str(it.text, p + '.text', true)) + '</span></li>';
+    }).join('');
+    return { html: '<nav class="blk blk-sources"><h3>' + h(str(b.title) || L.sources) + '</h3><ul>' + li + '</ul></nav>', sum: { big: L.srcs(items.length), sub: '', tone: '' } };
+  };
+
+  R.kpi = function (b) {
+    var items = arr(b.items, 'items', 1);
+    var out = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      var label = str(it.label, p + '.label', true);
+      if (it.value == null || it.value === '') fail(p + '.value', '缺少 ' + p + '.value');
+      if (typeof it.value !== 'number' && typeof it.value !== 'string') fail(p + '.value', p + '.value 必須是數字或文字');
+      var st = status(it.status, p + '.status'), unit = str(it.unit), delta = str(it.delta), dir = str(it.deltaDir) || 'up_good';
+      if (['up_good', 'down_good', 'neutral'].indexOf(dir) < 0) fail(p + '.deltaDir', p + '.deltaDir 必須是 up_good | down_good | neutral');
+      var dt = '';
+      if (delta) {
+        if (dir === 'neutral') dt = 'neutral';
+        else {
+          var positive = !/^\s*[-−–]/.test(delta);
+          dt = (dir === 'up_good' ? positive : !positive) ? 'good' : 'bad';
+        }
+      }
+      var target = str(it.target);
+      return { st: st, label: label, value: it.value, unit: unit, delta: delta, dt: dt, target: target,
+        html: '<div class="kpi' + (st ? ' ' + tc(ST_TONE[st]) : '') + '"><dt>' + h(label) + '</dt><dd class="kv"><b>' + h(num(it.value)) + '</b>' + (unit ? '<small>' + h(unit) + '</small>' : '') + '</dd>' +
+          ((delta || target) ? '<dd class="kd">' + (delta ? '<span class="dl ' + tc(dt) + '">' + h(delta) + '</span>' : '') + (target ? '<span class="tg">' + h(target) + '</span>' : '') + '</dd>' : '') + '</div>' };
+    });
+    var bar = '';
+    if (b.stack) {
+      var segs = out.slice(1).filter(function (o) { return o.st; });
+      if (segs.length) bar = '<div class="segbar lg" role="img">' + segs.map(function (o) { return '<span class="seg ' + tc(ST_TONE[o.st]) + '" style="flex-grow:' + (Number(o.value) || 1) + '"></span>'; }).join('') + '</div>';
+    }
+    var f = out[0];
+    return {
+      html: fig('kpi', b, '<dl class="kpis">' + out.map(function (o) { return o.html; }).join('') + '</dl>' + bar, 'n' + out.length),
+      sum: { big: num(f.value) + f.unit, sub: f.label + (f.delta ? ' ' + f.delta : ''), tone: f.st ? ST_TONE[f.st] : (f.dt === 'bad' ? 'bad' : '') }
+    };
+  };
+
+  R.progress = function (b) {
+    var items = arr(b.items, 'items', 1), first = null;
+    var li = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      var label = str(it.label, p + '.label', true);
+      if (typeof it.value !== 'number' || !isFinite(it.value) || it.value < 0) fail(p + '.value', p + '.value 必須是 ≥ 0 的數字');
+      var hasMax = typeof it.max === 'number' && it.max > 0, max = hasMax ? it.max : 100;
+      var unit = str(it.unit), st = status(it.status, p + '.status');
+      var pct = Math.max(0, Math.min(100, it.value / max * 100));
+      var tn = st ? ST_TONE[st] : (pct >= 100 ? 'good' : 'info');
+      var txt = hasMax ? num(it.value) + ' / ' + num(max) + (unit ? ' ' + unit : '') : num(it.value) + (unit || '%');
+      if (!first) first = { pct: pct, txt: txt, label: label, tn: tn };
+      return '<li><p><span>' + h(label) + '</span><b>' + h(txt) + '</b></p><div class="track" role="progressbar" aria-label="' + h(label) + '" aria-valuenow="' + it.value + '" aria-valuemin="0" aria-valuemax="' + max + '"><span class="fill ' + tc(tn) + '" style="width:' + Math.round(pct * 10) / 10 + '%"></span></div></li>';
+    }).join('');
+    return { html: fig('progress', b, '<ul class="pg">' + li + '</ul>'), sum: { big: items.length === 1 ? Math.round(first.pct) + '%' : first.txt, sub: items.length === 1 ? first.label : first.label, tone: first.tn === 'info' ? '' : first.tn } };
+  };
+
+  var CK_GLYPH = { done: '✓', active: '◐', pending: '○', blocked: '✕', risk: '!', unverified: '?', skipped: '–' };
+  var CK_ORDER = ['done', 'active', 'pending', 'unverified', 'risk', 'blocked', 'skipped'];
+  R.checklist = function (b) {
+    var items = arr(b.items, 'items', 1), cnt = {};
+    var li = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      var label = str(it.label, p + '.label', true), st = status(it.status, p + '.status');
+      if (!st) fail(p + '.status', '缺少 ' + p + '.status（' + STATUSES.join(' | ') + '）');
+      var note = str(it.note); cnt[st] = (cnt[st] || 0) + 1;
+      return '<li class="' + tc(ST_TONE[st]) + '"><i aria-hidden="true">' + CK_GLYPH[st] + '</i><div><p><span>' + h(label) + '</span><span class="sr-only">（' + L[st] + '）</span></p>' + (note ? '<p class="ckn">' + h(note) + '</p>' : '') + '</div><span class="cks" aria-hidden="true">' + L[st] + '</span></li>';
+    }).join('');
+    var seg = CK_ORDER.filter(function (s) { return cnt[s]; }).map(function (s) { return '<span class="seg ' + tc(ST_TONE[s]) + '" style="flex-grow:' + cnt[s] + '"></span>'; }).join('');
+    var d = cnt.done || 0, tn = (cnt.blocked || cnt.risk) ? 'bad' : d === items.length ? 'good' : '';
+    return {
+      html: fig('checklist', b, '<div class="ck-sum"><b>' + L.doneOf(d, items.length) + '</b><div class="segbar" role="img">' + seg + '</div></div><ul class="ck">' + li + '</ul>'),
+      sum: { big: d + '/' + items.length, sub: str(b.title) || L.done, tone: tn }
+    };
+  };
+
+  R.steps = function (b) {
+    var items = arr(b.items, 'items', 1), d = 0;
+    var li = items.map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      var title = str(it.title, p + '.title', true), tx = str(it.text), st = status(it.status, p + '.status');
+      if (st === 'done') d++;
+      return '<li' + (st ? ' class="s-' + st + '"' : '') + '><i class="n">' + (i + 1) + '</i><div><p class="st">' + h(title) + (st ? '<span class="pill ' + tc(ST_TONE[st]) + '">' + L[st] + '</span>' : '') + '</p>' + (tx ? '<p class="sx">' + h(tx) + '</p>' : '') + '</div></li>';
+    }).join('');
+    return { html: fig('steps', b, '<ol class="stp">' + li + '</ol>'), sum: { big: d + '/' + items.length, sub: str(b.title) || L.steps(items.length), tone: d === items.length ? 'good' : '' } };
+  };
+
+  /* table */
+  var NUMRE = /^[-+−]?(\d[\d,]*)?\.?\d+(e[-+]?\d+)?$/i;
+  function cellInfo(c, p) {
+    if (c == null) return { text: '' };
+    if (typeof c === 'string' || typeof c === 'number') return { text: String(c) };
+    obj(c, p);
+    var text = str(c.text, p + '.text', true), st = status(c.status, p + '.status'), tn = tone(c.tone, p + '.tone');
+    return { text: text, st: st, tn: tn || (st ? ST_TONE[st] : ''), strong: !!c.strong };
+  }
+  function cellHtml(ci) {
+    var t = ci.st === 'skipped' ? '<s>' + h(ci.text) + '</s>' : ci.strong ? '<b>' + h(ci.text) + '</b>' : h(ci.text);
+    if (ci.st || ci.tn) return '<span class="cell-s ' + tc(ci.tn) + '"><i aria-hidden="true"></i>' + t + (ci.st ? '<span class="sr-only">（' + L[ci.st] + '）</span>' : '') + '</span>';
+    return t;
+  }
+  R.table = function (b) {
+    var cols = arr(b.columns, 'columns', 1).map(function (c, i) { return str(c, 'columns[' + i + ']', true); });
+    var rows = arr(b.rows, 'rows', 1).map(function (r, ri) {
+      arr(r, 'rows[' + ri + ']', 1);
+      return cols.map(function (_, ci) { return cellInfo(r[ci], 'rows[' + ri + '][' + ci + ']'); });
+    });
+    var hi = typeof b.highlight === 'number' ? b.highlight : -1;
+    var numCol = cols.map(function (_, ci) { return ci > 0 && rows.every(function (r) { return NUMRE.test(r[ci].text.trim()); }); });
+    var thead = '<thead><tr>' + cols.map(function (c, ci) { return '<th scope="col"' + (numCol[ci] ? ' class="r"' : '') + '>' + h(c) + '</th>'; }).join('') + '</tr></thead>';
+    var tbody = '<tbody>' + rows.map(function (r, ri) {
+      return '<tr' + (ri === hi ? ' class="hi"' : '') + '>' + r.map(function (ci, i) {
+        return i === 0 ? '<th scope="row">' + cellHtml(ci) + '</th>' : '<td' + (numCol[i] ? ' class="r"' : '') + '>' + cellHtml(ci) + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+    var hrow = rows[hi];
+    return {
+      html: fig('table', b, '<div class="tbl-scroll" role="region" aria-label="' + h(str(b.title) || cols.join(' / ')) + '" tabindex="0"><table class="tbl">' + thead + tbody + '</table></div>'),
+      sum: { big: hrow ? cut(hrow[0].text, 14) : L.rows(rows.length), sub: str(b.title) || cut(cols.join(' / '), 30), tone: '' }
+    };
+  };
+
+  /* options */
+  var OP_GLYPH = { good: '●', bad: '○', warn: '◐', info: '●', neutral: '–' };
+  R.options = function (b) {
+    var crit = arr(b.criteria, 'criteria', 1).map(function (c, i) { return str(c, 'criteria[' + i + ']', true); });
+    var opts = arr(b.options, 'options', 1).map(function (o, i) {
+      var p = 'options[' + i + ']'; obj(o, p);
+      var cells = arr(o.cells, p + '.cells', 0).map(function (c, k) {
+        var q = p + '.cells[' + k + ']'; obj(c, q);
+        return { text: str(c.text, q + '.text', true), tone: tone(c.tone, q + '.tone') || 'neutral' };
+      });
+      return { name: str(o.name, p + '.name', true), summary: str(o.summary), rec: !!o.recommended, cells: cells };
+    });
+    var cellH = function (c) { return c ? '<span class="op-c ' + tc(c.tone) + '"><i aria-hidden="true">' + OP_GLYPH[c.tone] + '</i>' + h(c.text) + '</span>' : ''; };
+    var wide = '<div class="op-wide tbl-scroll"><table class="tbl op" style="--n:' + opts.length + '"><thead><tr><td></td>' + opts.map(function (o) {
+      return '<th scope="col"' + (o.rec ? ' class="rec"' : '') + '>' + (o.rec ? '<span class="badge">' + L.rec + '</span>' : '') + '<b>' + h(o.name) + '</b>' + (o.summary ? '<small>' + h(o.summary) + '</small>' : '') + '</th>';
+    }).join('') + '</tr></thead><tbody>' + crit.map(function (c, ci) {
+      return '<tr><th scope="row">' + h(c) + '</th>' + opts.map(function (o) { return '<td' + (o.rec ? ' class="rec"' : '') + '>' + cellH(o.cells[ci]) + '</td>'; }).join('') + '</tr>';
+    }).join('') + '</tbody></table></div>';
+    var narrow = '<div class="op-narrow" aria-hidden="true">' + opts.map(function (o) {
+      return '<section class="op-card' + (o.rec ? ' rec' : '') + '"><p class="oph">' + (o.rec ? '<span class="badge">' + L.rec + '</span>' : '') + '<b>' + h(o.name) + '</b></p>' + (o.summary ? '<p class="ops">' + h(o.summary) + '</p>' : '') +
+        '<dl>' + crit.map(function (c, ci) { return '<div><dt>' + h(c) + '</dt><dd>' + cellH(o.cells[ci]) + '</dd></div>'; }).join('') + '</dl></section>';
+    }).join('') + '</div>';
+    var verdict = str(b.verdict), rec = opts.filter(function (o) { return o.rec; })[0];
+    return {
+      html: fig('options', b, wide + narrow + (verdict ? '<p class="verdict-line"><b>' + L.verdict + '</b>' + h(verdict) + '</p>' : '')),
+      sum: { big: rec ? cut(rec.name, 16) : L.opts(opts.length), sub: rec ? L.rec : (str(b.title) || ''), tone: rec ? 'good' : '' }
+    };
+  };
+
+  R.proscons = function (b) {
+    var side = function (a, p) { return arr(a, p, 1).map(function (s, i) { return str(s, p + '[' + i + ']', true); }); };
+    var pros = side(b.pros, 'pros'), cons = side(b.cons, 'cons'), verdict = str(b.verdict);
+    var col = function (cls, title, g, list) { return '<section class="' + cls + '"><h4>' + title + '</h4><ul>' + list.map(function (s) { return '<li><i aria-hidden="true">' + g + '</i>' + h(s) + '</li>'; }).join('') + '</ul></section>'; };
+    return {
+      html: fig('proscons', b, '<div class="pc">' + col('t-good', L.pros, '+', pros) + col('t-bad', L.cons, '−', cons) + '</div>' + (verdict ? '<p class="verdict-line"><b>' + L.verdict + '</b>' + h(verdict) + '</p>' : '')),
+      sum: { big: '+' + pros.length + ' / −' + cons.length, sub: str(b.title), tone: '' }
+    };
+  };
+
+  /* matrix */
+  R.matrix = function (b) {
+    var lab = function (v, p) {
+      return arr(v, p, 1).map(function (x, i) {
+        if (typeof x === 'string' || typeof x === 'number') return { label: String(x), st: '' };
+        obj(x, p + '[' + i + ']'); return { label: str(x.label, p + '[' + i + '].label', true), st: status(x.status, p + '[' + i + '].status') };
+      });
+    };
+    var rows = lab(b.rows, 'rows'), cols = lab(b.cols, 'cols'), cells = arr(b.cells, 'cells', 1);
+    var thead = '<thead><tr><td></td>' + cols.map(function (c) { return '<th scope="col">' + (c.st ? '<span class="pill ' + tc(ST_TONE[c.st]) + '">' + h(c.label) + '</span>' : h(c.label)) + '</th>'; }).join('') + '</tr></thead>';
+    var body = '<tbody>' + rows.map(function (r, ri) {
+      var row = cells[ri] == null ? [] : arr(cells[ri], 'cells[' + ri + ']');
+      return '<tr><th scope="row">' + h(r.label) + '</th>' + cols.map(function (c, ci) {
+        var cell = row[ci];
+        if (Array.isArray(cell) && cell.length) {
+          return '<td class="mc on">' + cell.map(function (n) { return '<span class="chip ' + tc(c.st ? ST_TONE[c.st] : 'info') + '">' + h(String(n)) + '</span>'; }).join('') + '</td>';
+        }
+        if (typeof cell === 'number' || (typeof cell === 'string' && cell)) return '<td class="mc on num">' + h(String(cell)) + '</td>';
+        return '<td class="mc"><span class="sr-only">–</span></td>';
+      }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+    var dense = rows.length > 8 || cols.length > 8;
+    return {
+      html: fig('matrix', b, '<div class="mx-scroll' + (dense ? ' dense' : '') + '"><table class="mx' + (dense ? ' dense' : '') + '" style="--cols:' + cols.length + '">' + thead + body + '</table></div>'),
+      sum: { big: rows.length + '×' + cols.length, sub: str(b.title), tone: '' }
+    };
+  };
+
+  /* timeline: events or gantt */
+  var DAY = 86400000;
+  function pdate(s, p) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) fail(p, p + ' 必須是 YYYY-MM-DD（收到 "' + s + '"）');
+    return Date.UTC(+m[1], +m[2] - 1, +m[3]) / DAY;
+  }
+  R.timeline = function (b) {
+    var items = arr(b.items, 'items', 1).map(function (it, i) {
+      var p = 'items[' + i + ']'; obj(it, p);
+      return { label: str(it.label, p + '.label', true), start: str(it.start, p + '.start', true), end: str(it.end), st: status(it.status, p + '.status'), lane: str(it.lane), text: str(it.text), p: p };
+    });
+    var focus = items.filter(function (i) { return i.st === 'active' || i.st === 'blocked' || i.st === 'risk'; })[0] || items[items.length - 1];
+    var sum = { big: cut(focus.label, 18), sub: focus.start, tone: focus.st ? ST_TONE[focus.st] : '' };
+    if (!items.some(function (i) { return i.end; })) {
+      var li = items.map(function (i) {
+        return '<li class="' + tc(i.st ? ST_TONE[i.st] : '') + '"><time>' + h(i.start) + '</time><i aria-hidden="true"></i><div><p class="evl">' + h(i.label) + (i.st ? '<span class="sr-only">（' + L[i.st] + '）</span>' : '') + '</p>' + (i.text ? '<p class="evt">' + h(i.text) + '</p>' : '') + '</div></li>';
+      }).join('');
+      return { html: fig('timeline', b, '<ol class="ev">' + li + '</ol>'), sum: sum };
+    }
+    /* gantt */
+    items.forEach(function (i) { i.s = pdate(i.start, i.p + '.start'); i.e = i.end ? pdate(i.end, i.p + '.end') : null; if (i.e != null && i.e < i.s) fail(i.p + '.end', i.p + '.end 不能早於 start'); });
+    var todayS = str(b.today), today = todayS ? pdate(todayS, 'today') : null;
+    var mn = Math.min.apply(null, items.map(function (i) { return i.s; }).concat(today == null ? [] : [today]));
+    var mx = Math.max.apply(null, items.map(function (i) { return i.e == null ? i.s : i.e; }).concat(today == null ? [] : [today]));
+    var span = Math.max(1, mx - mn);
+    var X = function (d) { return 1.9 + 96.2 * (d - mn) / span; };
+    var fmt = function (d) { var dt = new Date(d * DAY); return String(dt.getUTCMonth() + 1).padStart(2, '0') + '/' + String(dt.getUTCDate()).padStart(2, '0'); };
+    var ticks = [];
+    if (span > 150) { for (var d0 = new Date(mn * DAY), y = d0.getUTCFullYear(), mo = d0.getUTCMonth() + 1; ; mo++) { var dd = Date.UTC(y, mo, 1) / DAY; if (dd > mx) break; ticks.push(dd); } }
+    else { for (var d = mn; d <= mx; d++) if (new Date(d * DAY).getUTCDay() === 0) ticks.push(d); }
+    if (!ticks.length) ticks = [mn, mx];
+    var lanes = [], byLane = {};
+    items.forEach(function (i) { var k = i.lane; if (!byLane[k]) { byLane[k] = { name: k, items: [] }; lanes.push(byLane[k]); } byLane[k].items.push(i); });
+    var rowsH = lanes.map(function (ln) {
+      return '<div class="glane">' + (ln.name ? '<p class="glh">' + h(ln.name) + '</p>' : '') + ln.items.map(function (i) {
+        var rng = i.end ? i.start + ' – ' + i.end : i.start, tn = i.st ? ST_TONE[i.st] : '';
+        var mark = i.end ? '<span class="gbar ' + tc(tn) + '" style="left:' + X(i.s).toFixed(1) + '%;width:' + (96.2 * (i.e - i.s) / span).toFixed(1) + '%"></span>' : '<span class="gms ' + tc(tn) + '" style="left:' + X(i.s).toFixed(1) + '%"></span>';
+        return '<div class="gr"><p class="gl-l">' + h(i.label) + '<span class="sr-only">：' + h(rng) + (i.st ? '（' + L[i.st] + '）' : '') + '</span></p><div class="gtrk">' + mark + '</div></div>';
+      }).join('') + '</div>';
+    }).join('');
+    var inner = '<div class="gt" role="img" aria-label="' + h(items.map(function (i) { return i.label + '：' + i.start + (i.end ? ' – ' + i.end : ''); }).join('；')) + '"><div class="gx" aria-hidden="true"><span></span><div>' +
+      ticks.map(function (t) { return '<span style="left:' + X(t).toFixed(1) + '%">' + fmt(t) + '</span>'; }).join('') + '</div></div><div class="gb">' +
+      ticks.map(function (t) { return '<i class="gl" style="--x:' + ((X(t)) / 100).toFixed(4) + '" aria-hidden="true"></i>'; }).join('') +
+      (today == null ? '' : '<i class="today" style="--x:' + (X(today) / 100).toFixed(4) + '" aria-hidden="true"><em>' + L.today + '</em></i>') + rowsH + '</div></div>';
+    return { html: fig('timeline', b, inner), sum: sum };
+  };
+
+  /* roadmap */
+  R.roadmap = function (b) {
+    var total = 0;
+    var cols = arr(b.columns, 'columns', 1).map(function (c, i) {
+      var p = 'columns[' + i + ']'; obj(c, p);
+      var items = arr(c.items, p + '.items', 0).map(function (it, k) {
+        var q = p + '.items[' + k + ']'; obj(it, q);
+        return { label: str(it.label, q + '.label', true), st: status(it.status, q + '.status'), note: str(it.note) };
+      });
+      total += items.length;
+      return { title: str(c.title, p + '.title', true), items: items };
+    });
+    var inner = '<div class="rm" style="--n:' + cols.length + '">' + cols.map(function (c) {
+      var now = /^(現在|目前|進行中|now|in progress|doing)$/i.test(c.title.trim());
+      return '<section' + (now ? ' class="now"' : '') + '><h4><span>' + h(c.title) + '</span><em>' + L.items(c.items.length) + '</em></h4><ul>' + c.items.map(function (it) {
+        var meta = (it.st ? '<span class="sc">' + L[it.st] + '</span>' : '') + (it.st && it.note ? ' · ' : '') + (it.note ? h(it.note) : '');
+        return '<li class="chipcard ' + tc(it.st ? ST_TONE[it.st] : '') + '"><p class="cct">' + h(it.label) + '</p>' + (meta ? '<p class="ccm">' + meta + '</p>' : '') + '</li>';
+      }).join('') + '</ul></section>';
+    }).join('') + '</div>';
+    var bad = 0; cols.forEach(function (c) { c.items.forEach(function (i) { if (i.st === 'blocked' || i.st === 'risk') bad++; }); });
+    return { html: fig('roadmap', b, inner), sum: { big: L.items(total), sub: str(b.title) || cut(cols.map(function (c) { return c.title; }).join(' / '), 30), tone: bad ? 'bad' : '' } };
+  };
+
+  /* sequence */
+  R.sequence = function (b) {
+    var actors = arr(b.actors, 'actors', 2).map(function (a, i) { return str(a, 'actors[' + i + ']', true); });
+    var n = actors.length;
+    var steps = arr(b.steps, 'steps', 1).map(function (s, i) {
+      var p = 'steps[' + i + ']'; obj(s, p);
+      var f = actors.indexOf(str(s.from, p + '.from', true)), t = actors.indexOf(str(s.to, p + '.to', true));
+      if (f < 0) fail(p + '.from', p + '.from 必須是 actors 之一（收到 "' + s.from + '"）');
+      if (t < 0) fail(p + '.to', p + '.to 必須是 actors 之一（收到 "' + s.to + '"）');
+      var kind = str(s.kind) || 'call';
+      if (['call', 'reply', 'note'].indexOf(kind) < 0) fail(p + '.kind', p + '.kind 必須是 call | reply | note');
+      return { f: f, t: t, label: str(s.label, p + '.label', true), kind: f === t ? 'note' : kind, st: status(s.status, p + '.status') };
+    });
+    var lis = steps.map(function (s, i) {
+      var cls = tc(s.st ? ST_TONE[s.st] : ''), num_ = '<b>' + (i + 1) + '</b>';
+      if (s.kind === 'note') return '<li class="' + cls + '"><span class="sqn" style="grid-column:' + (s.f + 1) + ' / span 1">' + num_ + h(s.label) + '</span></li>';
+      var lo = Math.min(s.f, s.t), sp = Math.abs(s.t - s.f) + 1, dir = s.t > s.f ? 'r' : 'l';
+      return '<li class="' + cls + '"><span class="sqm ' + dir + (s.kind === 'reply' ? ' reply' : '') + '" style="grid-column:' + (lo + 1) + ' / span ' + sp + ';--inset:' + (50 / sp) + '%"><em>' + num_ + h(s.label) + '</em><i></i></span></li>';
+    }).join('');
+    var bad = steps.filter(function (s) { return s.st === 'blocked' || s.st === 'risk'; })[0];
+    return {
+      html: fig('sequence', b, '<div class="sq" style="--n:' + n + '"><div class="sqa" aria-hidden="true">' + actors.map(function (a) { return '<span>' + h(a) + '</span>'; }).join('') + '</div><ol class="sqs">' + lis + '</ol></div>'),
+      sum: { big: bad ? cut(bad.label, 18) : L.steps(steps.length), sub: str(b.title), tone: bad ? 'bad' : '' }
+    };
+  };
+
+  /* image */
+  R.image = function (b) {
+    var src = str(b.src, 'src', true), alt = str(b.alt, 'alt', true), cap = str(b.caption);
+    if (/^data:image\/svg|\.svg(\?|$)/i.test(src)) fail('src', 'SVG 圖片不支援，請用 PNG / JPEG');
+    if (!/^data:image\//i.test(src)) { var u = typeof ccb.image === 'function' ? ccb.image(src) : ''; if (!u) fail('src', '找不到圖片檔：' + src); src = u; }
+    var an = (b.annotations == null ? [] : arr(b.annotations, 'annotations', 0)).map(function (a, i) {
+      var p = 'annotations[' + i + ']'; obj(a, p);
+      if (typeof a.x !== 'number' || typeof a.y !== 'number') fail(p, p + '.x / .y 必須是 0–1 的數字');
+      return { x: a.x, y: a.y, label: str(a.label, p + '.label', true) };
+    });
+    var fc = (an.length ? '<ol>' + an.map(function (a, i) { return '<li><i>' + (i + 1) + '</i>' + h(a.label) + '</li>'; }).join('') + '</ol>' : '') + (cap ? '<p>' + h(cap) + '</p>' : '');
+    return {
+      html: fig('image', b, '<div class="im"><img alt="' + h(alt) + '" src="' + h(src) + '">' + an.map(function (a, i) { return '<span class="ia" style="left:' + (a.x * 100) + '%;top:' + (a.y * 100) + '%">' + (i + 1) + '</span>'; }).join('') + '</div>' + (fc ? '<figcaption>' + fc + '</figcaption>' : '')),
+      sum: { big: cut(str(b.title) || alt, 20), sub: '', tone: '' }
+    };
+  };
+
+  /* ───────── flowchart: small layered layout, orthogonal edges ───────── */
+  function tw(text, px) {
+    var w = 0, s = String(text);
+    for (var i = 0; i < s.length; i++) w += /[⺀-鿿＀-￯　-〿]/.test(s[i]) ? px * 0.97 : px * 0.55;
+    return w;
+  }
+  function roundPath(pts, r) {
+    var d = 'M' + f1(pts[0][0]) + ' ' + f1(pts[0][1]);
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i], a = pts[i - 1], nx = pts[i + 1];
+      if (!nx) { d += 'L' + f1(p[0]) + ' ' + f1(p[1]); break; }
+      var l1 = Math.abs(p[0] - a[0]) + Math.abs(p[1] - a[1]), l2 = Math.abs(nx[0] - p[0]) + Math.abs(nx[1] - p[1]);
+      var rr = Math.min(r, l1 / 2, l2 / 2);
+      var sx = Math.sign(p[0] - a[0]), sy = Math.sign(p[1] - a[1]), ex = Math.sign(nx[0] - p[0]), ey = Math.sign(nx[1] - p[1]);
+      d += 'L' + f1(p[0] - sx * rr) + ' ' + f1(p[1] - sy * rr) + 'Q' + f1(p[0]) + ' ' + f1(p[1]) + ' ' + f1(p[0] + ex * rr) + ' ' + f1(p[1] + ey * rr);
+    }
+    return d;
+  }
+  function f1(v) { return Math.round(v * 10) / 10; }
+
+  function layoutFlow(nodes, edges, dir) {
+    var LR = dir !== 'TB', n = nodes.length, idx = {};
+    nodes.forEach(function (nd, i) { idx[nd.id] = i; });
+    var out = nodes.map(function () { return []; });
+    edges.forEach(function (e, i) { out[e.f].push({ t: e.t, i: i }); });
+    /* back edges via DFS */
+    var state = new Array(n).fill(0), back = {}, order = [];
+    function dfs(u) { state[u] = 1; out[u].forEach(function (o) { if (state[o.t] === 1 || o.t === u) back[o.i] = 1; else if (state[o.t] === 0) dfs(o.t); }); state[u] = 2; order.push(u); }
+    for (var s = 0; s < n; s++) if (state[s] === 0) dfs(s);
+    var fwd = edges.map(function (e, i) { return !back[i] && e.f !== e.t; });
+    var rank = new Array(n).fill(0);
+    order.reverse().forEach(function (u) { out[u].forEach(function (o) { if (fwd[o.i]) rank[o.t] = Math.max(rank[o.t], rank[u] + 1); }); });
+    var nr = Math.max.apply(null, rank) + 1, ranks = [];
+    for (var r = 0; r < nr; r++) ranks.push([]);
+    nodes.forEach(function (_, i) { ranks[rank[i]].push(i); });
+    /* barycenter ordering */
+    var pos = new Array(n);
+    function setPos() { ranks.forEach(function (rk) { rk.forEach(function (v, k) { pos[v] = k; }); }); }
+    setPos();
+    for (var it = 0; it < 4; it++) {
+      var down = it % 2 === 0;
+      for (var q = down ? 1 : nr - 2; down ? q < nr : q >= 0; q += down ? 1 : -1) {
+        var bc = {};
+        ranks[q].forEach(function (v) {
+          var s_ = 0, c_ = 0;
+          edges.forEach(function (e, i) {
+            if (!fwd[i]) return;
+            if (down && e.t === v && rank[e.f] === q - 1) { s_ += pos[e.f]; c_++; }
+            if (!down && e.f === v && rank[e.t] === q + 1) { s_ += pos[e.t]; c_++; }
+          });
+          bc[v] = c_ ? s_ / c_ : pos[v];
+        });
+        ranks[q].sort(function (a, b) { return bc[a] - bc[b] || a - b; });
+        setPos();
+      }
+    }
+    /* node sizes */
+    nodes.forEach(function (nd) {
+      var w, hgt;
+      if (nd.kind === 'decision') { w = Math.max(104, tw(nd.label, 14) + 56); hgt = 40; }
+      else if (nd.kind === 'start' || nd.kind === 'end') { w = Math.max(72, tw(nd.label, 14) + 44); hgt = 40; }
+      else {
+        var sub = (nd.st ? L[nd.st] + (nd.sub ? ' · ' : '') : '') + (nd.sub || '');
+        hgt = sub ? 56 : 40; w = Math.max(104, tw(nd.label, 14) + 32, sub ? tw(sub, 12) + 32 : 0);
+      }
+      nd.w = Math.ceil(w); nd.h = hgt;
+    });
+    /* labels widen the gap between ranks */
+    var gap = new Array(nr).fill(LR ? 44 : 40);
+    edges.forEach(function (e, i) {
+      if (!e.label) return;
+      var span = Math.abs(rank[e.t] - rank[e.f]);
+      if (span === 1 && fwd[i]) { var rr = Math.min(rank[e.f], rank[e.t]); gap[rr] = Math.max(gap[rr], LR ? tw(e.label, 12) + 36 : 76); }
+    });
+    var along = function (v) { return LR ? nodes[v].w : nodes[v].h; }, cross = function (v) { return LR ? nodes[v].h : nodes[v].w; };
+    var rankPos = [], rankExt = [], cur = 0;
+    for (var r2 = 0; r2 < nr; r2++) {
+      rankExt[r2] = Math.max.apply(null, ranks[r2].map(along));
+      rankPos[r2] = cur; cur += rankExt[r2] + gap[r2];
+    }
+    var alongTotal = cur - gap[nr - 1];
+    var CG = 20, ctr = new Array(n); /* cross start per node */
+    var stackLen = ranks.map(function (rk) { return rk.reduce(function (s_, v) { return s_ + cross(v); }, 0) + CG * (rk.length - 1); });
+    var maxLen = Math.max.apply(null, stackLen);
+    ranks.forEach(function (rk, ri) { var c0 = (maxLen - stackLen[ri]) / 2; rk.forEach(function (v) { ctr[v] = c0; c0 += cross(v) + CG; }); });
+    for (var pass = 0; pass < 6; pass++) {
+      var dn = pass % 2 === 0;
+      for (var ri = dn ? 1 : nr - 2; dn ? ri < nr : ri >= 0; ri += dn ? 1 : -1) {
+        var rk = ranks[ri], want = rk.map(function (v) {
+          var sm = 0, ct = 0;
+          edges.forEach(function (e, i) {
+            if (!fwd[i]) return;
+            var o = e.t === v && rank[e.f] === ri + (dn ? -1 : 1) ? e.f : e.f === v && rank[e.t] === ri + (dn ? -1 : 1) ? e.t : -1;
+            if (o >= 0) { sm += ctr[o] + cross(o) / 2; ct++; }
+          });
+          return ct ? sm / ct - cross(v) / 2 : ctr[v];
+        });
+        var c1 = 0, placed = [];
+        rk.forEach(function (v, k) { c1 = k ? Math.max(want[k], placed[k - 1] + cross(rk[k - 1]) + CG) : want[k]; placed.push(c1); });
+        var shift = 0; rk.forEach(function (v, k) { shift += want[k] - placed[k]; }); shift = rk.length ? shift / rk.length : 0;
+        if (shift > 0) { /* pushed right: nothing to pull back */ shift = 0; }
+        rk.forEach(function (v, k) { ctr[v] = placed[k] + shift; });
+        var mnc = Math.min.apply(null, rk.map(function (v) { return ctr[v]; }));
+        if (mnc < 0) rk.forEach(function (v) { ctr[v] -= mnc; });
+      }
+      var gmin = Math.min.apply(null, ctr); if (gmin !== 0) for (var z = 0; z < n; z++) ctr[z] -= gmin;
+    }
+    var PAD = 4, crossMax = Math.max.apply(null, nodes.map(function (_, v) { return ctr[v] + cross(v); }));
+    var box = nodes.map(function (nd, v) {
+      var a = rankPos[rank[v]] + (rankExt[rank[v]] - along(v)) / 2, c = ctr[v];
+      return LR ? { x: PAD + a, y: PAD + c, w: nd.w, h: nd.h } : { x: PAD + c, y: PAD + a, w: nd.w, h: nd.h };
+    });
+    /* ports */
+    var inSide = LR ? 'left' : 'top', outSide = LR ? 'right' : 'bottom';
+    var portsOf = {}; /* node|side → [{e, other}] */
+    function addPort(v, side, e, other) { var k = v + '|' + side; (portsOf[k] = portsOf[k] || []).push({ e: e, other: other }); }
+    edges.forEach(function (e, i) {
+      var isBack = !!back[i] || e.f === e.t;
+      if (isBack) { addPort(e.f, inSide, i, e.t); addPort(e.t, outSide, i, e.f); }
+      else { addPort(e.f, outSide, i, e.t); addPort(e.t, inSide, i, e.f); }
+    });
+    var portPos = {};
+    Object.keys(portsOf).forEach(function (k) {
+      var v = +k.split('|')[0], list = portsOf[k];
+      list.sort(function (a, b) { var A = ctr[a.other] + cross(a.other) / 2, B = ctr[b.other] + cross(b.other) / 2; return A - B || a.e - b.e; });
+      var sz = cross(v), step = Math.min(13.3, (sz - 14) / Math.max(list.length, 1));
+      list.forEach(function (p, j) { portPos[k + '|' + p.e] = (sz / 2) + (j - (list.length - 1) / 2) * step; });
+    });
+    function port(v, side, i) {
+      var b = box[v], off = portPos[v + '|' + side + '|' + i];
+      if (LR) return side === 'left' ? [b.x, b.y + off] : [b.x + b.w, b.y + off];
+      return side === 'top' ? [b.x + off, b.y] : [b.x + off, b.y + b.h];
+    }
+    /* routes */
+    var lanes = 0, laneBase = PAD + crossMax + 14, gapCount = {}, paths = [], maxLab = 0;
+    var pairIdx = {};
+    edges.forEach(function (e, i) {
+      var isBack = !!back[i] || e.f === e.t, rs = rank[e.t] - rank[e.f];
+      var a, b2, pts;
+      if (!isBack && rs === 1) {
+        a = port(e.f, outSide, i); b2 = port(e.t, inSide, i);
+        var gs = rankPos[rank[e.f]] + rankExt[rank[e.f]] + PAD, ge = rankPos[rank[e.t]] + PAD;
+        var key = rank[e.f]; pairIdx[key] = (pairIdx[key] || 0) + 1;
+        var m = gs + (ge - gs) * 0.5;
+        /* a small offset between the two ports would draw a kink: snap to one straight line when both nodes allow it */
+        var ci = LR ? 1 : 0, ba = box[e.f], bb = box[e.t];
+        var lo = Math.max(LR ? ba.y : ba.x, LR ? bb.y : bb.x) + 8, hi = Math.min(LR ? ba.y + ba.h : ba.x + ba.w, LR ? bb.y + bb.h : bb.x + bb.w) - 8;
+        if (Math.abs(a[ci] - b2[ci]) <= 14 && lo <= hi) { var sn = Math.min(hi, Math.max(lo, (a[ci] + b2[ci]) / 2)); a[ci] = sn; b2[ci] = sn; }
+        if (LR) pts = (Math.abs(a[1] - b2[1]) < 0.5) ? [a, b2] : [a, [m, a[1]], [m, b2[1]], b2];
+        else pts = (Math.abs(a[0] - b2[0]) < 0.5) ? [a, b2] : [a, [a[0], m], [b2[0], m], b2];
+      } else {
+        var k = lanes++;
+        if (isBack) { a = port(e.f, inSide, i); b2 = port(e.t, outSide, i); } else { a = port(e.f, outSide, i); b2 = port(e.t, inSide, i); }
+        var lane = laneBase + k * 10;
+        if (LR) {
+          var xa = isBack ? a[0] - 14 - k * 3 : a[0] + 14 + k * 3, xb = isBack ? b2[0] + 14 + k * 3 : b2[0] - 14 - k * 3;
+          if (e.f === e.t) { xa = a[0] - 14; xb = b2[0] + 14; }
+          pts = [a, [xa, a[1]], [xa, lane], [xb, lane], [xb, b2[1]], b2];
+        } else {
+          var ya = isBack ? a[1] - 14 - k * 3 : a[1] + 14 + k * 3, yb = isBack ? b2[1] + 14 + k * 3 : b2[1] - 14 - k * 3;
+          var lx = PAD + crossMax + 14 + k * 10;
+          pts = [a, [a[0], ya], [lx, ya], [lx, yb], [b2[0], yb], b2];
+        }
+        var cleaned = [pts[0]]; for (var z2 = 1; z2 < pts.length; z2++) { var pr = cleaned[cleaned.length - 1]; if (Math.abs(pr[0] - pts[z2][0]) > 0.01 || Math.abs(pr[1] - pts[z2][1]) > 0.01) cleaned.push(pts[z2]); }
+        pts = cleaned;
+      }
+      /* label on the longest segment, beside the line */
+      var lab = null;
+      if (e.label) {
+        var best = 0, bs = null;
+        for (var s3 = 0; s3 + 1 < pts.length; s3++) { var len = Math.abs(pts[s3 + 1][0] - pts[s3][0]) + Math.abs(pts[s3 + 1][1] - pts[s3][1]); if (len > best) { best = len; bs = [pts[s3], pts[s3 + 1]]; } }
+        var lw = Math.ceil(tw(e.label, 12)) + 12, horiz = Math.abs(bs[1][1] - bs[0][1]) < 0.5, mx = (bs[0][0] + bs[1][0]) / 2, my = (bs[0][1] + bs[1][1]) / 2;
+        lab = horiz ? { x: mx - lw / 2, y: my + 5, w: lw, t: e.label } : { x: mx - lw - 5, y: my - 9, w: lw, t: e.label };
+      }
+      paths.push({ d: roundPath(pts, 8), dash: edges[i].dash, lab: lab });
+    });
+    /* bounds */
+    var W = PAD * 2 + (LR ? alongTotal : crossMax), H = PAD * 2 + (LR ? crossMax : alongTotal);
+    if (lanes) { if (LR) H = Math.max(H, laneBase + (lanes - 1) * 10 + PAD + 4); else W = Math.max(W, PAD + crossMax + 14 + (lanes - 1) * 10 + PAD + 4); }
+    var shiftX = 0, shiftY = 0;
+    paths.forEach(function (p) { if (p.lab) { shiftX = Math.min(shiftX, p.lab.x - 2); W = Math.max(W, p.lab.x + p.lab.w + 4); H = Math.max(H, p.lab.y + 22); } });
+    return { W: Math.ceil(W - shiftX), H: Math.ceil(H), box: box, paths: paths, shiftX: -shiftX };
+  }
+
+  var flowSeq = 0;
+  R.flowchart = R.flow = function (b) {
+    var dir = str(b.dir) || 'LR';
+    if (dir !== 'LR' && dir !== 'TB') fail('dir', 'dir 必須是 LR 或 TB');
+    var kinds = ['step', 'decision', 'start', 'end'], seen = {};
+    var nodes = arr(b.nodes, 'nodes', 2).map(function (nd, i) {
+      var p = 'nodes[' + i + ']'; obj(nd, p);
+      var id = str(nd.id, p + '.id', true);
+      if (seen[id]) fail(p + '.id', '節點 id 重複："' + id + '"'); seen[id] = 1;
+      var kind = str(nd.kind) || 'step';
+      if (kinds.indexOf(kind) < 0) fail(p + '.kind', p + '.kind 必須是 ' + kinds.join(' | '));
+      return { id: id, label: str(nd.label, p + '.label', true), sub: str(nd.sub), st: status(nd.status, p + '.status'), kind: kind };
+    });
+    var idx = {}; nodes.forEach(function (nd, i) { idx[nd.id] = i; });
+    var edges = (b.edges == null ? [] : arr(b.edges, 'edges', 0)).map(function (e, i) {
+      var p = 'edges[' + i + ']'; obj(e, p);
+      var f = str(e.from, p + '.from', true), t = str(e.to, p + '.to', true);
+      if (!(f in idx)) fail(p + '.from', p + '.from 找不到節點 "' + f + '"（nodes 的 id：' + nodes.map(function (n) { return n.id; }).join(', ') + '）');
+      if (!(t in idx)) fail(p + '.to', p + '.to 找不到節點 "' + t + '"（nodes 的 id：' + nodes.map(function (n) { return n.id; }).join(', ') + '）');
+      var kind = str(e.kind) || 'solid';
+      if (kind !== 'solid' && kind !== 'dashed') fail(p + '.kind', p + '.kind 必須是 solid 或 dashed');
+      return { f: idx[f], t: idx[t], label: str(e.label), dash: kind === 'dashed' };
+    });
+    var uid = 'ibf' + (++flowSeq);
+    function draw(d, tag) {
+      var lay = layoutFlow(nodes, edges, d), mk = uid + tag;
+      var svg = '<svg class="fl ' + tag + '" viewBox="0 0 ' + lay.W + ' ' + lay.H + '" width="' + lay.W + '" height="' + lay.H + '" style="max-width:' + lay.W + 'px" role="img" aria-label="' + h(nodes.map(function (n) { return n.label; }).join(' → ')) + '">' +
+        '<defs><marker id="' + mk + '" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" class="ah"></path></marker></defs>' +
+        '<g transform="translate(' + lay.shiftX + ' 0)">' +
+        lay.paths.map(function (p) { return '<path class="edge' + (p.dash ? ' dash' : '') + '" d="' + p.d + '" marker-end="url(#' + mk + ')"></path>'; }).join('') +
+        lay.paths.map(function (p) { return p.lab ? '<g class="el" transform="translate(' + f1(p.lab.x) + ' ' + f1(p.lab.y) + ')"><rect width="' + p.lab.w + '" height="18" rx="6"></rect><text x="' + p.lab.w / 2 + '" y="13" text-anchor="middle">' + h(p.lab.t) + '</text></g>' : ''; }).join('') +
+        nodes.map(function (nd, v) {
+          var bx = lay.box[v], tn = nd.st ? ST_TONE[nd.st] : '', hot = tn === 'bad' ? ' hot' : '';
+          var g = '<g class="nd k-' + nd.kind + ' ' + tc(tn) + hot + '" transform="translate(' + f1(bx.x) + ' ' + f1(bx.y) + ')">';
+          if (nd.kind === 'decision') {
+            g += '<polygon class="nb" points="10,0 ' + (bx.w - 10) + ',0 ' + bx.w + ',20 ' + (bx.w - 10) + ',40 10,40 0,20"></polygon><text class="nt" x="' + bx.w / 2 + '" y="25" text-anchor="middle">' + h(nd.label) + '</text>';
+          } else if (nd.kind === 'start' || nd.kind === 'end') {
+            g += '<rect class="nb" width="' + bx.w + '" height="40" rx="20"></rect><text class="nt" x="' + bx.w / 2 + '" y="25" text-anchor="middle">' + h(nd.label) + '</text>';
+          } else {
+            g += '<rect class="nb" width="' + bx.w + '" height="' + bx.h + '" rx="12"></rect>' + (nd.st ? '<rect class="sb" x="0" y="10" width="3" height="' + (bx.h - 20) + '" rx="1.5"></rect>' : '') +
+              '<text class="nt" x="16" y="25" text-anchor="start">' + h(nd.label) + '</text>';
+            if (nd.st || nd.sub) g += '<text class="ns" x="16" y="44" text-anchor="start">' + (nd.st ? '<tspan class="sc">' + L[nd.st] + '</tspan>' : '') + (nd.st && nd.sub ? ' · ' : '') + h(nd.sub) + '</text>';
+          }
+          return g + '</g>';
+        }).join('') + '</g></svg>';
+      return svg;
+    }
+    var wide = draw(dir, 'wide'), narrow = dir === 'LR' ? draw('TB', 'narrow') : '';
+    var bad = nodes.filter(function (n) { return n.st === 'blocked' || n.st === 'risk'; })[0];
+    return {
+      html: fig('flowchart', b, '<div class="fl-wrap">' + wide + narrow + '</div>', narrow ? 'has-narrow' : ''),
+      sum: { big: bad ? cut(bad.label, 16) : L.nodes(nodes.length), sub: bad ? L[bad.st] : str(b.title), tone: bad ? 'bad' : '' }
+    };
+  };
+
+  /* ───────── data → block ───────── */
+  var TYPES = ['kpi', 'table', 'options', 'proscons', 'checklist', 'progress', 'timeline', 'roadmap', 'steps', 'callout', 'matrix', 'flowchart', 'sequence', 'prose', 'quote', 'glossary', 'sources', 'image'];
+  var EX = {
+    kpi: '{"type":"kpi","items":[{"label":"冷啟動","value":1.4,"unit":"s","delta":"-42%","deltaDir":"down_good"}]}',
+    table: '{"type":"table","columns":["工作線","狀態"],"rows":[["面板",{"text":"已安裝","status":"done"}]]}',
+    options: '{"type":"options","criteria":["成本","風險"],"options":[{"name":"A","recommended":true,"cells":[{"text":"低","tone":"good"},{"text":"中","tone":"warn"}]},{"name":"B","cells":[{"text":"高","tone":"bad"},{"text":"低","tone":"good"}]}]}',
+    proscons: '{"type":"proscons","pros":["快"],"cons":["貴"],"verdict":"值得"}',
+    checklist: '{"type":"checklist","items":[{"label":"安裝","status":"done"},{"label":"同步","status":"blocked","note":"等 API"}]}',
+    progress: '{"type":"progress","items":[{"label":"遷移","value":34,"max":52,"status":"active"}]}',
+    timeline: '{"type":"timeline","items":[{"start":"10/27 21:10","label":"上線","status":"done"}]}',
+    roadmap: '{"type":"roadmap","columns":[{"title":"現在","items":[{"label":"IPC","status":"active"}]},{"title":"之後","items":[{"label":"打包"}]}]}',
+    steps: '{"type":"steps","items":[{"title":"補 API","text":"改讀 /bots","status":"active"},{"title":"測試"}]}',
+    callout: '{"type":"callout","tone":"warn","title":"還沒驗證","text":"數字來自開發機。"}',
+    matrix: '{"type":"matrix","rows":["P0","P1"],"cols":["受阻","完成"],"cells":[[["安裝"],null],[null,["面板"]]]}',
+    flowchart: '{"type":"flowchart","nodes":[{"id":"a","label":"實作","status":"done"},{"id":"b","label":"安裝","status":"blocked"}],"edges":[{"from":"a","to":"b"}]}',
+    sequence: '{"type":"sequence","actors":["手機","Core"],"steps":[{"from":"手機","to":"Core","label":"GET /bots"}]}',
+    prose: '{"type":"prose","text":"CPU 從 **9.8%** 降到 *2.1%*。"}',
+    quote: '{"type":"quote","text":"只看得到 Main。","source":"使用者回報"}',
+    glossary: '{"type":"glossary","items":[{"term":"SESS","plain":"一種前處理。"}]}',
+    sources: '{"type":"sources","items":[{"ref":"a58c883","text":"面板已安裝"}]}',
+    image: '{"type":"image","src":"data:image/png;base64,…","alt":"側欄截圖"}'
+  };
+
+  function parseData(raw) {
+    var d = raw;
+    if (typeof d === 'string') {
+      var s = d.trim();
+      if (!s) fail('data', '資料是空的');
+      try { d = JSON.parse(s); } catch (e) { fail('data', '不是有效的 JSON：' + e.message); }
+    }
+    if (d && typeof d === 'object' && typeof d.output === 'string' && !d.type) { try { d = JSON.parse(d.output); } catch (e) { /* keep d */ } }
+    if (Array.isArray(d)) { if (d.length === 1) d = d[0]; else fail('data', '資料是陣列；一次只能放一個區塊（收到 ' + d.length + ' 個）'); }
+    if (d == null) fail('data', '沒有收到資料（ccb.data 是空的）');
+    if (!isObj(d)) fail('data', '資料必須是一個區塊物件，收到 ' + typeof d);
+    if (!d.type && isObj(d.block)) d = d.block;
+    if (!d.type && Array.isArray(d.sections)) fail('type', '這是整份報告（有 sections）；本元件一次只畫一個區塊。請取出其中一個 block 當資料。');
+    if (!d.type) fail('type', '缺少 type（區塊類型：' + TYPES.join(', ') + '）');
+    return d;
+  }
+
+  function build(raw) {
+    var b, type = '';
+    try {
+      b = parseData(raw);
+      type = String(b.type);
+      var key = type === 'flow' ? 'flowchart' : type;
+      L = T[(b.lang === 'en' || b.lang === 'zh-Hant') ? (b.lang === 'en' ? 'en' : 'zh') : (/[⺀-鿿]/.test(JSON.stringify(b)) ? 'zh' : 'en')];
+      if (key === 'figure' || key === 'experiment') fail('type', '「' + type + '」區塊要由報告頁產生（matplotlib / 完整報告），行內元件畫不出來。請改用其他區塊，或發佈完整報告頁。');
+      if (!R.hasOwnProperty(key)) fail('type', '不認得的區塊類型 "' + type + '"。支援：' + TYPES.join(', '));
+      var res = R[key](b);
+      return { ok: true, html: res.html, sum: res.sum };
+    } catch (e) {
+      if (!(e instanceof BlockError)) { e = new BlockError('', '渲染時發生例外：' + (e && e.message ? e.message : e)); }
+      L = T.zh;
+      return { ok: false, type: type, err: e };
+    }
+  }
+
+  function errCard(type, e) {
+    var ex = EX[type === 'flow' ? 'flowchart' : type];
+    return '<aside class="blk blk-error" role="alert"><p><b>' + h(type ? L.badBlock(type) : L.badData) + '</b><span>' + h(e.msg) + '</span></p>' +
+      (e.path ? '<p class="em">位置：<code>' + h(e.path) + '</code></p>' : '') +
+      (ex ? '<p class="em">' + L.example + '：<code>' + h(ex) + '</code></p>' : '') + '</aside>';
+  }
+
+  var GL = { good: '✓', bad: '!', warn: '!', info: '', neutral: '' };
+  function mini(sum) {
+    return '<div class="mini ' + tc(sum.tone) + '"><b>' + h(sum.big) + '</b>' + (sum.sub ? '<span>' + h(cut(sum.sub, 32)) + '</span>' : '') + '</div>';
+  }
+
+  function draw() {
+    var r = build(ccb.data), sum;
+    if (r.ok) {
+      root.innerHTML = '<div class="full">' + r.html + '</div>' + mini(r.sum);
+      sum = r.sum;
+    } else {
+      sum = { big: T.zh.badData, sub: r.err.msg, tone: 'bad' };
+      root.innerHTML = '<div class="full">' + errCard(r.type, r.err) + '</div>' + mini(sum);
+    }
+    var tn = sum.tone === 'bad' ? 'bad' : sum.tone === 'warn' ? 'warning' : sum.tone === 'good' ? 'good' : 'neutral';
+    try { if (typeof ccb.setStatus === 'function') ccb.setStatus({ text: cut(sum.big, 14), tone: tn }); } catch (e) { /* chip is optional */ }
+  }
+
+  /* size: decided in JS (the container-query route stays out of the chat, where the frame's height follows the content) */
+  function surface() { return (window.ccb && ccb.surface) || document.documentElement.getAttribute('data-surface') || 'chat'; }
+  function applySize(sz) {
+    var px = (sz && sz.px) || (window.ccb && ccb.size && ccb.size.px) || {};
+    var tiny = false, narrow = false;
+    if (surface() !== 'chat') {
+      tiny = (px.width > 0 && px.width <= 210) || (px.height > 0 && px.height <= 120);
+    }
+    if (px.width > 0 && px.width <= 330) narrow = true;
+    root.setAttribute('data-tiny', tiny ? '1' : '0');
+    root.setAttribute('data-narrow', narrow ? '1' : '0');
+  }
+
+  function snap() { try { return JSON.stringify(ccb.data); } catch (e) { return String(Math.random()); } }
+  var last = snap();
+  function redraw() { last = snap(); try { applySize(); draw(); } catch (e) { fatal(e); } }
+  redraw();
+  if (typeof ccb.onData === 'function') ccb.onData(function () { redraw(); });
+  if (typeof ccb.onSize === 'function') ccb.onSize(function (sz) { applySize(sz); });
+  /* data that arrives without an event (or after the first draw) is picked up here */
+  setInterval(function () { if (snap() !== last) redraw(); }, 700);
+  } catch (e) { fatal(e); }
+})();
+</script>
