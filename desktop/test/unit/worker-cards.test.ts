@@ -7,7 +7,7 @@ import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, followWorker, newCards, projectCard, readCards,
+  CARDS_PER_REPLY, CARD_BRIEF_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, followWorker, newCards, projectCard, readCards, takeRejection,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
 
@@ -292,6 +292,54 @@ describe("cardContent with rules", () => {
     expect(one.text).toBe("No fit.");
     expect(cardContent('<component name="x"></component>', RULES).want).toBeUndefined();
     expect(cardContent("<new-bot name=\"evil\">go</new-bot> <install>github.com/x/y</install>", RULES).want).toBeUndefined();
+  });
+});
+
+describe("a rejected script command is never dropped silently", () => {
+  const OUTSIDE = '<show name="git-log" command="python3 /p/repo/scripts/git-log-json.py 6 --no-diff"></show>';
+
+  it("cardContent reports the rejection (which command, and where scripts must live) instead of only falling back to the component's default", () => {
+    const { shows, rejected } = cardContent(`Last 6 commits.\n${OUTSIDE}`, RULES);
+    expect(shows.every((show) => !show.command)).toBe(true);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toContain("git-log");
+    expect(rejected[0]).toContain("/p/repo/scripts/git-log-json.py");
+    expect(rejected[0]).toContain(RULES.scriptsDir);
+  });
+
+  it("a kept command rejects nothing", () => {
+    expect(cardContent('<show name="inline-chart" command="python3 /p/repo/.bot/card-scripts/gpu/run.py"></show>', RULES).rejected).toEqual([]);
+  });
+
+  it("the card says so on itself (visible to the user and the head), and tells the worker once; a clean redo clears it", () => {
+    const c = card();
+    followWorker(c, ledger({ status: "done", text: `Last 6 commits.\n${OUTSIDE}` }), RULES);
+    expect(c.text).toContain("/p/repo/scripts/git-log-json.py");
+    expect(c.text).toContain("not kept");
+    expect(c.rejected).toContain("git-log");
+    const told = takeRejection(c);
+    expect(told).toContain(RULES.scriptsDir);
+    expect(told).toContain("/p/repo/scripts/git-log-json.py");
+    expect(takeRejection(c)).toBeNull();
+    // The redo is rejected again: still shown, but not told again (no loop).
+    followWorker(c, ledger({ status: "done", run: 2, text: OUTSIDE }), RULES);
+    expect(c.rejected).toBeDefined();
+    expect(takeRejection(c)).toBeNull();
+    followWorker(c, ledger({ status: "done", run: 3, text: '<show name="inline-chart" command="python3 /p/repo/.bot/card-scripts/gpu/run.py"></show>' }), RULES);
+    expect(c.rejected).toBeUndefined();
+    expect(c.text).not.toContain("not kept");
+    expect(takeRejection(c)).toBeNull();
+  });
+
+  it("cardInstructions says every script the command runs must live in <project>/.bot/card-scripts/<component>/ (copy it there; arguments are fine)", () => {
+    const text = cardInstructions({ title: "C", prompt: "p" }, { components: "- a: b", others: "", scriptsDir: "/p/repo/.bot/card-scripts" });
+    expect(text).toMatch(/command[^\n]*must[^\n]*\/p\/repo\/\.bot\/card-scripts\/<short-name>\//);
+    expect(text).toMatch(/copy/i);
+  });
+
+  it("readCards keeps rejected and its told flag", () => {
+    const [read] = readCards([{ id: ID, title: "T", prompt: "p", status: "done", run: 1, rejected: "x", rejectedTold: true }]);
+    expect(read).toMatchObject({ rejected: "x", rejectedTold: true });
   });
 });
 
