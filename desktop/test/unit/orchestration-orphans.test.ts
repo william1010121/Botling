@@ -781,7 +781,7 @@ describe("O03b review: who may be told a report", () => {
 });
 
 describe("O03b review: the trim's day guard", () => {
-  it("B2: rows from the last day are kept even when that leaves the book over 1,000 (the quota counts them)", async () => {
+  it("B2: rows older than a day go first; only what is still over 1,000 comes from the last day's closed rows, oldest first (no cap since 2026-11-17)", async () => {
     const now = Date.now(), DAYS = 86_400_000;
     const row = (plugin: string, task: string, at: number) => ({ plugin, bot: "main", task, at, open: false, reported: 1, stopped: false, hash: H1 });
     const rows = [row("p", "OLD0", now - 2 * DAYS), row("p", "OLD1", now - 2 * DAYS + 1), ...Array.from({ length: 1_000 }, (_, n) => row("q", `RECENT${n}`, now - 3_600_000 + n))];
@@ -790,7 +790,11 @@ describe("O03b review: the trim's day guard", () => {
     const kept = t.rows().map((entry) => entry.task);
     expect(kept).not.toContain("OLD0");
     expect(kept).not.toContain("OLD1");
-    expect(kept.filter((task) => String(task).startsWith("RECENT"))).toHaveLength(1_000);
+    // 1,003 rows: the two old ones go, then one of the day (the oldest), not more.
+    expect(kept).not.toContain("RECENT0");
+    expect(kept.filter((task) => String(task).startsWith("RECENT"))).toHaveLength(999);
+    expect(kept).toContain("RECENT1");
     expect(kept).toContain("T1");
+    expect(kept).toHaveLength(1_000);
   });
 });
