@@ -250,6 +250,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
+      workerCards: message.workerCards?.length ? message.workerCards.map((card) => ({ id: card.id, title: card.title, status: card.status, run: card.run, ...(card.taskId ? { taskId: card.taskId } : {}), at: card.at ?? null, ...(card.text ? { text: card.text } : {}), ...(card.displays?.length ? { displays: card.displays.map(displayView) } : {}), ...(card.error ? { error: card.error } : {}) })) : null,
       previews: message.previews?.length ? message.previews.map((preview) => ({ name: preview.name, data: preview.data })) : null,
       component: message.component ?? null,
       feedback: message.feedback ?? null,

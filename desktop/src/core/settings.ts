@@ -231,6 +231,10 @@ export function launchSettings(raw: RawSettings) {
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false),
     // Hidden (debugging only): "native" gives Claude heads their own Agent tool back instead of app-managed workers.
     claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw),
+    // The model of the worker a `<card>` starts (worker-cards.ts): haiku unless settings.json `cardWorkerModel` names another Claude model.
+    cardWorkerModel: cardWorkerModel(raw),
+    // A Claude bot is told only the built-in components; the others are reached through `<card>` (on unless settings.json `componentsViaCards` is false).
+    componentsViaCards: (raw as Record<string, unknown>).componentsViaCards !== false,
     // Which models' app-managed workers may write spec/ (spec-guard.ts); bot heads are not restricted.
     specWriters: specWriters(raw),
     // Extra folders every app-managed Claude worker may use (`--add-dir`), so a `cd` into a worktree there sticks (settings.json `workerExtraDirs`).
@@ -272,6 +276,14 @@ export function orchestrationPlugin(raw: RawSettings): string {
 export function orchestrationPluginSha256(raw: RawSettings): string | null {
   const value = (raw as Record<string, unknown>).orchestrationPluginSha256;
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+/** The model a `<card>` worker runs on when settings.json does not say (it gathers data and picks a component; a small model does). */
+export const CARD_WORKER_MODEL = "haiku";
+
+/** settings.json's `cardWorkerModel`: a Claude model (alias or full id), else haiku. */
+export function cardWorkerModel(raw: RawSettings): string {
+  return claudeModelOrNull((raw as Record<string, unknown>).cardWorkerModel) ?? CARD_WORKER_MODEL;
 }
 
 /** settings.json's hidden `claudeWorkers`:"app" (default: every Claude subagent is an app-managed worker) or "native". */

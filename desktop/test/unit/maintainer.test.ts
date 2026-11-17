@@ -77,6 +77,96 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(sent[1]).toBe("notice: Maintainer added todo to your components.");
   });
 
+  /** A desk with a bot that has a list of its own and a library of `status` and `todo`; what the worker was told, what the bot heard, what reached Maintainer (it has none: that is logged). */
+  function cardRig(list: string[] | null = ["status"], own: string[] = list ?? []) {
+    const root = tempDir("maintainer");
+    const folder = join(root, "plugins", "ccb-components", "components");
+    const make = (name: string, about = `A ${name} card.\nData: JSON {"items": []}\n`) => {
+      mkdirSync(join(folder, name), { recursive: true });
+      writeFileSync(join(folder, name, "template.html"), `<div>${name}</div>`);
+      writeFileSync(join(folder, name, "about.md"), about);
+    };
+    for (const name of ["status", "todo"]) make(name);
+    make("secret", "A secret card.\nPin only: yes\nCommand: echo hi\n");
+    const library = new ComponentLibrary(() => [folder]);
+    const sent: string[] = [], told: Array<[string, string]> = [], logs: string[] = [];
+    const bot = {
+      id: MAIN, profile: { name: "Main bot" },
+      get components() { return list; },
+      get ownComponentNames() { return own; },
+      lastAsked: "",
+      setComponentList(names: string[]) { list = names; },
+      appMessage(text: string) { sent.push(text); },
+      appNotice(text: string) { sent.push(`notice: ${text}`); return "n"; },
+      workers: { tellCardWorker(task: string, text: string) { told.push([task, text]); } },
+    } as never;
+    const desk = new MaintainerDesk({ root, maintainer: () => null, mainBot: () => bot, bots: () => [bot], library, plugins: () => null, log: (line: string) => logs.push(line) });
+    return { desk, bot, library, sent, told, logs, make, list: () => list };
+  }
+
+  it("a component the library has goes to the worker at once, with its usage: nothing is added to the bot's list, Maintainer is not woken, the bot hears nothing", () => {
+    const r = cardRig();
+    r.desk.requestComponentChange("todo", "add it to my list", "Main bot", r.bot, [], "TASK1");
+    expect(r.told).toHaveLength(1);
+    expect(r.told[0]![0]).toBe("TASK1");
+    expect(r.told[0]![1]).toContain('The component "todo" is ready');
+    expect(r.told[0]![1]).toContain("A todo card.");
+    expect(r.told[0]![1]).toContain('<show name="todo">');
+    expect(r.list()).toEqual(["status"]);
+    expect(r.logs.some((line) => line.includes("no Maintainer"))).toBe(false);
+    expect(r.sent).toEqual([]);
+  });
+
+  it("a card never gets an existing component changed (a request to change `status` is a lookup), and a pin-only one is not available to it", () => {
+    const r = cardRig(["status"]);
+    r.desk.requestComponentChange("status", "make the header red", "Main bot", r.bot, [], "TASK1");
+    expect(r.told[0]![1]).toContain('The component "status" is ready');
+    expect(r.logs.some((line) => line.includes("no Maintainer"))).toBe(false);
+    r.desk.requestComponentChange("secret", "show me", "Main bot", r.bot, [], "TASK1");
+    expect(r.told[1]![1]).toContain('"secret" is not available for a card');
+    expect(r.told[1]![1]).not.toContain("echo hi");
+    expect(r.logs.some((line) => line.includes("no Maintainer"))).toBe(false);
+  });
+
+  it("a new component: the ask carries the worker's task id, whether the bot has a full list or none at all; Maintainer is told so, and what it declines reaches the worker", () => {
+    // A list at the limit, and a bot with no list at all: neither stops the ask or turns it into 'ask the user which to remove'.
+    for (const [list, own] of [[Array.from({ length: 20 }, (_, i) => `c${i}`), Array.from({ length: 20 }, (_, i) => `c${i}`)], [null, []]] as const) {
+      const r = cardRig(list as string[] | null, own as string[]);
+      const handedTo: string[] = [];
+      (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+      r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK2");
+      expect(handedTo).toHaveLength(1);
+      const handed = handedTo[0]!;
+      expect(handed).toContain('wants a new component "weather"');
+      expect(handed).toContain("A card worker of Main bot asks for this");
+      expect(handed).not.toContain("Add or build nothing");
+      const key = /component-declined id="([0-9a-f]{8})"/.exec(handed)![1]!;
+      r.desk.decline(key, "No data source.");
+      expect(r.told).toHaveLength(1);
+      expect(r.told[0]![0]).toBe("TASK2");
+      expect(r.told[0]![1]).toContain('did not add the component "weather"');
+      expect(r.told[0]![1]).toContain("No data source.");
+      expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
+    }
+  });
+
+  it("a new component that lands in the library goes to its worker (its usage), on no list, even when the bot's list is full; a second ask of the same worker for it is one ask", () => {
+    const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const r = cardRig(full, full);
+    r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK3");
+    r.desk.requestComponentChange("weather", "the weather again", "Main bot", r.bot, [], "TASK3");
+    r.make("weather", "A weather card.\nData: JSON {\"temp\": 1}\n");
+    r.library.rescan();
+    r.desk.deliverAsked();
+    r.desk.deliverAsked();
+    expect(r.told).toHaveLength(1);
+    expect(r.told[0]![0]).toBe("TASK3");
+    expect(r.told[0]![1]).toContain('The component "weather" is ready');
+    expect(r.told[0]![1]).toContain("A weather card.");
+    expect(r.list()).toEqual(full);
+    expect(r.sent).toEqual(["notice: Maintainer added weather for a card of Main bot."]);
+  });
+
   it("knows what a source is (PluginInstaller.classify)", () => {
     const root = tempDir("maintainer");
     expect(classifySource(root)).toEqual({ kind: "folder", path: root });

@@ -7,6 +7,8 @@
 // - <task …/> lines (the task cards, removed in 2.5) come out of the text silently, so an older or other bot's never shows;
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
+// - <card title="…">prompt</card> becomes a worker card request (`cards`, worker-cards.ts): the app starts a worker with the
+//   prompt and draws a card where the tag stood (`at`, as a display's); an empty one is taken out and starts nothing;
 // - a tag a plugin declares (`replyTags`, plugins/contributions.ts) comes out of the text, drawn nowhere in the
 //   chat, and is handed to that plugin; with none declared nothing here changes (<whiteboard> is
 //   botling.whiteboard's this way);
@@ -19,7 +21,7 @@ import { REACTION_PALETTE } from "./briefing";
 import { isGroupBlock, isMultiple, questionGroup, type Question } from "./questions";
 
 export type BotRequest =
-  | { kind: "component"; name: string; request: string }
+  | { kind: "component"; name: string; request: string; /** The task id of the card worker that asked (worker-cards.ts): the answer goes to it, not to the bot. */ card?: string }
   | { kind: "plugin"; request: string }
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }
@@ -48,6 +50,8 @@ export type BotRequest =
   | { kind: "takeComponent"; bot: string; name: string }
   | { kind: "componentDeclined"; id: string; reason: string };
 
+/** A `<card>` the bot wrote: what the worker is told, the card's title, and where in the body the card goes (UTF-16; absent: after the text). */
+export interface CardRequest { title: string; prompt: string; at?: number }
 export interface Choice { label: string; detail?: string; recommended: boolean }
 export interface Display { name: string; data: string; at?: number; command?: string; id?: string; refresh?: number; savedAt?: number; [key: string]: unknown }
 export interface ReactionAction { messageId: string; emoji: string; present: boolean }
@@ -66,6 +70,8 @@ export interface Parsed {
   requests: BotRequest[];
   reactions: ReactionAction[];
   displays: Display[];
+  /** `<card>` tags outside code, in order; absent when there are none. */
+  cards?: CardRequest[];
   completionSignals: CompletionSignal[];
   decisionReference: string | null;
 }
@@ -78,6 +84,9 @@ const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"(?:(?<=<new
 const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
 const removeSubBotTag = () => /<remove-sub-bot\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/remove-sub-bot>)/g;
 const removeBotTag = () => /<remove-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*<\/remove-bot>)/g;
+// `<card title="…">prompt</card>`; `<card …/>` has no prompt and starts nothing. No attribute but `title` means anything.
+const cardTag = () => /<card((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/card>)/g;
+export const CARD_TITLE_MAX = 80, CARD_PROMPT_MAX = 60_000;
 const pluginTag = () => /<plugin>\s*([\s\S]*?)\s*<\/plugin>/g;
 const agentMessageTag = () => /<agent-message\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/agent-message>/g;
 const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?>(?:\s*<\/agent-stop>)?/g;
@@ -109,6 +118,8 @@ const reactionTag = () => /^ {0,3}<reaction message="([0-9A-Fa-f-]{36})" emoji="
 const terminalTag = () => /<(end|block)>([\s\S]*?)<\/\1>/g;
 
 const MARKER = "";
+/** Where a `<card>` stood, until the rest is taken out (another private-use character, so it never counts as a display's). */
+const CARD_MARKER = "\uE001";
 const UUID_RE = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 const trimWS = (s: string) => s.replace(/^[ \t  -​　]+|[ \t  -​　]+$/g, "");
 const trimAll = (s: string) => s.replace(/^[\s\u0085]+|[\s\u0085]+$/g, "");
@@ -221,6 +232,20 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
       if (refresh !== null) display.refresh = refresh;
       displays.unshift(display);
       marker = MARKER;
+    }
+    replace(hit.index, hit.length, marker);
+  }
+
+  // Every <card> with a prompt is a request, its place marked until the rest is taken out; one with none is taken out and starts nothing.
+  const cards: CardRequest[] = [];
+  for (const hit of hits(cardTag(), mask).reverse()) {
+    const found = attributes(group(text, hit, 0));
+    const prompt = trimAll(group(text, hit, 1)).slice(0, CARD_PROMPT_MAX);
+    let marker = "";
+    if (prompt) {
+      const title = cardTitle(found.title ?? "") || cardTitle(prompt.split(/\r?\n/)[0]!);
+      cards.unshift({ title, prompt });
+      marker = CARD_MARKER;
     }
     replace(hit.index, hit.length, marker);
   }
@@ -351,29 +376,40 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
     replace(hit.index, hit.length, evidence, masked(evidence));
   }
 
-  const { body, places } = placing(text, displays.length);
+  const { body, places, cardPlaces } = placing(text, displays.length, cards.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, ...(pluginTags.length ? { pluginTags } : {}), ...(questions ? { questions } : {}) };
+  cards.forEach((card, i) => { if (cardPlaces[i] != null) card.at = cardPlaces[i]!; });
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, ...(cards.length ? { cards } : {}), ...(pluginTags.length ? { pluginTags } : {}), ...(questions ? { questions } : {}) };
 }
 
-/** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */
-function placing(text: string, count: number): { body: string; places: (number | null)[] } {
+/** A card's title as one clean line: control characters and line breaks become spaces, cut to `CARD_TITLE_MAX` characters. */
+export function cardTitle(text: string): string {
+  return [...text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim()].slice(0, CARD_TITLE_MAX).join("").trim();
+}
+
+/** The text without its markers, trimmed, and where each marker was (UTF-16 offsets); a kind whose markers do not match its count gets no places. */
+function placing(text: string, count: number, cardCount = 0): { body: string; places: (number | null)[]; cardPlaces: (number | null)[] } {
   let untrimmed = "";
   const places: number[] = [];
+  const cardPlaces: number[] = [];
   for (const unit of text) {
     if (unit === MARKER) places.push(untrimmed.length);
+    else if (unit === CARD_MARKER) cardPlaces.push(untrimmed.length);
     else untrimmed += unit;
   }
   const body = trimAll(untrimmed);
   const lead = untrimmed.length - untrimmed.replace(/^[\s\u0085]+/, "").length;
-  const found = places.map((place) => Math.min(Math.max(place - lead, 0), body.length));
-  return { body, places: found.length === count ? found : Array<null>(count).fill(null) };
+  const settle = (found: number[], wanted: number) => {
+    const moved = found.map((place) => Math.min(Math.max(place - lead, 0), body.length));
+    return moved.length === wanted ? moved : Array<null>(wanted).fill(null);
+  };
+  return { body, places: settle(places, count), cardPlaces: settle(cardPlaces, cardCount) };
 }
 
 /** `Bot.saysNothing`: only <no-reply/> and tags that draw nothing; no words, buttons, displays or requests. */
 export function saysNothing(reply: string): boolean {
   const parsed = parseReply(reply);
-  return !trimAll(parsed.body) && !parsed.choices?.length && !parsed.displays.length && !parsed.requests.length;
+  return !trimAll(parsed.body) && !parsed.choices?.length && !parsed.displays.length && !parsed.requests.length && !parsed.cards?.length;
 }
 
 /** What the chat says about a request 2.0 cannot act on yet. */

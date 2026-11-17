@@ -1,7 +1,7 @@
 // A small component library for tests, in 2.0's layout (<core>/plugins/ccb-components/components/):
 // a status card, a todo list that keeps its state (ccb.save) and sets its pin chip (ccb.setStatus),
 // and a card whose data comes from a command, with a Detail command (ccb.runDetail).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const LIBRARY: Record<string, { template: string; about: string }> = {
@@ -39,8 +39,17 @@ Detail command: printf 'detail-%s' {hash}`,
   },
 };
 
-/** Writes the library into a core data folder (the core's own, `<data>` or `<data>/core` in the app). */
+/**
+ * Writes the library into a core data folder (the core's own, `<data>` or `<data>/core` in the app). The tests that use it are about the
+ * whole component list a bot is told, so settings.json also turns `componentsViaCards` off (the app default is on: a Claude bot is told
+ * the built-in components only and reaches the rest through `<card>`; component-cards.test.ts covers that).
+ */
 export function writeLibrary(coreDir: string, names: string[] = Object.keys(LIBRARY)) {
+  const settings = join(coreDir, "settings.json");
+  let raw: Record<string, unknown> = {};
+  try { if (existsSync(settings)) raw = JSON.parse(readFileSync(settings, "utf8")) as Record<string, unknown>; } catch { /* a broken file is replaced */ }
+  mkdirSync(coreDir, { recursive: true });
+  writeFileSync(settings, JSON.stringify({ ...raw, componentsViaCards: false }));
   for (const name of names) {
     const folder = join(coreDir, "plugins", "ccb-components", "components", name);
     mkdirSync(folder, { recursive: true });

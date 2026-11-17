@@ -164,6 +164,8 @@ export class BotRecords {
   messageView(record: ChatRecord): MessageView {
     const lookup = { get: (id: string) => this.members.map(bot => bot.subagents.get(id)).find(Boolean) };
     const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.cards.displayViews(record));
+    const workerCards = record.role === "bot" ? this.owner.cards.workerCardViews(record) : undefined;
+    if (workerCards) view.workerCards = workerCards;
     // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
     if (record.role === "user" && this.members.some(bot => bot.decisions.waitsFor(record.id))) view.queued = true;
     // A card's answer that waits to reach the bot that asked: shown as given, "Queued" (`holdCardAnswer`).

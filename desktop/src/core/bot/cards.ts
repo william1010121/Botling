@@ -5,19 +5,21 @@
 // `briefedComponents`, `componentsMayHaveChanged`. It follows the bridge convention of `core/bot/context.ts`: the moved
 // bodies are what they were in `Bot` and say `this.options`, `this.records`, `this.changed(...)`; the BRIDGE BLOCK below is
 // every name it borrows from `Bot`, one forwarder each. `Bot` keeps a one-line delegate for every name moved here.
-import type { ApprovalAskView, Event, MessageView, ResultOf } from "../../contract";
+import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } from "../../contract";
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { inlineBlocksFor } from "../inline-blocks";
-import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
+import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
 import type { BotStore } from "../store/bot-store";
 import { toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
+import { join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -113,13 +115,22 @@ export class BotCards {
     return context.library.names.filter((name) => own.has(name));
   }
 
+  /**
+   * Whether this bot is told the built-in components only: a `<card>` of it starts a worker (a Claude bot with app-managed workers) and the
+   * app's launch settings say so (`componentsViaCards`, on unless settings.json turns it off). A bot made without launch settings keeps the whole list.
+   */
+  reachesByCards(): boolean {
+    return this.owner.engine === "claude" && this.owner.workers.claudeWorkersOn() && this.options.launch?.().componentsViaCards === true;
+  }
+
   /** What it has and what else the library holds (`componentKnowledge`). */
   private componentKnowledge(): ComponentKnowledge | null {
     const context = this.context;
     if (!context || !context.library.names.length) return null;
     // A bot with the inline block guidance has its examples in its instructions: its note says no usage lookup is needed for them.
     const examples = inlineBlocksFor({ inlineBlockGuidance: this.options.launch?.().inlineBlockGuidance }, this.owner.profile.folder);
-    return componentKnowledgeFor(context.library, this.ownComponents(), examples);
+    // A Claude bot that can start `<card>` workers is told the built-in components only; a card's worker picks from the rest (`cardBriefing`).
+    return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards());
   }
 
   /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */
@@ -193,6 +204,86 @@ export class BotCards {
   }
 
   /**
+   * A line's worker cards as the page draws them (worker-cards.ts). Their components are drawn as a reply's are, with the pictures their
+   * data names; the card keeps no Detail command, and a command it runs is a component's own or a script of `.bot/card-scripts/`, shown
+   * for the user to allow like any card's (`shownAt` finds it again when the page asks to run it).
+   */
+  workerCardViews(record: ChatRecord): WorkerCardView[] | undefined {
+    const cards = readCards(record.workerCards);
+    if (!cards.length) return undefined;
+    const context = this.context;
+    return cards.map((card, index): WorkerCardView => {
+      const shown = context && card.shows?.length
+        ? card.shows.map((show, at) => displayView(context, this.cardDisplay(show), `${record.id}:card-${index}/${at}`, "bot", this.commandFolder))
+          .map((display) => ({ ...display, detail: null, card: null }))
+        : [];
+      return {
+        id: card.id, title: card.title.slice(0, 200), status: card.status, run: card.run,
+        ...(card.taskId ? { taskId: card.taskId.slice(0, 200) } : {}), ...(card.at !== undefined ? { at: card.at } : {}),
+        ...(card.text ? { text: card.text.slice(0, 200_000) } : {}), ...(shown.length ? { displays: shown } : {}),
+        ...(card.error ? { error: card.error.slice(0, 2_000) } : {}),
+      };
+    });
+  }
+
+  /** What a card's report is checked against: the folder its scripts may live in, and the components that fill themselves from a Command:. */
+  cardRules(): CardRules {
+    const library = this.context?.library;
+    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name) };
+  }
+
+  /** A component of a card as a `Display` (its command checked again: a chat.json that was edited gets no command it should not). */
+  private cardDisplay(show: CardShow): Display {
+    const command = show.command ? cardScriptCommand(show.command, this.cardRules()) : null;
+    return { name: show.name, data: show.data, ...(show.at !== undefined ? { at: show.at } : {}), ...(command ? { command, ...(show.refresh ? { refresh: show.refresh } : {}) } : {}) };
+  }
+
+  /**
+   * The component the page means by (`messageId`, `index`): one of a line's own, or, for the id of a card's report (`<line id>:card-<n>`),
+   * the n-th card's component. The key its command's run is kept under comes with it.
+   */
+  private shownAt(messageId: string, index: number): { record: ChatRecord; display: Display; key: string; detail: boolean } | null {
+    const cardOf = /^(.+):card-(\d+)$/.exec(messageId);
+    const record = this.records.find((candidate) => candidate.id === (cardOf ? cardOf[1] : messageId));
+    if (!record) return null;
+    if (!cardOf) {
+      const display = (record.displays as Display[] | undefined)?.[index];
+      return display ? { record, display, key: `${record.id}/${index}`, detail: true } : null;
+    }
+    const show = readCards(record.workerCards)[Number(cardOf[2])]?.shows?.[index];
+    return show ? { record, display: this.cardDisplay(show), key: `${messageId}/${index}`, detail: false } : null;
+  }
+
+  /**
+   * What the worker of a card is given besides the prompt: the usage of every component of the bot's (its list, the library's built-ins and the
+   * ones the guidance names, `GUIDED_BUILT_INS`), whole component by whole component while they fit (`CARD_BRIEF_MAX`), and the rest of the library in a
+   * line each (`CARD_OTHERS_MAX`). A cut never lands inside a component's usage: what does not fit moves to the one-line list.
+   */
+  cardBrief(): CardBrief | null {
+    const context = this.context;
+    if (!context) return null;
+    const library = context.library;
+    const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
+    const builtIn = library.builtInNames();
+    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
+    const own = [...new Set([...this.ownComponents(), ...library.names.filter((name) => GUIDED_BUILT_INS.includes(name))])].filter(usable)
+      .sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const whole: string[] = [], moved: string[] = [];
+    let used = 0;
+    for (const name of own) {
+      const text = library.catalog([name]);
+      if (used + text.length + 1 > CARD_BRIEF_MAX) { moved.push(name); continue; }
+      used += text.length + 1;
+      whole.push(name);
+    }
+    const lines = library.summaries([...moved, ...library.names.filter((name) => !own.includes(name) && usable(name))]).split("\n");
+    let shown = 0, size = 0;
+    while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
+    const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
+    return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
+  }
+
+  /**
    * `<show id="x">` in a new reply updates the card with that id in an earlier line, in place when
    * the reply holds nothing else, else moved under the new words (`Bot.updateCards`). True when
    * the reply has nothing left to show of its own.
@@ -230,7 +321,8 @@ export class BotCards {
     if (this.options.primary) return;
     // A pin's card belongs to botling.board (the server tells it: `cardChanged`).
     if (card.startsWith("pin/") || card.startsWith("note/")) return;
-    const messageId = card.split("/")[0];
+    // A card's report is keyed `<line id>:card-<n>/<component>` (`shownAt`).
+    const messageId = card.split("/")[0]!.replace(/:card-\d+$/, "");
     const record = this.records.find((candidate) => candidate.id === messageId);
     if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
   }
@@ -256,15 +348,15 @@ export class BotCards {
   componentCommand(messageId: string, index: number, shown: { command: string; folder: string; detail?: string; force?: boolean; live?: boolean }): ResultOf<"component.command"> {
     if (this.options.primary) return this.options.primary.cards.componentCommand(messageId, index, shown);
     const context = this.context;
-    const record = this.records.find((candidate) => candidate.id === messageId);
-    const display = (record?.displays as Display[] | undefined)?.[index];
-    if (!context || !record || !display) return { accepted: false };
+    const found = this.shownAt(messageId, index);
+    if (!context || !found) return { accepted: false };
+    const { record, display } = found;
     const command = displayCommand(display, record.role, context.library);
     const folder = this.commandFolder;
     if (!command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    const needsApproval = this.cardAsk(command, context.library.detailCommand(display.name), folder, display.name);
+    const needsApproval = this.cardAsk(command, found.detail ? context.library.detailCommand(display.name) : null, folder, display.name);
     if (needsApproval) return { accepted: false, needsApproval };
-    const card = `${record.id}/${index}`;
+    const card = found.key;
     if (shown.live) {
       const every = display.refresh ?? context.library.refreshInterval(display.name);
       if (every === null) return { accepted: false };
@@ -280,14 +372,14 @@ export class BotCards {
   componentApprove(messageId: string, index: number, shown: { command: string; folder: string; detail?: string }): ResultOf<"component.approve"> {
     if (this.options.primary) return this.options.primary.cards.componentApprove(messageId, index, shown);
     const context = this.context;
-    const record = this.records.find((candidate) => candidate.id === messageId);
-    const display = (record?.displays as Display[] | undefined)?.[index];
-    if (!context || !record || !display) return { accepted: false };
+    const found = this.shownAt(messageId, index);
+    if (!context || !found) return { accepted: false };
+    const { record, display } = found;
     const command = displayCommand(display, record.role, context.library);
     const folder = this.commandFolder;
     if (!command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    if (!this.approveCard(command, context.library.detailCommand(display.name), shown.detail ?? null, folder)) return { accepted: false };
-    void context.commands.run(`${record.id}/${index}`, command, folder, false);
+    if (!this.approveCard(command, found.detail ? context.library.detailCommand(display.name) : null, found.detail ? shown.detail ?? null : null, folder)) return { accepted: false };
+    void context.commands.run(found.key, command, folder, false);
     return { accepted: true };
   }
 

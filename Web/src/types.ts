@@ -84,6 +84,8 @@ export interface MessageView {
   displays?: DisplayView[] | null;
   /** One component, as older payloads sent it. */
   display?: DisplayView | null;
+  /** The worker cards its `<card>` tags drew, each at `at` in `text` (null: after the text). */
+  workerCards?: WorkerCardView[] | null;
   attachments: FileView[] | null;
   replyTo: string | null;
   replyPreview: string | null;
@@ -191,6 +193,19 @@ export interface SpecChipView {
 
 export type SpecStatus = "draft" | "building" | "done";
 export type SpecOrigin = "user" | "maintainer" | "app";
+
+/** A worker card (`<card title="…">prompt</card>`): its worker's state and its latest report; the box under it sends words to the worker `taskId`. */
+export interface WorkerCardView {
+  id: string;
+  title: string;
+  status: "starting" | "running" | "done" | "failed" | "stopped" | "interrupted";
+  run: number;
+  taskId?: string;
+  at?: number | null;
+  text?: string;
+  displays?: DisplayView[];
+  error?: string;
+}
 
 export interface DisplayView {
   name: string;
@@ -432,6 +447,8 @@ export type Action =
   | { type: "dragFile"; url: string }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
+  /** Words typed on a worker card: they go to its worker (`taskID`), as a follow-up on its task. */
+  | { type: "cardSend"; taskID: string; text: string }
   | { type: "taskOutput"; messageID: string; taskID: string }
   | { type: "closeSubagent" }
   | { type: "feedback"; messageID: string; text: string; images: { name: string; base64: string }[] }

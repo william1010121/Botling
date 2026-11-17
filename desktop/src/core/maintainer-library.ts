@@ -307,6 +307,8 @@ export interface ComponentAsk {
   userAsked: string;
   stamp: string;
   changing: boolean;
+  /** The task id of the card worker that asked (the answer goes to it): absent when the bot asked. */
+  card?: string;
 }
 
 export interface MaintainerDeps {

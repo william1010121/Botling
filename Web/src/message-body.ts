@@ -8,7 +8,7 @@ import type { ComponentAnswer } from "./components";
 import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
 import { avatar, extensions, messageMenu, quickIcon } from "./messages";
 import { liveElement, stepsElement } from "./steps";
-import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, StepView } from "./types";
+import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, StepView, WorkerCardView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
 export function botBody(message: MessageView, components: Record<string, ComponentInfo>, botId: string | null = null): HTMLElement {
@@ -42,11 +42,17 @@ export function botBody(message: MessageView, components: Record<string, Compone
     const element = componentView(message, display, index, components, botId);
     if (element) appendWide(element);
   };
+  // Worker cards (`<card>` tags) stand where the tag was, among the components.
+  const cards = (message.workerCards ?? []).map((card, index) => ({ card, index, at: typeof card.at === "number" ? Math.min(Math.max(card.at, 0), message.text.length) : null }));
+  const parts = [
+    ...displays.map((shown) => ({ at: shown.at, order: shown.index, draw: () => appendComponent(shown) })),
+    ...cards.map((shown) => ({ at: shown.at, order: 1_000 + shown.index, draw: () => appendWide(workerCardElement(message, shown.card, shown.index, components, botId)) })),
+  ];
   // One written at the very end goes after the question, as a single component always has.
-  const inline = displays.filter((d) => d.at !== null && d.at < message.text.length).sort((x, y) => x.at! - y.at! || x.index - y.index);
+  const inline = parts.filter((part) => part.at !== null && part.at < message.text.length).sort((x, y) => x.at! - y.at! || x.order - y.order);
   for (const shown of inline) {
     appendText(shown.at!);
-    appendComponent(shown);
+    shown.draw();
   }
   appendText(message.text.length);
   // Cut off before it answered: its words and steps so far stay, and it says so.
@@ -73,7 +79,7 @@ export function botBody(message: MessageView, components: Record<string, Compone
     bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
   }
   // Ones at the end, or with no place (saved before places were kept), come after the text.
-  displays.filter((d) => !inline.includes(d)).forEach(appendComponent);
+  parts.filter((part) => !inline.includes(part)).forEach((part) => part.draw());
   // Result pages it links to, as preview cards under the text (the links stay chips too).
   message.previews?.forEach((preview, index) => {
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`, null, null, undefined, "chat", false, null, true);
@@ -116,6 +122,92 @@ export function botBody(message: MessageView, components: Record<string, Compone
   return bubble;
 }
 
+/** The pseudo messages a worker card's report is drawn from (see `componentView`). */
+const cardBodies = new WeakSet<MessageView>();
+/** What was typed in a card's reply box and not sent, by card id: a redraw of the line (the worker moved on) keeps it. */
+const cardDrafts = new Map<string, string>();
+/** Cards whose words were just sent: their box stays shut until the worker's run shows, so a double Enter sends once. */
+const cardSending = new Set<string>();
+
+const CARD_STATUS_KEYS = {
+  starting: "card.status.starting", running: "card.status.running", done: "card.status.done",
+  failed: "card.status.failed", stopped: "card.status.stopped", interrupted: "card.status.interrupted",
+} as const;
+
+/**
+ * A worker card: the title and state of its worker, its latest report drawn as a reply is (words and components), and a small box
+ * whose words go to that worker as a follow-up. Its next report replaces the one shown.
+ */
+export function workerCardElement(message: MessageView, card: WorkerCardView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement {
+  const root = document.createElement("div");
+  root.className = `worker-card status-${card.status}`;
+  root.dataset.card = card.id;
+  const head = document.createElement("div");
+  head.className = "worker-card-head";
+  const title = document.createElement("span");
+  title.className = "worker-card-title";
+  title.textContent = card.title;
+  const status = document.createElement("span");
+  status.className = "worker-card-status";
+  status.textContent = t(CARD_STATUS_KEYS[card.status]);
+  head.append(title, status);
+  root.append(head);
+  if (card.text || card.displays?.length) {
+    const report: MessageView = {
+      ...message, id: `${message.id}:card-${index}`, role: "bot", text: card.text ?? "", displays: card.displays ?? null, display: null, workerCards: null,
+      choices: null, chosen: null, answer: null, questions: null, picks: null, open: false, steps: null, previews: null, artifacts: null, attachments: null,
+      openable: false, interrupted: null, fromSubagent: null, tasks: null, queued: false, replyTo: null, replyPreview: null, reactions: null, reactionEnabled: false, component: null,
+    };
+    cardBodies.add(report);
+    const body = botBody(report, components, botId);
+    body.className = "worker-card-body";
+    root.append(body);
+  } else if (card.status === "starting" || card.status === "running") {
+    const wait = document.createElement("div");
+    wait.className = "worker-card-wait";
+    wait.textContent = t("card.waiting");
+    root.append(wait);
+  }
+  if (card.error) {
+    const error = document.createElement("div");
+    error.className = "worker-card-error";
+    error.textContent = card.error;
+    root.append(error);
+  }
+  const taskId = card.taskId;
+  if (taskId) {
+    const form = document.createElement("form");
+    form.className = "worker-card-reply";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = t("card.reply");
+    input.setAttribute("aria-label", t("card.reply"));
+    input.value = cardDrafts.get(card.id) ?? "";
+    const send = document.createElement("button");
+    send.type = "submit";
+    send.textContent = t("card.send");
+    const shut = () => { const closed = cardSending.has(card.id); input.disabled = closed; send.disabled = closed || !input.value.trim(); };
+    input.addEventListener("input", () => { if (input.value) cardDrafts.set(card.id, input.value); else cardDrafts.delete(card.id); shut(); });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text || cardSending.has(card.id)) return;
+      cardSending.add(card.id);
+      post({ type: "cardSend", taskID: taskId, text });
+      cardDrafts.delete(card.id);
+      input.value = "";
+      shut();
+      setTimeout(() => { cardSending.delete(card.id); shut(); }, 1_500);
+    });
+    // Enter while the IME is composing picks a character, it does not send.
+    input.addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault(); });
+    shut();
+    form.append(input, send);
+    root.append(form);
+  }
+  return root;
+}
+
 /** Whose call it was: one of the bot's subagents ("Subagent · Fix group B  Open ›"), opening it. */
 function fromSubagent(agent: { id: string; title: string }): HTMLElement {
   const button = document.createElement("button");
@@ -135,6 +227,8 @@ function fromSubagent(agent: { id: string; title: string }): HTMLElement {
  * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
  */
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
+  // A worker card's report is drawn as a reply is, but is no message of the chat: nothing in it answers, saves or pins.
+  const readOnly = cardBodies.has(message);
   // Shown with no data and nothing to get it from: nothing to draw, and no error card in the
   // user's chat (the app tells the bot with the user's next message).
   if (display.status === "empty" && !display.command) return null;
@@ -144,7 +238,7 @@ function componentView(message: MessageView, display: DisplayView, index: number
     : drawComponent(message, display, index, components, botId);
   // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
   if (!element) return element;
-  const bars = extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
+  const bars = readOnly ? [] : extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
   if (!bars.length) return element;
   const holder = document.createElement("div");
   holder.className = "pin-holder" + (bars.some((bar) => bar.dataset.holder === "pinned") ? " pinned" : "");
@@ -153,8 +247,9 @@ function componentView(message: MessageView, display: DisplayView, index: number
 }
 
 function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
+  const readOnly = cardBodies.has(message);
   const answer = (value: ComponentAnswer) => {
-    const action = answerAction(message.id, value);
+    const action = readOnly ? null : answerAction(message.id, value);
     if (action) post(action);
   };
   const pluginComponent = extensions.components.get(display.name);
@@ -171,7 +266,7 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
     return root;
   }
   // ccb.save(data) keeps new data in this message; a command's card shows the command's output.
-  const save = message.role === "bot" && !display.command
+  const save = message.role === "bot" && !display.command && !readOnly
     ? (data: string) => post({ type: "componentSave", messageID: message.id, index, data })
     : null;
   return componentElement(display.name, components[display.name], display.data, answer,

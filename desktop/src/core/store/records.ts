@@ -11,6 +11,7 @@
 // for the keys 1.x knows, and adds its own keys (`turnID`, `state`, `error`) beside them.
 import { randomUUID } from "node:crypto";
 import type { Question, QuestionPick } from "../questions";
+import type { WorkerCardRecord } from "../worker-cards";
 
 /** 2001-01-01T00:00:00Z in ms: Swift's reference date. */
 export const SWIFT_EPOCH_MS = Date.UTC(2001, 0, 1);
@@ -102,6 +103,8 @@ export interface ChatRecord {
   sourceMessageID?: string;
   /** Components it shows (`ComponentInstance`: name, data, at, command, savedAt, id, refresh). */
   displays?: { name: string; data: string; at?: number; command?: string; savedAt?: number; id?: string; refresh?: number; [key: string]: unknown }[];
+  /** Worker cards of its `<card>` tags (worker-cards.ts), each bound to the worker it started. */
+  workerCards?: WorkerCardRecord[];
   // ---- 2.0 only (1.x ignores these) ----
   turnID?: string;
   state?: "streaming" | "done" | "stopped" | "failed";
