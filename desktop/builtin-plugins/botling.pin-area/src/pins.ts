@@ -4,6 +4,8 @@
 import type { BotlingApi } from "../../../../Web/host/src/api";
 import * as M from "./model";
 import * as D from "./digest";
+import * as C from "./classify";
+import { askHaiku, type Ask } from "./haiku";
 
 export const PLUGIN = "botling.pin-area";
 const INDEX = "pins:bots";
@@ -29,7 +31,18 @@ const botOf = (params: Params): string => {
 };
 const own = (attributes: Record<string, string>, name: string): string => (Object.hasOwn(attributes, name) ? attributes[name]! : "");
 
-export function activatePins(api: BotlingApi, expose: Expose, now: () => number = Date.now) {
+/** The classifier's model call: the claude CLI as Botling starts it (null: this Botling has none, and plain lines stay in the chat). */
+const viaClaude = (api: BotlingApi): Ask | null =>
+  typeof api.engines?.cli === "function"
+    ? async (prompt) => {
+        const cli = await api.engines.cli("claude");
+        if (!cli) throw new Error("no claude");
+        return askHaiku(cli, prompt);
+      }
+    : null;
+
+/** `ask`: the model call for the lines of the user's no @card names (tests give a fake one; null: none, so no line is sorted). */
+export function activatePins(api: BotlingApi, expose: Expose, now: () => number = Date.now, ask: Ask | null = viaClaude(api)) {
   const load = (botId: string): M.Book => M.readBook(typeof api.storage?.get === "function" ? api.storage.get(keyOf(botId)) : null);
 
   // The bots that have a book (events of other bots cost nothing); kept in storage so a restart still hears the answers.
@@ -186,6 +199,72 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   let counter = 0;
   const ridOf = () => `r${now().toString(36)}-${(counter++).toString(36)}`;
 
+  /**
+   * The user's words written into a card as a new turn, and what the bot is sent for it (the card's header). `via` "auto": the app chose the card, so the
+   * line gets a trace with 移回聊天 / 改到…. False: the same words just went (a double send). The book is read again here: it may have changed meanwhile.
+   */
+  const writeInto = (botId: string, pinId: string, words: string, via: M.Via): string | false | undefined => {
+    const book = load(botId);
+    const pin = book.pins.find((candidate) => candidate.id === pinId);
+    if (!pin) return undefined;
+    const at = now();
+    if (M.pruneUnposted(book, at)) save(botId, book);
+    // the same words again, at once: one send
+    if (M.isDuplicate(pin, words, at)) return false;
+    M.addTurn(pin, ridOf(), words, at, via);
+    save(botId, book);
+    return M.askText(pin, M.clean(words, M.MAX_ROUTED));
+  };
+
+  /** The newest lines of the chat as the classifier reads them: the user's and the bot's words, without a briefing or a card's header, nothing the app wrote. */
+  const recentLines = async (botId: string): Promise<C.Recent[]> => {
+    try {
+      const data = await api.chat.messages(botId, { limit: 12 });
+      const lines: C.Recent[] = [];
+      for (const record of data.messages as unknown as { role?: unknown; text?: unknown }[]) {
+        if ((record.role !== "user" && record.role !== "bot") || typeof record.text !== "string") continue;
+        const own = record.role === "user" ? (M.parseAsk(record.text)?.text ?? M.stripBriefing(record.text)) : record.text;
+        if (own.trim() && !own.startsWith("<app_")) lines.push({ who: record.role, text: own });
+      }
+      return lines.slice(-C.RECENT_LINES);
+    } catch {
+      return [];
+    }
+  };
+  /** Bots whose line is being sorted now: a second line meanwhile goes to the chat unsorted (the order of the user's lines is kept). */
+  const sorting = new Set<string>();
+  /**
+   * A plain line of a chat that has cards, asked of the small model (no tools): assign (written into the card like an @card, with an automatic turn the user can
+   * take back), new or merge (only suggested; the user taps), or chat. Any failure, a slow answer or a low confidence leaves the line in the chat, with the briefing.
+   */
+  const sortLine = async (botId: string, text: string): Promise<string | false | undefined> => {
+    sorting.add(botId);
+    const plain = (): string | undefined => {
+      const brief = M.briefing(load(botId), now());
+      return brief ? M.withBriefing(text, brief) : undefined;
+    };
+    try {
+      const book = load(botId);
+      const verdict = C.parseVerdict(await ask!(C.classifyPrompt(book, await recentLines(botId), text)));
+      // after the waits: the book as it is now decides (a card may be gone, the user may have written into it)
+      const fresh = load(botId);
+      const decision = C.decide(fresh, verdict);
+      if (decision.kind === "assign" && text.length <= M.MAX_ROUTED) {
+        const sent = writeInto(botId, decision.pin.id, text, "auto");
+        if (sent !== undefined) return sent;
+      } else if (decision.kind === "new" || decision.kind === "merge") {
+        const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text } : { kind: "merge", text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
+        if (made) save(botId, fresh);
+      }
+      return plain();
+    } catch (error) {
+      console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
+      return plain();
+    } finally {
+      sorting.delete(botId);
+    }
+  };
+
   const subs = [
     // the bot's turn began: what was in the chat before it has been seen
     api.events.on("turnStarted", ({ botId, reports }) => {
@@ -225,7 +304,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       const asked = M.parseAsk(String(text ?? ""));
       if (!asked) return;
       const book = load(botId);
-      if (M.markPosted(book, asked.id, now())) save(botId, book);
+      if (M.markPosted(book, asked.id, now(), typeof id === "string" ? id : undefined)) save(botId, book);
     }),
     // a reply with no <pin-say>: the one card waiting for an answer takes it
     api.events.on("turnFinished", ({ botId, ok, reply }) => {
@@ -321,23 +400,22 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       }
     }),
 
-    // "@card words" from the main input box or the card's own: written into the card's thread, sent to the bot with the card's header
+    // "@card words" from the main input box or the card's own: written into the card's thread, sent to the bot with the card's header.
+    // A plain line of a chat that has cards is sorted by the small model (`sortLine`): into a card like an @card, or it stays in the chat.
     api.hooks.beforeSend((message) => {
       const botId = message.bot.id;
       if (!bots.has(botId)) return;
       sweepBook(botId);
       const book = load(botId);
       const hit = M.route(book, message.text);
-      // a plain message of a chat that has cards: the bot gets the cards as they stand, and may move the line into one
-      if (!hit && M.briefable(message.text)) { const brief = M.briefing(book, now()); return brief ? M.withBriefing(message.text, brief) : undefined; }
+      if (!hit && M.briefable(message.text)) {
+        const brief = M.briefing(book, now());
+        if (!brief) return undefined;
+        if (!ask || message.text.trim().length < C.MIN_LINE || sorting.has(botId)) return M.withBriefing(message.text, brief);
+        return sortLine(botId, message.text);
+      }
       if (!hit || hit.rest.length > M.MAX_ROUTED) return;
-      const at = now();
-      if (M.pruneUnposted(book, at)) save(botId, book);
-      // the same words again, at once: one send
-      if (M.isDuplicate(hit.pin, hit.rest, at)) return false;
-      M.addTurn(hit.pin, ridOf(), hit.rest, at);
-      save(botId, book);
-      return M.askText(hit.pin, M.clean(hit.rest, M.MAX_ROUTED));
+      return writeInto(botId, hit.pin.id, hit.rest, "at");
     }),
   ];
 
@@ -430,6 +508,32 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!pin) throw new Error("釘不回去了（已滿，或這張卡已經過期）。");
       save(botId, book);
       return { id: pin.id };
+    }),
+    // a suggestion of the app's was tapped (a new card for the line, or the two cards merged); it is taken out of the book first, so a double tap does it once
+    expose("acceptSuggest", (params) => {
+      const botId = botOf(params);
+      const book = load(botId);
+      const id = M.isRid(params.id) ? params.id : "";
+      const item = M.takeSuggest(book, id, now());
+      if (!item) return { unchanged: true };
+      if (item.kind === "merge") {
+        const kept = M.mergeCards(book, item.card ?? "", item.card2 ?? "", now());
+        save(botId, book);
+        if (!kept) throw new Error("這兩張卡已經變了，沒有合併。");
+        return { merged: kept.id, closed: item.card2 };
+      }
+      const made = M.cardFromSuggestion(book, item, now());
+      save(botId, book);
+      if ("refused" in made) throw new Error(made.refused === "full" ? `最多釘 ${M.MAX_PINS} 張，先取消一張。` : "這句沒有可以釘的字。");
+      return { id: made.pin.id };
+    }),
+    // 不用: the suggestion goes away
+    expose("dismissSuggest", (params) => {
+      const botId = botOf(params);
+      const book = load(botId);
+      if (!M.takeSuggest(book, M.isRid(params.id) ? params.id : "", now())) return { unchanged: true };
+      save(botId, book);
+      return { dismissed: true };
     }),
     // 移回聊天: the line the bot moved is the chat's again (its answer shows there, once); the bot is told by the next briefing
     expose("moveBack", (params) => {

@@ -7,9 +7,10 @@ import { activate } from "../src/host";
 import { activatePins } from "../src/pins";
 import * as D from "../src/digest";
 import * as M from "../src/model";
+import type { Ask } from "../src/haiku";
 
 type Handler = (data: never) => unknown;
-function setup(seed: Record<string, unknown> = {}) {
+function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
   const exposed = new Map<string, (params: unknown) => unknown>();
   const events = new Map<string, Handler>();
   const tags = new Map<string, Handler>();
@@ -22,10 +23,12 @@ function setup(seed: Record<string, unknown> = {}) {
   const family: { id: string; parent: string | null; name?: string }[] = [];
   // what workspace.waiting() gives: each bot's open question, or the lines of its memory.md "Waiting on you"
   const waitingItems: { botId: string; text: string; messageId?: string | null }[] = [];
+  // what chat.messages gives (the lines the classifier reads as the chat's newest)
+  const chatLines: { id?: string; role: string; text: string }[] = [];
   const api = {
     subscriptions: [] as unknown[],
     storage: { dir: "/s", get: (key: string) => (stored.has(key) ? JSON.parse(JSON.stringify(stored.get(key))) : undefined), set: (key: string, value: unknown) => { stored.set(key, JSON.parse(JSON.stringify(value))); } },
-    chat: { setData, decorate },
+    chat: { setData, decorate, messages: vi.fn(async (botId: string) => ({ botId, name: botId, unread: 0, messages: chatLines, tasks: [] })) },
     workspace: {
       bots: vi.fn(async () => family.map((bot) => ({ ...bot, name: bot.name ?? bot.id, role: "bot" }))),
       waiting: vi.fn(async () => ({ items: waitingItems.map((item) => ({ messageId: null, ...item })), doing: {} })),
@@ -37,20 +40,21 @@ function setup(seed: Record<string, unknown> = {}) {
   };
   let clock = 1_000_000;
   const expose = (method: string, fn: (params: Record<string, unknown>) => unknown) => api.ui.expose(method, (params) => fn((params ?? {}) as Record<string, unknown>));
-  const subs = activatePins(api as unknown as BotlingApi, expose, () => clock);
+  const subs = activatePins(api as unknown as BotlingApi, expose, () => clock, ask);
   const bot = (id: string) => ({ id, name: id, role: "bot" as const, awake: true });
   const call = (method: string, params: Record<string, unknown>) => exposed.get(method)!(params) as never;
   const emit = (event: string, data: Record<string, unknown>) => events.get(event)!(data as never);
   const tag = (botId: string, name: string, attributes: Record<string, string>, body = "") => tags.get(name)!({ bot: bot(botId), tag: name, attributes, body } as never);
   const send = (botId: string, text: string) => hooks[0]!({ bot: bot(botId), text } as never) as string | false | undefined;
+  const sendAsync = async (botId: string, text: string) => (await hooks[0]!({ bot: bot(botId), text } as never)) as string | false | undefined;
   const book = (botId: string) => M.readBook(stored.get(`pins:${botId}`));
-  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, call, emit, tag, send, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
+  return { api, subs, exposed, events, tags, hooks, stored, setData, decorate, family, waitingItems, chatLines, call, emit, tag, send, sendAsync, book, tick: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 describe("the program part", () => {
-  it("registers the nine methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the eleven methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
-    expect([...exposed.keys()].sort()).toEqual(["collapse", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
+    expect([...exposed.keys()].sort()).toEqual(["acceptSuggest", "collapse", "dismissSuggest", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
     expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone", "workerNote", "workerStarted"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
@@ -1118,5 +1122,202 @@ describe("cards that close or go stale by themselves", () => {
     expect(t.send("B1", "嗨")).toBeUndefined();
     expect(t.book("B1").pins).toHaveLength(0);
     expect(t.send("B3", "嗨")).toBeUndefined();
+  });
+});
+
+
+describe("a plain line sorted by the small model (4c)", () => {
+  const verdict = (value: unknown): Ask => vi.fn(async () => value);
+  const withCards = (ask: Ask | null) => {
+    const t = setup({}, ask);
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "Deploy" });
+    t.call("pinMessage", { botId: "B1", messageId: "m2", text: "Docs" });
+    t.tick(5_000);
+    return t;
+  };
+  /** The user writes `text`; the chat shows what was sent as line `id`. */
+  const write = async (t: ReturnType<typeof setup>, text: string, id = "u1") => {
+    const sent = (await t.sendAsync("B1", text)) as string;
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id });
+    return sent;
+  };
+
+  it("a line the model assigns (confidence enough) is written into that card like an @card: the card's header goes to the bot, the turn is automatic, and the line folds behind a trace", async () => {
+    const ask = verdict({ action: "assign", card: "p-0001", confidence: 0.9 });
+    const t = withCards(ask);
+    const sent = await write(t, "部署那個好了嗎");
+    expect(sent).toBe(M.askText(t.book("B1").pins[0]!, "部署那個好了嗎"));
+    expect(sent).not.toContain(M.BRIEF);
+    const turn = t.book("B1").pins[0]!.thread[0]!;
+    expect(turn).toMatchObject({ q: "部署那個好了嗎", via: "auto", msgId: "u1" });
+    expect(t.book("B1").pins[1]!.thread).toEqual([]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces[0]).toMatchObject({ key: `mv-${turn.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", by: "bot" } });
+    // the bot's <pin-say> answers into the card, as for an @card
+    t.tag("B1", "pin-say", { id: "p-0001" }, "還沒好。");
+    expect(t.book("B1").pins[0]!.thread[0]!.a).toBe("還沒好。");
+  });
+
+  it("the model is asked once, with the cards and the newest chat lines as JSON data (no briefing or card header in them), and nothing is asked for a chat with no cards", async () => {
+    const ask = verdict({ action: "chat", confidence: 0.9 });
+    const t = withCards(ask);
+    t.chatLines.push({ role: "user", text: "早" }, { role: "bot", text: "早安" }, { role: "user", text: M.askText(t.book("B1").pins[1]!, "文件呢") }, { role: "user", text: M.withBriefing("嗨", "〔Pin 區現況〕\nx") }, { role: "bot", text: "<app_task_result task_id=\"t\">x</app_task_result>" });
+    await t.sendAsync("B1", "部署那個好了嗎");
+    expect(ask).toHaveBeenCalledTimes(1);
+    const prompt = (ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+    const data = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)) as { cards: { id: string }[]; recent: { who: string; text: string }[]; newLine: string };
+    expect(data.cards.map((card) => card.id)).toEqual(["p-0001", "p-0002"]);
+    expect(data.recent).toEqual([{ who: "user", text: "早" }, { who: "bot", text: "早安" }, { who: "user", text: "文件呢" }, { who: "user", text: "嗨" }]);
+    expect(data.newLine).toBe("部署那個好了嗎");
+    const empty = setup({}, ask);
+    expect(empty.send("B1", "嗨")).toBeUndefined();
+    expect(ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("low confidence, action chat, a card that does not exist, a wrong shape, a refusal and a model that fails all leave the line in the chat with the briefing (no move instruction), and write nothing", async () => {
+    const answers: unknown[] = [
+      { action: "assign", card: "p-0001", confidence: 0.5 }, { action: "chat", confidence: 1 }, { action: "assign", card: "p-0099", confidence: 1 },
+      { action: "assign", card: "constructor", confidence: 1 }, { action: "assign", card: "p-0001" }, "not json", { action: "delete", confidence: 1 }, null,
+    ];
+    for (const answer of answers) {
+      const t = withCards(verdict(answer));
+      const sent = (await t.sendAsync("B1", "部署那個好了嗎")) as string;
+      expect(M.stripBriefing(sent)).toBe("部署那個好了嗎");
+      expect(sent).toContain("p-0001「Deploy」");
+      expect(sent).not.toContain("move=");
+      expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[], []]);
+      expect(t.book("B1").suggest).toBeUndefined();
+    }
+    const broken = withCards(async () => { throw new Error("timeout"); });
+    expect(M.hasBriefing((await broken.sendAsync("B1", "部署那個好了嗎")) as string)).toBe(true);
+    // no model call at all (this Botling has no claude CLI): the same
+    const none = withCards(null);
+    expect(M.hasBriefing(none.send("B1", "部署那個好了嗎") as string)).toBe(true);
+  });
+
+  it("@card and the 回覆到 chip still route by code first: the model is not asked", async () => {
+    const ask = verdict({ action: "assign", card: "p-0002", confidence: 1 });
+    const t = withCards(ask);
+    const sent = (await t.sendAsync("B1", "@Deploy 好了嗎")) as string;
+    expect(sent).toBe(M.askText(t.book("B1").pins[0]!, "好了嗎"));
+    expect(t.book("B1").pins[0]!.thread[0]!.via).toBe("at");
+    expect(ask).not.toHaveBeenCalled();
+    // a slash command and a 〔header〕 line are not asked either
+    expect(t.send("B1", "/陪讀 a.pdf")).toBeUndefined();
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("a line that is too short, and a second line while the first is being sorted, are not asked: they go to the chat at once, in order", async () => {
+    let release: (value: unknown) => void = () => {};
+    const ask: Ask = vi.fn(() => new Promise((resolve) => { release = resolve; }));
+    const t = withCards(ask);
+    expect(M.hasBriefing(t.send("B1", "好") as string)).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    const first = t.sendAsync("B1", "部署那個好了嗎");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = (await t.sendAsync("B1", "再問一句")) as string;
+    expect(M.hasBriefing(second)).toBe(true);
+    expect(ask).toHaveBeenCalledTimes(1);
+    release({ action: "assign", card: "p-0002", confidence: 0.99 });
+    expect(await first).toBe(M.askText(t.book("B1").pins[1]!, "部署那個好了嗎"));
+  });
+
+  it("the book is read again after the model answers: a card taken down meanwhile keeps the line in the chat", async () => {
+    let release: (value: unknown) => void = () => {};
+    const t = withCards(vi.fn(() => new Promise((resolve) => { release = resolve; })));
+    const sending = t.sendAsync("B1", "部署那個好了嗎");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    t.call("unpin", { botId: "B1", id: "p-0001" });
+    release({ action: "assign", card: "p-0001", confidence: 0.99 });
+    const sent = (await sending) as string;
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(sent).not.toContain("p-0001「Deploy」");
+    expect(t.book("B1").pins.map((pin) => pin.thread)).toEqual([[]]);
+  });
+
+  it("an automatic turn can be taken back (移回聊天) or sent to another card (改到…), and the next verdict is told what the user corrected", async () => {
+    const t = withCards(verdict({ action: "assign", card: "p-0001", confidence: 0.9 }));
+    await write(t, "文件那個呢");
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0002" })).toEqual({ moved: "p-0002" });
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ rid, via: "auto", redirected: true });
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ moved: "chat" });
+    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("back");
+    const ask = verdict({ action: "chat", confidence: 1 });
+    const again = withCards(ask);
+    again.stored.set("pins:B1", { ...JSON.parse(JSON.stringify(again.stored.get("pins:B1"))), fixes: [{ text: "文件那個呢", from: "p-0001", to: "chat", at: 1 }] });
+    await again.sendAsync("B1", "文件那個呢");
+    const prompt = (ask as ReturnType<typeof vi.fn>).mock.calls[0]![0] as string;
+    expect(JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).corrected).toEqual([{ text: "文件那個呢", wasIn: "p-0001", belongsIn: "chat" }]);
+  });
+
+  it("\"new\" only suggests: the line stays in the chat, a tap makes the card, 不用 drops it, and the same line does not stack a second suggestion", async () => {
+    const t = withCards(verdict({ action: "new", confidence: 0.95 }));
+    const sent = (await t.sendAsync("B1", "幫我整理一下整個資料夾的舊報告")) as string;
+    expect(M.hasBriefing(sent)).toBe(true);
+    expect(t.book("B1").pins).toHaveLength(2);
+    await t.sendAsync("B1", "幫我整理一下整個資料夾的舊報告");
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.suggest).toHaveLength(1);
+    expect(view.suggest![0]).toMatchObject({ kind: "new", text: "幫我整理一下整個資料夾的舊報告" });
+    const id = view.suggest![0]!.id;
+    const made = t.call("acceptSuggest", { botId: "B1", id }) as { id: string };
+    expect(t.book("B1").pins.find((pin) => pin.id === made.id)).toMatchObject({ origin: "user", state: "run" });
+    expect(t.book("B1").suggest).toBeUndefined();
+    // a second tap of the same suggestion does nothing
+    expect(t.call("acceptSuggest", { botId: "B1", id })).toEqual({ unchanged: true });
+    expect(t.book("B1").pins).toHaveLength(3);
+    // turned down
+    await t.sendAsync("B1", "再來一個全新的大工作");
+    const second = (t.call("view", { botId: "B1" }) as M.BookView).suggest![0]!.id;
+    expect(t.call("dismissSuggest", { botId: "B1", id: second })).toEqual({ dismissed: true });
+    expect(t.book("B1").pins).toHaveLength(3);
+    expect((t.call("view", { botId: "B1" }) as M.BookView).suggest).toBeUndefined();
+  });
+
+  it("\"merge\" only suggests; the tap folds the second card into the first, and 釘回 of the folded card undoes it", async () => {
+    const t = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 0.9 }));
+    t.tag("B1", "pin-say", { id: "p-0002" }, "文件的回答");
+    await t.sendAsync("B1", "Deploy 和 Docs 其實是同一件事");
+    expect(t.book("B1").pins).toHaveLength(2);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.suggest![0]).toMatchObject({ kind: "merge", title: "Deploy", title2: "Docs" });
+    // two cards, each with a turn
+    const book = t.book("B1");
+    M.addTurn(book.pins[1]!, "r-docs", "文件進度", t.now(), "at");
+    t.stored.set("pins:B1", JSON.parse(JSON.stringify(book)));
+    expect(t.call("acceptSuggest", { botId: "B1", id: view.suggest![0]!.id })).toMatchObject({ merged: "p-0001", closed: "p-0002" });
+    const merged = t.book("B1");
+    expect(merged.pins.map((pin) => pin.id)).toEqual(["p-0001"]);
+    expect(merged.pins[0]!.thread.map((turn) => turn.rid)).toContain("r-docs");
+    expect((t.call("view", { botId: "B1" }) as M.BookView).closed).toMatchObject([{ id: "p-0002", title: "Docs", into: "Deploy" }]);
+    t.call("repin", { botId: "B1", id: "p-0002" });
+    const back = t.book("B1");
+    expect(back.pins.map((pin) => pin.id).sort()).toEqual(["p-0001", "p-0002"]);
+    expect(back.pins.find((pin) => pin.id === "p-0001")!.thread.map((turn) => turn.rid)).not.toContain("r-docs");
+    expect(back.pins.find((pin) => pin.id === "p-0002")!.thread.map((turn) => turn.rid)).toContain("r-docs");
+  });
+
+  it("a model's merge of a card with itself is only a chat line, and a merge suggestion whose card was taken down is gone from the strip and merges nothing", async () => {
+    const t = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0001", confidence: 1 }));
+    expect(M.hasBriefing((await t.sendAsync("B1", "合併這個")) as string)).toBe(true);
+    expect(t.book("B1").suggest).toBeUndefined();
+    const u = withCards(verdict({ action: "merge", card: "p-0001", card2: "p-0002", confidence: 1 }));
+    await u.sendAsync("B1", "這兩個是同一件事");
+    const id = (u.call("view", { botId: "B1" }) as M.BookView).suggest![0]!.id;
+    u.call("unpin", { botId: "B1", id: "p-0002" });
+    expect((u.call("view", { botId: "B1" }) as M.BookView).suggest).toBeUndefined();
+    expect(u.call("acceptSuggest", { botId: "B1", id })).toEqual({ unchanged: true });
+    expect(u.book("B1").pins.map((pin) => pin.id)).toEqual(["p-0001"]);
+  });
+
+  it("suggestions are old after 30 minutes, and a stored suggestion with a bad shape is dropped on reading", () => {
+    const book = M.readBook({ seq: 2, pins: [], removed: [], suggest: [
+      { id: "s1", kind: "new", text: "ok", at: 1 }, { id: "../x", kind: "new", text: "bad id", at: 1 }, { id: "s2", kind: "merge", text: "m", card: "p-0001", card2: "p-0001", at: 1 },
+      { id: "s3", kind: "other", text: "t", at: 1 }, { id: "s4", kind: "new", text: "   ", at: 1 },
+    ] });
+    expect(book.suggest?.map((item) => item.id)).toEqual(["s1"]);
+    expect(M.liveSuggest(book, 1 + M.SUGGEST_MS - 1)).toHaveLength(1);
+    expect(M.liveSuggest(book, 1 + M.SUGGEST_MS)).toHaveLength(0);
   });
 });

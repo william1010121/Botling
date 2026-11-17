@@ -804,6 +804,49 @@ describe("a card that may be outdated, and a card the app put away", () => {
   });
 });
 
+describe("what the app only suggests, and a merge put away", () => {
+  const hidden = () => top.querySelector<HTMLElement>(".pt-strip")!.hidden;
+  const lines = () => [...top.querySelectorAll<HTMLElement>(".pt-suggest-line")];
+  const buttons = (line: HTMLElement) => [...line.querySelectorAll<HTMLButtonElement>("button")];
+
+  it("a suggestion is a line with two buttons (also with no card on the strip); a malformed one is not drawn, and only two show", () => {
+    const suggest = [
+      { id: "s1", kind: "new", text: "整理舊報告" }, { id: "s2", kind: "merge", text: "同一件", title: "Deploy", title2: "Docs" },
+      { id: "../x", kind: "new", text: "壞 id" }, { id: "s3", kind: "other", text: "x" }, { id: "s4", kind: "new", text: 5 }, null,
+    ] as unknown as { id: string; kind: "new"; text: string }[];
+    ui.update("B1", { ...view(), suggest });
+    expect(hidden()).toBe(false);
+    expect(lines().map((line) => line.querySelector(".pt-toast-text")!.textContent)).toEqual(["要把「整理舊報告」做成新卡片嗎？", "「Deploy」和「Docs」好像是同一件事，要合併嗎？"]);
+    expect(lines().map((line) => buttons(line).map((button) => button.textContent))).toEqual([["建立卡片", "不用"], ["合併", "不用"]]);
+    ui.update("B1", view());
+    expect(hidden()).toBe(true);
+  });
+
+  it("a tap asks the program part once (a double tap too), a new card opens, and 不用 only dismisses", async () => {
+    call.mockClear();
+    call.mockImplementation(async (method: string) => (method === "acceptSuggest" ? { id: "p-0005" } : {}));
+    try {
+      ui.update("B1", { ...view(pin("p-0005")), suggest: [{ id: "s1", kind: "new", text: "整理舊報告" }, { id: "s2", kind: "merge", text: "同一件", title: "A", title2: "B" }] });
+      const [make, no] = buttons(lines()[0]!);
+      make!.click();
+      make!.click();
+      expect(call.mock.calls.filter(([method]) => method === "acceptSuggest")).toEqual([["acceptSuggest", { botId: "B1", id: "s1" }]]);
+      await flush();
+      expect(panel()?.dataset.pin).toBe("p-0005");
+      buttons(lines()[1]!)[1]!.click();
+      expect(call.mock.calls.at(-1)).toEqual(["dismissSuggest", { botId: "B1", id: "s2" }]);
+      expect(no).toBeTruthy();
+    } finally {
+      call.mockImplementation(async (method: string) => { if (failing.has(method)) throw new Error(`${method} failed`); return {}; });
+    }
+  });
+
+  it("a card merged into another is offered back (釘回) with where it went", () => {
+    ui.update("B1", { ...view(pin("p-0001")), closed: [{ id: "p-0002", title: "Docs", at: clock - 1_000, into: "Deploy" }] });
+    expect([...top.querySelectorAll(".pt-closed-line .pt-toast-text")].map((node) => node.textContent)).toEqual(["「Docs」已併入「Deploy」"]);
+  });
+});
+
 describe("「你不在時」: the digest above the strip", () => {
   const H = 3_600_000;
   beforeEach(() => { clock = 20_000_000; });

@@ -155,6 +155,34 @@ It runs when the page asks (`view`, `touch`), before a briefing (`beforeSend`), 
   (`applyUpdate` with source bot) or by a state other than run; a worker's news (source app) does not clear it. A failed / stopped worker makes no nudge (it already turned the card to 等你).
 Nothing here changes a card's words or state by itself: the program only closes (hour) and marks / tells (stale, nudge).
 
+### 4c. The user's plain lines are sorted by a small model, not by the head bot
+
+The user's decision: the un-@ lines of a chat that has cards are sorted by a Haiku call that takes over directly (no shadow mode). The head bot is no longer asked to route:
+the `move="yes"` instruction is gone from the prompt section (`package.json`) and from the briefing's tail. `<pin-say>` stays (the answer inside a card). The `move="yes"` *handler*
+(`takeAuto`, `keepAnswer`) is still in the host: a bot that says it anyway (an old session) is honoured, nothing asks for it.
+
+**How the app calls a model without tools (nothing new in the core).** `api.engines.cli("claude")` gives the CLI as Botling starts it (the real `claude`, found where the bots' is); `haiku.ts` runs it
+as the chat summaries do (botling.catchup `claudeSummarizer`): `claude -p --output-format json --model claude-haiku-5-5 --tools "" --strict-mcp-config --no-session-persistence
+--disable-slash-commands --setting-sources "" --system-prompt … --json-schema …`, in a fresh temporary folder, the question on stdin, a process group ended on the 8 s timeout, the answer the
+`structured_output` (else the result text). No permission (a shipped plugin's own child process, as catchup's), no API key, no SDK. A Botling with no such CLI (`engines` missing or `cli()` null) sorts nothing:
+every plain line stays in the chat with the briefing.
+
+**Flow** (`pins.ts` `sortLine`, pure parts in `classify.ts`). `beforeSend` for a plain line (`M.briefable`, at least 3 characters, the bot has cards, no @card hit; `@card` and the 回覆到 chip are routed by
+code first and never asked) asks the model once: the cards (id, title, state, status as the short summary), the chat's newest 6 lines (`chat.messages`, the user's words without the briefing or a card
+header, nothing the app wrote), what the user corrected lately (`Book.fixes`) and the line, as **one JSON document** (so no text of a card or the chat can pass for an instruction). The answer
+`{action: assign|new|merge|chat, card, card2?, confidence}` is parsed strictly (`parseVerdict`: anything else is none) and decided against the book **as it is after the wait** (`decide`; the send
+waits for the model, so the book is read again):
+- confidence below `CONFIDENCE` (0.75), `chat`, a card that does not exist, a wrong shape, a timeout or any failure: the line stays in the chat, with the briefing, nothing is written.
+- `assign`: written into that card exactly as an @card (`writeInto`: duplicate guard, the card's header and footer go to the bot, which answers with `<pin-say>`), with `via: "auto"`. The user's line folds
+  behind the trace 「→ 放進 X 的卡片 · 移回聊天 · 改到…」 (`markPosted` keeps the line's id as `msgId` when the line shows in the chat); both buttons are the Phase 2 undo, and a correction goes to the next prompt of the classifier.
+- `new`: only a **suggestion** (`Book.suggest`, 2 kept, 30 minutes): the line stays in the chat; the strip shows 「要把「…」做成新卡片嗎？ 建立卡片 · 不用」; the tap makes a card of the user's (`acceptSuggest`), like pinning the line.
+- `merge`: only a suggestion that **needs the confirm**: 「A 和 B 好像是同一件事，要合併嗎？ 合併 · 不用」. The tap (`mergeCards`) copies B's thread and workers into A and takes B down
+  (`Removed.merged` says what to take back); **undo** is B's 釘回 (the strip's line 「B 已併入 A · 釘回」), which takes those turns and workers out of A again. A merge whose card went meanwhile is not shown and does nothing.
+A second line written while the first is being sorted is not asked (it goes to the chat at once, so the lines keep their order); one in flight per bot.
+
+**Limits.** The send waits for Haiku (usually a second or two, 8 s at most). One model call per plain line of a chat that has cards; none for a chat with no cards, a line under 3 characters, a slash command
+or a 〔header〕 line. The model sees titles, statuses and recent lines: they go to the user's own claude login, as any bot turn does. Not tested against the real model here (the tests mock the call).
+
 ## Phase 3 (「你不在時」: what happened while you were away)
 
 **The rule.** The user is *away* after **30 minutes** (`AWAY_MS`) with no sign of them: a message they sent in any chat (`messagePosted`, role `user`), or
@@ -229,3 +257,10 @@ is a hook of the whole chat, answered at once for a bot with no cards).
 12. **Before review**: base is `main` at branch time; the kernel goldens were stale on main (a `botling.deps` entry and a `hostState`
     field were already missing) and are regenerated here, so their diff has that drift too.
 13. **Test budget**: at most 2 `remote-test.sh` runs, no `--typecheck`; locally `npm run build` only.
+
+**Phase 4c additions to the answers above.** 4 (text): the model is given one JSON document (cards, lines, the line: `oneLine`/`clean` each, quotes and newlines escaped by `JSON.stringify`), and the model's answer is read back to a verdict
+(`parseVerdict`: strict action, a card id only if `isId`, confidence 0–1). 5 (secrets): none passed; the CLI's own login is used, errors log a fixed word, never the text. 6 (sizes): line 1,500, recent lines 6 × 200, 2 suggestions × 80, the
+child's output capped at 1 MB. 8 (retries): one sort in flight per bot, the same words within 3 s are one send (`writeInto`), a suggestion is taken out of the book before it acts (a double tap acts once, the page also guards by id).
+9 (authority at use): the book is read again after the model's wait; a card that went, or a merge whose cards went, does nothing; a suggestion expires after 30 minutes. 10 (fail closed): a missing CLI, a timeout, a bad exit or answer,
+a low confidence or any throw leaves the line in the chat with the briefing. 11 (tests): `classify.test.ts` (prompt, parse, decide, merge, the isolated call against a fake CLI script), `host.test.ts` (the flow with a mocked model), `ui.test.ts`.
+13: the second and last `remote-test.sh` run covers 4a–4c.

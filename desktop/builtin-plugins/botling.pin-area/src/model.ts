@@ -60,10 +60,19 @@ export interface Pin {
   nudge?: true;
 }
 /** A card taken off the strip, kept briefly so 釘回 puts it back. */
-export interface Removed { pin: Pin; at: number; by: "user" | "seen" | "bot" | "auto" }
+export interface Removed {
+  pin: Pin; at: number; by: "user" | "seen" | "bot" | "auto";
+  /** Set when the card was merged into another (`mergeCards`): the card it went into, the turns and workers that were copied there (taken out again by 釘回). */
+  merged?: { into: string; rids: string[]; from: string[] };
+}
+/**
+ * What the app only suggests for a plain line of the user's, until they tap (`classify.ts`): a new card for it, or two cards that look like one thing.
+ * Nothing moves by itself for these. `text`: the line (cut short); `card`/`card2`: the cards to merge (`card` stays).
+ */
+export interface Suggest { id: string; kind: "new" | "merge"; text: string; at: number; card?: string; card2?: string }
 /** A guess of the automatic routing the user corrected (the bot is told, so it guesses better). `from`/`to`: a card id, or "chat". */
 export interface Fix { text: string; from: string; to: string; at: number }
-export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[] }
+export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[]; suggest?: Suggest[] }
 
 export const MAX_PINS = 8;
 /** Cards a bot made that still are not done: a bot cannot fill the strip. */
@@ -83,6 +92,10 @@ export const DONE_CLOSE_MS = 60 * 60_000;
 /** How long a card taken down by itself is still offered back on the strip. */
 export const CLOSED_SHOW_MS = 24 * 3_600_000;
 export const MAX_FIXES = 3;
+/** Suggestions waiting for a tap (the oldest goes over it), and how long one stays. */
+export const MAX_SUGGEST = 2;
+export const SUGGEST_MS = 30 * 60_000;
+const SUGGEST_TEXT = 80;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
 export const MAX_Q = 2_000;
@@ -193,8 +206,21 @@ export function readBook(raw: unknown): Book {
     const entry = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const pin = entry ? take(entry.pin) : null;
     if (!entry || !pin) continue;
-    book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" || entry.by === "auto" ? entry.by : "user" });
+    const merged = entry.merged && typeof entry.merged === "object" ? entry.merged as Record<string, unknown> : null;
+    const into = merged && isId(merged.into) ? merged.into : "";
+    book.removed.push({
+      pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" || entry.by === "auto" ? entry.by : "user",
+      ...(merged && into ? { merged: { into, rids: (Array.isArray(merged.rids) ? merged.rids : []).filter(isRid).slice(0, MAX_TURNS), from: (Array.isArray(merged.from) ? merged.from : []).filter(isFrom).slice(0, MAX_LINKED) } } : {}),
+    });
   }
+  const suggest = (Array.isArray(r.suggest) ? r.suggest : []).flatMap((item): Suggest[] => {
+    const g = item && typeof item === "object" ? item as Record<string, unknown> : null;
+    const text = g ? oneLine(g.text, SUGGEST_TEXT) : "";
+    if (!g || !text || !isRid(g.id) || (g.kind !== "new" && g.kind !== "merge")) return [];
+    if (g.kind === "merge" && !(isId(g.card) && isId(g.card2) && g.card !== g.card2)) return [];
+    return [{ id: g.id, kind: g.kind, text, at: num(g.at), ...(g.kind === "merge" ? { card: g.card as string, card2: g.card2 as string } : {}) }];
+  }).slice(-MAX_SUGGEST);
+  if (suggest.length) book.suggest = suggest;
   const fixes = (Array.isArray(r.fixes) ? r.fixes : []).flatMap((item): Fix[] => {
     const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const text = f ? oneLine(f.text, 30) : "";
@@ -317,6 +343,14 @@ export function restore(book: Book, id: string, now: number): Pin | null {
   if (!entry || book.pins.length >= MAX_PINS) return null;
   book.removed = book.removed.filter((candidate) => candidate !== entry);
   const pin = entry.pin;
+  // a card that was merged away takes back what it gave: the turns and workers copied into the other card are taken out of it again
+  const into = entry.merged ? book.pins.find((candidate) => candidate.id === entry.merged!.into) : undefined;
+  if (entry.merged && into) {
+    into.thread = into.thread.filter((turn) => !entry.merged!.rids.includes(turn.rid));
+    if (into.from) into.from = into.from.filter((id) => !entry.merged!.from.includes(id));
+    if (into.live) into.live = into.live.filter((id) => !entry.merged!.from.includes(id));
+    into.updatedAt = now;
+  }
   pin.handle = uniqueHandle(book, pin.title, pin.id);
   pin.updatedAt = now;
   // put back, a done card has its hour again (it would go away at once otherwise)
@@ -624,12 +658,16 @@ export function markSeen(book: Book, now: number): boolean {
   }
   return any;
 }
-/** The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. */
-export function markPosted(book: Book, id: string, now: number): boolean {
+/**
+ * The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. `msgId` (the line's id in the
+ * chat) is kept for an automatic turn: that line folds behind the trace (`tracesOf`), as the line the bot moved did.
+ */
+export function markPosted(book: Book, id: string, now: number, msgId?: string): boolean {
   const pin = book.pins.find((candidate) => candidate.id === id);
   const turn = pin ? pin.thread.find((candidate) => waits(candidate) && candidate.postedAt === null) : undefined;
   if (!turn || turn.postedAt !== null) return false;
   turn.postedAt = now;
+  if (turn.via === "auto" && msgId && msgId.length <= 200 && !lineUsed(book, msgId)) turn.msgId = msgId;
   return true;
 }
 
@@ -647,7 +685,7 @@ export function briefing(book: Book, now: number): string {
   const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
   // the note goes out inside the user's message, which the core reads for @Name call-ins: a title like "@DAFAWU 看一下" must not call that bot in
   return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}`.replace(/@/g, "＠")
-    + `\n（這句若明顯在講其中一張卡，用 <pin-say id="p-…" move="yes">回答</pin-say>；拿不準就照常在聊天回答。以最後一則現況為準。）`;
+    + `\n（以最後一則現況為準。）`;
 }
 /** A plain message with the briefing after it; the user's own words cannot fake the marker. */
 export function withBriefing(text: string, brief: string): string {
@@ -761,7 +799,8 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
   const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
   for (const pin of book.pins) for (const turn of pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin, turn, live: true });
   // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
-  for (const entry of book.removed) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
+  // (a card merged into another has its turns there already)
+  for (const entry of book.removed) if (!entry.merged) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
   return all.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
     const back = turn.moved === true || !live;
     const worker = turn.via === "worker";
@@ -774,6 +813,67 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
   });
 }
 
+// ---- what the app only suggests (a new card, a merge): nothing happens until the user taps ----
+
+/** The suggestions still worth showing: not older than SUGGEST_MS, and (a merge) both cards still on the strip. */
+export const liveSuggest = (book: Book, now: number): Suggest[] =>
+  (book.suggest ?? []).filter((item) => now - item.at < SUGGEST_MS
+    && (item.kind === "new" || (book.pins.some((pin) => pin.id === item.card) && book.pins.some((pin) => pin.id === item.card2))));
+const suggestView = (book: Book, now: number): SuggestView[] =>
+  liveSuggest(book, now).map((item) => ({
+    id: item.id, kind: item.kind, text: item.text,
+    ...(item.kind === "merge" ? { title: book.pins.find((pin) => pin.id === item.card)?.title ?? "", title2: book.pins.find((pin) => pin.id === item.card2)?.title ?? "" } : {}),
+  }));
+/** Keeps a suggestion for the user to tap. False: the same one is already shown (so a second line about it does not stack another). */
+export function addSuggest(book: Book, input: { kind: "new" | "merge"; text: string; card?: string; card2?: string }, rid: string, now: number): boolean {
+  const text = oneLine(input.text, SUGGEST_TEXT);
+  if (!text || !isRid(rid)) return false;
+  if (input.kind === "merge" && !(isId(input.card) && isId(input.card2) && input.card !== input.card2)) return false;
+  const kept = liveSuggest(book, now);
+  const same = (item: Suggest) => item.kind === input.kind && (input.kind === "new" ? item.text === text : [item.card, item.card2].sort().join() === [input.card, input.card2].sort().join());
+  if (kept.some(same)) { book.suggest = kept; return false; }
+  book.suggest = [...kept, { id: rid, kind: input.kind, text, at: now, ...(input.kind === "merge" ? { card: input.card!, card2: input.card2! } : {}) }].slice(-MAX_SUGGEST);
+  return true;
+}
+/** Takes one suggestion out of the book (tapped, or turned down); null when it is not (or no longer) there. */
+export function takeSuggest(book: Book, id: string, now: number): Suggest | null {
+  const item = liveSuggest(book, now).find((candidate) => candidate.id === id);
+  if (!item) return null;
+  book.suggest = (book.suggest ?? []).filter((candidate) => candidate.id !== id);
+  if (!book.suggest.length) delete book.suggest;
+  return item;
+}
+/** Card `dropId` goes into card `keepId`: its thread and workers are copied there, and it is taken down with a note of what to take back (釘回 undoes it). */
+export function mergeCards(book: Book, keepId: string, dropId: string, now: number): Pin | null {
+  const keep = book.pins.find((pin) => pin.id === keepId);
+  const drop = book.pins.find((pin) => pin.id === dropId);
+  if (!keep || !drop || keep === drop) return null;
+  const have = new Set(keep.thread.map((turn) => turn.rid));
+  const copies = drop.thread.filter((turn) => !have.has(turn.rid)).map((turn): Turn => ({ ...turn }));
+  keep.thread = [...keep.thread, ...copies].sort((a, b) => a.qAt - b.qAt);
+  while (keep.thread.length > MAX_TURNS) {
+    const old = keep.thread.findIndex((turn) => turn.a !== null);
+    keep.thread.splice(old >= 0 ? old : 0, 1);
+  }
+  const kept = new Set(keep.thread.map((turn) => turn.rid));
+  const rids = copies.map((turn) => turn.rid).filter((rid) => kept.has(rid));
+  const before = new Set(keep.from ?? []);
+  linkFrom(keep, drop.from ?? [], MAX_LINKED);
+  const from = (keep.from ?? []).filter((id) => !before.has(id));
+  for (const id of drop.live ?? []) if (!keep.live?.includes(id)) keep.live = [...(keep.live ?? []), id];
+  logLine(keep, `合併了「${oneLine(drop.title, MAX_TITLE)}」`, now);
+  keep.updatedAt = now;
+  remove(book, dropId, now, "user");
+  const entry = book.removed.find((candidate) => candidate.pin === drop);
+  if (entry) entry.merged = { into: keep.id, rids, from };
+  return keep;
+}
+/** Tapping 「建立卡片」: a card of the user's for that line. Refused (nothing changes) when the strip is full or the line has no words. */
+export function cardFromSuggestion(book: Book, item: Suggest, now: number): { pin: Pin } | { refused: Refusal } {
+  const { title, status } = fromMessage(item.text);
+  return addPin(book, { origin: "user", title, status, state: "run", source: "user" }, now);
+}
+
 // ---- what the page draws ----
 
 export interface PinView {
@@ -782,14 +882,20 @@ export interface PinView {
   /** 可能已過時 (`isStale`), and the bot being asked to close the card (`nudge`). */
   stale?: true; nudge?: true;
 }
-export interface ClosedView { id: string; title: string; at: number }
+/** `into`: the title of the card it was merged into (a merge; else the app put it away because it was done). */
+export interface ClosedView { id: string; title: string; at: number; into?: string }
+/** A suggestion as the strip draws it: for a merge the titles of the two cards (`card` stays). */
+export interface SuggestView { id: string; kind: "new" | "merge"; text: string; title?: string; title2?: string }
 /** `closed`: cards the app took down by itself lately (the strip offers 釘回). */
-export interface BookView { v: 1; pins: PinView[]; closed?: ClosedView[] }
+export interface BookView { v: 1; pins: PinView[]; closed?: ClosedView[]; suggest?: SuggestView[] }
 const ORDER: Record<State, number> = { wait: 0, run: 1, done: 2 };
 
 /** The cards the app took down by itself in the last day (newest last): the strip offers them back. */
 export const closedOf = (book: Book, now: number): ClosedView[] =>
-  book.removed.filter((entry) => entry.by === "auto" && now - entry.at < CLOSED_SHOW_MS).map((entry) => ({ id: entry.pin.id, title: entry.pin.title, at: entry.at }));
+  book.removed.filter((entry) => (entry.by === "auto" || entry.merged) && now - entry.at < CLOSED_SHOW_MS).map((entry) => {
+    const into = entry.merged ? book.pins.find((pin) => pin.id === entry.merged!.into)?.title : undefined;
+    return { id: entry.pin.id, title: entry.pin.title, at: entry.at, ...(into ? { into } : {}) };
+  });
 
 /** The cards in the order the strip shows them: waiting, then running, then done (each oldest first so a row keeps its place). */
 export function viewOf(book: Book, now?: number): BookView {
@@ -803,6 +909,7 @@ export function viewOf(book: Book, now?: number): BookView {
       ...(isStale(pin) ? { stale: true as const } : {}), ...(pin.nudge ? { nudge: true as const } : {}),
     })),
     ...(now !== undefined && closedOf(book, now).length ? { closed: closedOf(book, now) } : {}),
+    ...(now !== undefined && suggestView(book, now).length ? { suggest: suggestView(book, now) } : {}),
   };
 }
 

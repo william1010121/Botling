@@ -527,7 +527,8 @@ describe("a plain message the bot moves into a card", () => {
     expect(rows[0]).toBe("p-0003「等你的」等你 · 選一個");
     expect(rows[1]).toBe("p-0002「我釘的」進行中 · 進行 · 使用者釘的");
     expect(rows[2]).toBe("p-0001「完成的」完成 · done status · 使用者釘的");
-    expect(brief).toContain('move="yes"');
+    // the bot is no longer asked to sort lines (the app does, 4c)
+    expect(brief).not.toContain("move=");
   });
 
   it("a card's words in the briefing are one clean line each, so a card cannot smuggle a header or a fake note into the bot's prompt", () => {

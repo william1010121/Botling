@@ -77,6 +77,8 @@ export class PinUi {
   private readonly toastLine = el("div", "pt-toast");
   /** Cards the app put away by itself (done for an hour): one line each, with 釘回. */
   private readonly closedLines = el("div", "pt-closed");
+  /** What the app only suggests (a new card for the user's line, two cards to merge): one line each, nothing happens until the user taps. */
+  private readonly suggestLines = el("div", "pt-suggest");
   private panel: HTMLElement | null = null;
   private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; stale: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
   private toast: { text: string; undo?: { id: string }; until: number } | null = null;
@@ -101,7 +103,7 @@ export class PinUi {
     this.more.type = "button";
     this.more.addEventListener("click", () => { this.showAll = !this.showAll; this.draw(); });
     this.rows.append(this.above, this.below, this.more);
-    this.section.append(this.head, this.rows, this.closedLines, this.toastLine);
+    this.section.append(this.head, this.rows, this.suggestLines, this.closedLines, this.toastLine);
     this.top.append(this.digest, this.section);
     const { signal } = this.listeners;
     // A plain primary-button press on the chat's empty space leaves the open card (not a press on a message, a button, the input box or the
@@ -190,7 +192,8 @@ export class PinUi {
     const pins = this.data.pins;
     this.drawDigest();
     const closed = this.closed();
-    this.section.hidden = pins.length === 0 && !this.toast && closed.length === 0;
+    const suggest = this.suggestions();
+    this.section.hidden = pins.length === 0 && !this.toast && closed.length === 0 && suggest.length === 0;
     const waiting = pins.filter((pin) => pin.state === "wait").length;
     this.head.replaceChildren();
     if (pins.length) {
@@ -216,6 +219,7 @@ export class PinUi {
     const focusId = this.lastFocusId ?? active;
     this.lastFocusId = null;
     if (focusId) (Array.from(this.rows.querySelectorAll<HTMLElement>(".pt-row"))).find((row) => row.dataset.pin === focusId)?.focus({ preventScroll: true });
+    this.drawSuggest(suggest);
     this.drawClosed(closed);
     this.drawToast();
     this.drawChip();
@@ -370,12 +374,44 @@ export class PinUi {
   }
 
   /** The cards the program part says it took down by itself in the last day: three at most, each shaped and checked. */
-  private closed(): { id: string; title: string }[] {
+  private closed(): { id: string; title: string; into?: string }[] {
     const list = Array.isArray(this.data.closed) ? this.data.closed : [];
     const day = 24 * 3_600_000;
-    return list.flatMap((item) => (item && typeof item.id === "string" && /^p-\d{4,}$/.test(item.id) && typeof item.title === "string" && typeof item.at === "number" && this.deps.now() - item.at < day ? [{ id: item.id, title: item.title.slice(0, 40) }] : [])).slice(-3);
+    return list.flatMap((item) => (item && typeof item.id === "string" && /^p-\d{4,}$/.test(item.id) && typeof item.title === "string" && typeof item.at === "number" && this.deps.now() - item.at < day
+      ? [{ id: item.id, title: item.title.slice(0, 40), ...(typeof item.into === "string" && item.into ? { into: item.into.slice(0, 40) } : {}) }] : [])).slice(-3);
   }
-  private drawClosed(closed: { id: string; title: string }[]): void {
+  /** The suggestions the program part sent, each shaped and checked (two at most). */
+  private suggestions(): { id: string; kind: "new" | "merge"; text: string; title: string; title2: string }[] {
+    const list = Array.isArray(this.data.suggest) ? this.data.suggest : [];
+    return list.flatMap((item) => (item && typeof item.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(item.id) && (item.kind === "new" || item.kind === "merge") && typeof item.text === "string"
+      ? [{ id: item.id, kind: item.kind, text: item.text.slice(0, 80), title: typeof item.title === "string" ? item.title.slice(0, 40) : "", title2: typeof item.title2 === "string" ? item.title2.slice(0, 40) : "" }] : [])).slice(-2);
+  }
+  private drawSuggest(list: { id: string; kind: "new" | "merge"; text: string; title: string; title2: string }[]): void {
+    const { words } = this.deps;
+    this.suggestLines.replaceChildren();
+    this.suggestLines.hidden = list.length === 0;
+    for (const item of list) {
+      const line = el("div", "pt-suggest-line");
+      const act = (label: string, method: "acceptSuggest" | "dismissSuggest") => {
+        const button = el("button", "pt-toast-act", label);
+        button.type = "button";
+        button.addEventListener("click", () => {
+          if (this.moving.has(item.id)) return;
+          this.moving.add(item.id);
+          void this.deps.call(method, { botId: this.botId, id: item.id })
+            .then((made) => { const id = (made as { id?: unknown } | null)?.id; if (typeof id === "string") this.open(id); }, (error) => this.failed(error))
+            .finally(() => this.moving.delete(item.id));
+        });
+        return button;
+      };
+      line.append(
+        el("span", "pt-toast-text", item.kind === "new" ? words("suggest.new", { text: item.text }) : words("suggest.merge", { title: item.title, title2: item.title2 })),
+        act(words(item.kind === "new" ? "suggest.yes.new" : "suggest.yes.merge"), "acceptSuggest"), act(words("suggest.no"), "dismissSuggest"),
+      );
+      this.suggestLines.append(line);
+    }
+  }
+  private drawClosed(closed: { id: string; title: string; into?: string }[]): void {
     this.closedLines.replaceChildren();
     this.closedLines.hidden = closed.length === 0;
     for (const item of closed) {
@@ -388,7 +424,7 @@ export class PinUi {
         this.moving.add(item.id);
         void this.deps.call("repin", { botId: this.botId, id: item.id }).then(() => this.open(item.id), (error) => this.failed(error)).finally(() => this.moving.delete(item.id));
       });
-      line.append(el("span", "pt-toast-text", this.deps.words("closed.line", { title: item.title })), back);
+      line.append(el("span", "pt-toast-text", item.into ? this.deps.words("closed.merged", { title: item.title, into: item.into }) : this.deps.words("closed.line", { title: item.title })), back);
       this.closedLines.append(line);
     }
   }
