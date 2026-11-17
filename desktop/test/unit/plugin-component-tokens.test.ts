@@ -107,8 +107,8 @@ describe("PluginRegistry.componentTokens", () => {
   it("merges plugins in name order, the later name winning a clash, and holds the cap", () => {
     const dir = tempDir("tokens-merge");
     const library = join(dir, "plugins");
-    plugin(library, "a-first", { settings: { s: { type: "enum", title: "s", default: "x" } }, componentTokens: { setting: "s", sets: { x: { "--ccb-density-space": "1px", "--ccb-only-a": "1" } } } });
-    plugin(library, "b-second", { settings: { s: { type: "enum", title: "s", default: "x" } }, componentTokens: { setting: "s", sets: { x: { "--ccb-density-space": "9px", "--ccb-only-b": "2" } } } });
+    plugin(library, "a-first", { settings: { s: { type: "enum", title: "s", options: ["x"], default: "x" } }, componentTokens: { setting: "s", sets: { x: { "--ccb-density-space": "1px", "--ccb-only-a": "1" } } } });
+    plugin(library, "b-second", { settings: { s: { type: "enum", title: "s", options: ["x"], default: "x" } }, componentTokens: { setting: "s", sets: { x: { "--ccb-density-space": "9px", "--ccb-only-b": "2" } } } });
     expect(open(dir).componentTokens()).toEqual({ "--ccb-density-space": "9px", "--ccb-only-a": "1", "--ccb-only-b": "2" });
     const big = tempDir("tokens-cap");
     plugin(join(big, "plugins"), "many", density({ comfortable: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`--ccb-n${String(index).padStart(3, "0")}`, "1px"])) }));
