@@ -127,4 +127,13 @@ describe("PluginWorkers guards the review found untested", () => {
     expect(t.warns).toHaveLength(2);
     expect(t.warns[1]).toMatch(/2 workers in the last 24 hours/);
   });
+
+  it("a notice that fails does not swallow the next one: one start that crosses both thresholds tells both, though the first notice throws", async () => {
+    const t = book({ quota: () => ({ atOnce: 1, perDay: 1 }), warn: () => { throw new Error("no window"); } });
+    await t.workers.start("p", params);
+    await expect(t.workers.start("p", params)).resolves.toMatchObject({ taskId: "T2" });
+    expect(t.warns).toHaveLength(2);
+    expect(t.warns[0]).toMatch(/at work at once/);
+    expect(t.warns[1]).toMatch(/in the last 24 hours/);
+  });
 });
