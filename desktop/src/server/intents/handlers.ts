@@ -58,6 +58,8 @@ export interface IntentDeps {
   callHost?: CallInHost;
   /** Botling 3's server: a `plugin:` row's grants changed (after the commit), so the window's plugin list is redrawn. */
   pluginRowsChanged?: () => void;
+  /** After a commit where the user allowed a plugin (`plugin.grant` above tier none; a revoke does not call it). */
+  pluginGranted?: (plugin: string) => void;
 }
 
 const newLineId = () => randomUUID().toUpperCase();
@@ -281,6 +283,7 @@ function grantPlugin(deps: IntentDeps, { tx, slot }: ApplyContext, cmd: Extract<
       reason: `tier ${cmd.tier}`,
     });
     deps.scope.afterCommit(() => deps.pluginRowsChanged?.());
+    if (cmd.tier !== "none") deps.scope.afterCommit(() => deps.pluginGranted?.(cmd.plugin));
   } catch (error) {
     if (error instanceof RowBodyError) throw new SlotRefusal("invalid", error.message);
     throw error;

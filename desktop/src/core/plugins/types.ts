@@ -201,6 +201,8 @@ export interface PluginWorld {
   pluginWritten?(name: string): void;
   /** A plugin broke: Maintainer is asked to fix it. */
   broken(plugin: string, problem: string): void;
+  /** A plugin update took effect; `allowed` is what the grant rows say (Maintainer is told, the main bot gets its own notice). */
+  updated?(title: string, version: string, allowed: boolean): void;
   log(line: string): void;
   /** What plugins may read of the workspace (`workspace.*`, read only but for setting aside what waits on you). */
   workspace: WorkspaceSource;
