@@ -145,7 +145,7 @@ under 180 px tall, one row).
   `--code`, `--claude`, `--codex`. Use them in the template's own CSS: `color: var(--muted)`.
 - Dark is the default; `[data-theme="light"]` has the light set, which Botling 2 draws when the app
   is light, so a template that uses tokens (and no fixed colours) is ready for both. Do not write `prefers-color-scheme` rules.
-- Spacing, radius and line height are multiples of `var(--ccb-density-space)`, `var(--ccb-density-radius)` and `var(--ccb-density-line)` (for example `calc(var(--ccb-density-space) * 3)`), never fixed px; buttons are the exception and stay at least 44px tall.
+- Spacing, radius and line height are multiples of `var(--ccb-density-space, 4px)`, `var(--ccb-density-radius, 8px)` and `var(--ccb-density-line, 1.4)` (for example `calc(var(--ccb-density-space, 4px) * 3)`); the fallback is always written inside `var()`, so a component never gets 0 spacing when no plugin provides the tokens. Never fixed px; buttons are the exception and stay at least 44px tall.
 - Override per block or anything around it: `--accent` (fills: ring arc, bars, sparkline, primary
   button, icon tint; wins over `tone`), `--ink` (the big value's text). Also `--ccb-ring-size`,
   `--ccb-bars-h`, `--ccb-spark-h`, `--ccb-min`, `--ccb-gap`, `--ccb-pad`, `--ccb-control-h`.
