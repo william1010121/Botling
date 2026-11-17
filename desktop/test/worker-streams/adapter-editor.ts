@@ -17,7 +17,17 @@ export function replayedProcesses(source: ReplaySource): ProcessTreeAdapter {
       const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
       const child = Object.assign(new EventEmitter(), { stdin, stdout, stderr, pid: process.pid }) as unknown as ChildProcessWithoutNullStreams;
       stdin.setEncoding("utf8");
-      stdin.on("data", (chunk: string) => { for (const line of chunk.split("\n")) if (line.trim()) process.write(line); });
+      stdin.on("data", (chunk: string) => { for (const line of chunk.split("\n")) {
+        if (!line.trim()) continue;
+        // The recordings (CLI 2.1.311, no hooks) hold no handshake. ClaudeHead registers its tool policy (the background wait
+        // cap) first and holds user input until the CLI answers, so the replayed CLI answers it, as the real one does.
+        let message: any; try { message = JSON.parse(line); } catch { /* not JSON: passed on */ }
+        if (message?.type === "control_request" && message.request?.subtype === "initialize") {
+          stdout.write(`${JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } })}\n`);
+          continue;
+        }
+        process.write(line);
+      } });
       let closed = false;
       const close = (code: number | null, signal: string | null) => {
         if (closed) return;
