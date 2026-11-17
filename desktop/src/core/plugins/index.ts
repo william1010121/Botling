@@ -496,6 +496,7 @@ export class Plugins {
       },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
+      ...(() => { const componentTokens = this.registry.componentTokens(); return Object.keys(componentTokens).length ? { componentTokens } : {}; })(),
       ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name), (plugin, view) => this.markedTabs.bots(plugin, view)),
       ...(this.tilesInView ? tileView(this.contributions()) : {}),
       takeover: this.takeover ? { plugin: this.takeover.plugin, view: this.takeover.view, botId: this.takeover.botId, wide: this.takeover.wide } : null,

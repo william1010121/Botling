@@ -21,6 +21,7 @@ import { toShell, fromShell, nativeChat, installNativeShellCommands, setShortcut
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
 import { applyPatch } from "../../../../Web/src/patch";
+import { setComponentTokens } from "../../../../Web/src/component-tokens";
 import type { ChatState } from "../../../../Web/src/types";
 import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 import latex from "../../../builtin-plugins/ccb-latex/package.json";
@@ -126,6 +127,8 @@ fromShell(message => {
     window.ccb.runCommand(message.id);
   } else if (message.botling === "answerWithSaved") {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
+  } else if (message.botling === "componentTokens") {
+    setComponentTokens(message.tokens);
   } else if (message.botling === "plugins") {
     void setPlugins(message.specs);
   } else if (message.botling === "pluginEvent") {
