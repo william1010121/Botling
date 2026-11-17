@@ -341,12 +341,12 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     this.spawn(proc, r, words, run, sessionId);
   }
 
-  /** A new process for the run (`--resume` once its session exists), sent the run's first words. */
   /** The folders that are there now (an unmounted drive's folder is skipped, so claude never gets a --add-dir that is missing). */
   private existingDirs(dirs: readonly string[]): string[] {
     return dirs.filter((dir) => { try { return statSync(dir).isDirectory(); } catch { return false; } });
   }
 
+  /** A new process for the run (`--resume` once its session exists), sent the run's first words. */
   private spawn(proc: Proc, r: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle, sessionId: string) {
     // Never two processes on one session: an earlier tree must be gone first (a leader that exited may leave children).
     if (proc.tree && proc.tree.gone?.() === false) throw new Error("This worker's earlier process is still ending; try again in a moment.");

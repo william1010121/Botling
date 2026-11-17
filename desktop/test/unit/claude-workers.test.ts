@@ -9,7 +9,7 @@ import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition } from "../../
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
 import { API_RETRY_NOTE } from "../../src/core/api-retry";
-import { headArguments } from "../../src/core/agent/head";
+import { headArguments, type HeadConfig } from "../../src/core/agent/head";
 import { launchSettings, workerExtraDirs } from "../../src/core/settings";
 
 const CLOUDFLARE = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare";
@@ -690,6 +690,31 @@ describe("workerExtraDirs: a worktree folder outside the project stays a working
     const args = headArguments(config);
     expect(args.slice(args.indexOf("--add-dir"))).toEqual(expect.arrayContaining(["--add-dir", work]));
     expect(args).not.toContain(missing);
+  });
+
+  it("reads the folders again for each new process, so a settings.json change reaches the next worker", async () => {
+    const one = mkdtempSync(join(tmpdir(), "botling-work-dir-")), two = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
+    let now = [one];
+    const h = harness(undefined, { extraDirs: () => now });
+    await h.workers.tool("app_handoff", { name: "A", instructions: "go" });
+    now = [two];
+    await h.workers.tool("app_handoff", { name: "B", instructions: "go" });
+    expect(h.heads.map((head) => head.config.addDirs)).toEqual([[one], [two]]);
+  });
+
+  it("gives a worker on another machine none (the folder is a path on this one)", async () => {
+    const work = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
+    const configs: HeadConfig[] = [];
+    const remote: RemoteWorkerHost = {
+      resolve: (name) => ({ id: "m1", name }),
+      head: (_machine, _worker, _cwd, config) => { configs.push(config); return { pid: -1, running: false, start() {}, send() {}, answer() {}, finish() {}, terminate: async () => ({ killed: [], forced: false }) }; },
+    };
+    const h = harness(undefined, { extraDirs: () => [work], remote: () => remote });
+    await h.workers.tool("app_handoff", { name: "Far", instructions: "go", machine: "box" });
+    expect(configs).toHaveLength(1);
+    expect(configs[0]!.addDirs).toBeUndefined();
+    await h.workers.tool("app_handoff", { name: "Near", instructions: "go" });
+    expect(h.heads[0]!.config.addDirs).toEqual([work]);
   });
 
   it("adds nothing when no folder is set, and the head's folders stay as they were", async () => {
