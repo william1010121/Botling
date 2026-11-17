@@ -86,6 +86,57 @@ describe("an outbox item that can never be encoded", () => {
     expect(server.applied.map((a) => a.slot.n)).toEqual([3, 4, 5, 6]);
   });
 
+  it("an earlier copy still out (its outcome not back): the later copy waits, then goes with a floor past the hole and is applied", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const { link } = await open(server.dial, new MemoryFeStorage(), clock);
+    await flush();
+    expect(link.state).toBe("live");
+
+    server.dropReplies = 1; // slot 1's cmd.result is lost on the wire, and no entry shows it (unsubscribed): slot 1 stays unresolved
+    link.unsubscribe(BOT);
+    await link.submit(BOT, react("m1"));
+    await link.submit(BOT, big());
+    await link.submit(BOT, react("m3"));
+    await flush();
+    // Slot 3 would carry floor 1: the owner would hold it for the missing slot 2 for ever. It waits instead.
+    expect(server.copies.map((c) => c.slot.n)).toEqual([1]);
+    expect(server.applied.map((a) => a.slot.n)).toEqual([1]);
+
+    server.kill();
+    await flush();
+    clock.advance(250);
+    await flush();
+    expect(link.state).toBe("live");
+    // The re-sent slot 1 got its stored outcome; only then slot 3 went out, with the floor past the hole (the owner skipped slot 2).
+    expect(server.applied.map((a) => a.slot.n)).toEqual([1, 3]);
+    expect(server.copies.filter((c) => c.slot.n === 3).map((c) => c.floor)).toEqual([3]);
+  });
+
+  it("a send that fails because the socket broke is not an oversize copy: nothing is set aside, the item goes out after the reconnect", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    let failNext = false;
+    const dial: Dial = (handlers) => {
+      const socket = server.dial(handlers);
+      return { send: (frame) => { if (failNext) { failNext = false; throw new Error("socket closed"); } socket.send(frame); }, close: () => socket.close() };
+    };
+    const { link } = await open(dial, new MemoryFeStorage(), clock);
+    await flush();
+    expect(link.state).toBe("live");
+
+    failNext = true;
+    await link.submit(BOT, react("m1"));
+    await flush();
+    expect(link.pending(BOT).map((p) => p.state)).toEqual(["waiting"]);
+
+    clock.advance(5_000);
+    await flush();
+    expect(link.state).toBe("live");
+    expect(server.applied.map((a) => a.slot.n)).toEqual([1]);
+    expect(link.pending(BOT).filter((p) => p.state === "not sent")).toEqual([]);
+  });
+
   it("names the reason for the caller that waited on the command", () => {
     expect(wireError({ kind: "skipped" }, "too large to send").message).toBe("Not sent: too large to send.");
     expect(wireError({ kind: "skipped" }).message).toBe("Not sent: skipped after a restore.");

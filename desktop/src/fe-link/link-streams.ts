@@ -125,7 +125,7 @@ export class LinkStreams {
     if (item.retryInc && item.retryInc !== inc && this.refusedUnder.get(key) === inc) return;
     // A copy the frame codec refuses (over the frame limit) can never be sent: waiting for it would hold this item and every one behind it
     // for ever (the slots of a queue go in order). Set it aside as "not sent" (the same way `giveUp` does) so the queue goes on.
-    if (this.unsendableBefore(item.slot)) return;
+    if (this.unsendableBefore(item.slot) || this.behindHole(item)) return;
     const message = { t: "cmd", ...this.outbox.envelope(item, inc) } as Message;
     if (!this.send(session, message)) {
       const refusal = !session.closed && session.socket ? this.host.encodeRefusal(message) : null;
@@ -152,6 +152,26 @@ export class LinkStreams {
     return false;
   }
 
+  /** Per queue, the highest slot set aside as unsendable in this run (memory only: a hole the owner never receives). */
+  private readonly holes = new Map<string, number>();
+
+  /**
+   * A slot of this queue was set aside, and an unresolved earlier one is still out (sent, its outcome not back): a copy sent now would
+   * carry that earlier slot as its `floor`, the owner would not skip the hole and would hold the copy for the missing slot until a
+   * reconnect. It waits; `resolveSlot` and `skipped` send the outbox again once the earlier one resolves.
+   */
+  private behindHole(item: OutboxItem): boolean {
+    const hole = this.holes.get(`${item.slot.originEpoch}\u0000${item.slot.target}`);
+    return hole !== undefined && item.slot.n > hole && this.outbox.floor(item) < hole;
+  }
+
+  /** An item left `unresolved()`: copies that waited behind a hole can go out now. */
+  private sendAfterHole(): void {
+    const session = this.session;
+    if (this.holes.size === 0 || !session || !this.canSend()) return;
+    this.sendOutbox(session);
+  }
+
   /**
    * `item`'s copy can never be encoded: it becomes "not sent" (persisted, so a restart does not try it again), and the queue's later
    * items go out with a `floor` past it; the owner skips the slot (`cmd.skipped`, §11.3). Later items are not sent while it is being
@@ -164,6 +184,8 @@ export class LinkStreams {
     try {
       const done = await this.outbox.markUnsendable(item.slot, why);
       if (!done) return;
+      const queue = `${item.slot.originEpoch}\u0000${item.slot.target}`;
+      this.holes.set(queue, Math.max(this.holes.get(queue) ?? 0, item.slot.n));
       this.visibleAt.delete(key);
       this.cancelNoted.delete(key);
       this.sentUnder.delete(key);
@@ -230,6 +252,7 @@ export class LinkStreams {
                 this.emit({ type: "outcome", item });
               }
               this.emit({ type: "pending" });
+              this.sendAfterHole();
             }
           }, (error) => this.emit({ type: "error", error }));
       }
@@ -433,6 +456,7 @@ export class LinkStreams {
       if (result.kind === "delivered") await this.settle(slot.target);
     }
     this.emit({ type: "pending" });
+    this.sendAfterHole();
   }
 
   /** Delivered items whose entry the cursor now covers leave the outbox; all of them for a stream nobody follows. */
