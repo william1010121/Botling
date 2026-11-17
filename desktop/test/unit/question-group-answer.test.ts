@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MessageView, parseInbound } from "../../src/contract";
+import { MessageView, QUESTION_OPTIONS_MAX, QUESTION_OPTION_INDEX, parseInbound } from "../../src/contract";
 import { Core } from "../../src/core/server";
 import { saveProjectRow } from "../../src/core/projects";
 import { messageView } from "../../src/core/bot";
@@ -45,6 +45,11 @@ describe("question group answers", () => {
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [7, 11], notes: { "7": "n", "11": "m" } }] } }).ok).toBe(true);
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [12] }] } }).ok).toBe(false);
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: Array.from({ length: 13 }, (_, i) => i % 12) }] } }).ok).toBe(false);
+  });
+
+  it("the note-key pattern admits exactly the option indices 0 up to QUESTION_OPTIONS_MAX - 1", () => {
+    for (let i = 0; i < QUESTION_OPTIONS_MAX; i++) expect(QUESTION_OPTION_INDEX.test(String(i))).toBe(true);
+    for (const stray of [String(QUESTION_OPTIONS_MAX), "-1", "01", "1.5", "", "x"]) expect(QUESTION_OPTION_INDEX.test(stray)).toBe(false);
   });
 
   it("a question of 9 options, picking the 8th (single and multiple), goes through the page, the contract, the bot and the view", async () => {

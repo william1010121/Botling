@@ -367,13 +367,13 @@ export function resizeFrame(frame: HTMLIFrameElement, size: PinSize): void {
   frame.contentWindow?.postMessage({ ccbSize: sizeInfo(size) }, "*");
 }
 
+/** The most options one question carries (the app's `QUESTION_OPTIONS_MAX`, desktop/src/contract/views.ts; the page is its own package). */
+const QUESTION_OPTIONS_MAX = 12;
+
 /**
  * A question group's answers as a template sent them, checked; null when not a group answer. A 「choices」 template
  * that draws groups posts them itself, `parent.postMessage({ccb: "answer", picks}, "*")` (the page script stays as it was).
  */
-/** The most options one question carries (the app's `QUESTION_OPTIONS_MAX`, desktop/src/contract/views.ts; the page is its own package). */
-const QUESTION_OPTIONS_MAX = 12;
-
 export function answerPicks(value: unknown): NonNullable<ComponentAnswer["picks"]> | null {
   if (!Array.isArray(value) || !value.length || value.length > 5) return null;
   const picks = value.map((entry) => {
