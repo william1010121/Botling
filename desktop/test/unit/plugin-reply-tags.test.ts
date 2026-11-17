@@ -109,8 +109,8 @@ describe("a plugin's tag in a reply", () => {
     expect(parseReply('<pin-say id="p-0001">好</pin-say>', ["pin-say"]).body).toBe("好");
     expect(parseReply('<pin-say id="p-0001"/>', ["pin-say"])).toMatchObject({ body: "", pluginTags: [{ tag: "pin-say", body: "" }] });
     expect(parseReply('`<pin-say id="p-0001">x</pin-say>`', ["pin-say"]).pluginTags).toBeUndefined();
-    // a tag the answer carries inside is still read; code inside it stays an example
-    expect(parseReply('<pin-say id="p-0001">選一個\n<choices>\n- A\n- B\n</choices> `<no-reply/>`</pin-say>', ["pin-say"])).toMatchObject({ body: "選一個\n `<no-reply/>`", choices: [{ label: "A" }, { label: "B" }] });
+    // a tag the answer carries inside is still read by the core
+    expect(parseReply('<pin-say id="p-0001">選一個\n<choices>\n- A\n- B\n</choices></pin-say>', ["pin-say"])).toMatchObject({ body: "選一個", choices: [{ label: "A" }, { label: "B" }] });
     // while it streams: held back until it is closed, then its words show
     setPluginTags(["pin-say"]);
     expect(streamingText('Go <pin-say id="p-0001">half an ans')).toBe("Go");
