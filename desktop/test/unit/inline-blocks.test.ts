@@ -125,7 +125,12 @@ describe("the report rule by size", () => {
   it("the manifest still says the sentence the swap replaces (change the swap with the manifest, never one of them)", () => {
     expect(manifestText).toContain(`- ${REPORT_RULE_ALL_TO_PAGE}`);
     expect(REPORT_RULE_BY_SIZE).toMatch(/ONE inline report block/);
-    expect(REPORT_RULE_BY_SIZE).toMatch(/more than 3 blocks, data figures \(matplotlib\) or long text goes into one report page/);
+    // Default is inline, a page is the exception (the user, 2026-11-17: "報告只有在真的很長的時候才要開，或者是我特別要求下").
+    expect(REPORT_RULE_BY_SIZE).toMatch(/^Default is inline; a report page is the exception\./);
+    expect(REPORT_RULE_BY_SIZE).toMatch(/report page ONLY when the content is really long \(more than 3 blocks, a data figure \(matplotlib\) or a long read\) or the user explicitly asks for a report or a page/);
+    expect(REPORT_RULE_BY_SIZE).toMatch(/anything else stays in chat/);
+    expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is the exception, only for really long content \(more than 3 blocks, .*or a long read\) or when the user explicitly asks for a report or a page/);
+    expect(INLINE_BLOCK_GUIDANCE).toMatch(/everything else stays in chat/);
   });
   it("a bot with the guidance is told by size; the rest of the page rule is untouched", () => {
     const text = page(true).system;
