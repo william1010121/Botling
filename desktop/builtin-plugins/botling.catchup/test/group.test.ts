@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 // The summary card in the real chat page (moved from Web/test/catchup.test.ts): the page places it and
 // folds the lines (decorations.ts), this plugin's web part draws it (src/group.ts).
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { ChatState, MessageView } from "../../../../Web/src/types";
 import { sent } from "../../../../Web/src/bridge";
 import { bulletHTML } from "../src/group";
+import { page } from "../src/page";
 import type { CatchUpView } from "../src/types";
 import { catchupCSS, chatCSS, line, openPage, withSummaries } from "./page";
 const view = (extra: Partial<CatchUpView> = {}): CatchUpView => ({
@@ -157,6 +158,25 @@ it("a component that shows nothing (status empty) is left out of the viewer like
   document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
   expect(document.querySelector('.summary-source-viewer [data-source-id="c"] .source-card')).toBeNull();
   document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
+  window.ccb.setState(state(null));
+});
+
+it("a component the page cannot draw (it throws, or has none) leaves the dialog without a live card and still opens", () => {
+  const info = { template: "<p>x</p>", version: 1, working: false, updated: false, hasPrevious: false };
+  const base = state(view());
+  window.ccb.setState({ ...base, components: { "inline-chart": info },
+    messages: base.messages.map((m) => m.id === "c" ? { ...m, displays: [{ name: "inline-chart", data: '{"title":"T"}' }] } : m) });
+  for (const draw of [() => { throw new Error("no page"); }, () => null]) {
+    const spy = vi.spyOn(page, "component").mockImplementation(draw);
+    try {
+      document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+      const dialog = document.querySelector<HTMLElement>(".summary-source-viewer")!;
+      expect(dialog.querySelector('[data-source-id="c"]')).not.toBeNull();
+      expect(dialog.querySelector(".source-live")).toBeNull();
+      expect(spy).toHaveBeenCalled();
+      document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
+    } finally { spy.mockRestore(); }
+  }
   window.ccb.setState(state(null));
 });
 
