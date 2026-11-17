@@ -5,7 +5,7 @@ import React, { useEffect, useState } from "react";
 import type { BotSettingsView, BotView, MachinesView, SettingsView } from "../contract";
 import type { Client } from "./client";
 import { ModelPicker, useModelDiscovery } from "./ModelPicker";
-import { Group, Row, SelectSetting, Toggle, effortOptions, why } from "./settings-controls";
+import { Group, Row, SelectSetting, Toggle, claudeCustom, effortOptions, why } from "./settings-controls";
 import { choiceLabel, defaultsChange, sameAsHead, engineChoices, ENGINE_NAMES, FIELD_LABELS, type ChoiceRow, type ConfigureChange, type EngineId } from "./bot-defaults";
 
 export function BotSettings({ client, bot, settings = null, onOpenAppSettings }: { client: Client; bot: BotView; settings?: SettingsView | null; onOpenAppSettings?: () => void }) {
@@ -57,8 +57,8 @@ function ThisBot({ client, bot, appSettings, onProblem, onOpenAppSettings }: { c
     const head = (field: "workerModel" | "workerEffort") => sameAsHead(view, row.engine, field, modelName);
     switch (`${row.engine}.${row.field}`) {
       // Models: what the engine reports, with its loading state, Refresh and a saved ID kept when the list lacks it.
-      case "claude.model": return <ModelPicker label={label} blank="Claude default" discovery={discovery.claude} value={value} onChange={(model) => configure({ model })} />;
-      case "claude.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.claude} value={value} subagents onChange={(subagentModel) => configure({ subagentModel })} />;
+      case "claude.model": return <ModelPicker label={label} blank="Claude default" discovery={discovery.claude} value={value} custom={claudeCustom} onChange={(model) => configure({ model })} />;
+      case "claude.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.claude} value={value} subagents custom={claudeCustom} onChange={(subagentModel) => configure({ subagentModel })} />;
       case "claude.workerEffort": return effort(head("workerEffort"), (subagentEffort) => configure({ subagentEffort }));
       case "codex.model": return <ModelPicker label={label} blank="Codex default" discovery={discovery.codex} value={value} onChange={(codexModel) => configure({ codexModel })} />;
       case "codex.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.codex} value={value} onChange={(model) => configure({ codexWorkers: { ...workers, model } })} />;

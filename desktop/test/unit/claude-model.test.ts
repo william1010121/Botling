@@ -2,7 +2,8 @@
 // changes, settings.json's round trip, and the component editor's saved model. A new full id needs no code change.
 import { describe, expect, it } from "vitest";
 import { CLAUDE_MODEL_ALIASES, claudeModelOrNull, isClaudeModel } from "../../src/contract/claude-model";
-import { SettingsChange, SettingsView } from "../../src/contract/views-settings";
+import { Command } from "../../src/contract/commands";
+import { ModelId, SettingsChange, SettingsView } from "../../src/contract/views-settings";
 import { applySetting, DEFAULT_COMPONENT_EDITOR_MODEL, settingsView } from "../../src/core/settings";
 
 describe("isClaudeModel", () => {
@@ -25,6 +26,24 @@ describe("isClaudeModel", () => {
     expect(claudeModelOrNull("claude-fable-5-2")).toBe("claude-fable-5-2");
     expect(claudeModelOrNull("gpt-6")).toBeNull();
     expect(claudeModelOrNull(undefined)).toBeNull();
+  });
+});
+
+describe("the [1m] suffix Claude Code takes", () => {
+  it("is accepted on an alias or a full id, one suffix only, and nothing else rides along", () => {
+    for (const model of ["opus[1m]", "sonnet[1m]", "claude-opus-5-5[1m]", "claude-fable-5-2[200k]"]) expect(isClaudeModel(model), model).toBe(true);
+    for (const model of ["opus[1m", "opus1m]", "claude-x[]", "claude-x[1m]x", "opus[1m][1m]", "claude-x[1 m]", "opus[1m]\nmodel: x", "opus[toolongsuffix]", "[1m]", "opusplan", "default", "gpt-6[1m]"]) expect(isClaudeModel(model), JSON.stringify(model)).toBe(false);
+  });
+
+  it("the contract takes it everywhere a model id goes: settings, a bot's own models, the workers' model", () => {
+    for (const model of ["opus[1m]", "claude-opus-5-5[1m]"]) {
+      expect(ModelId.safeParse(model).success, model).toBe(true);
+      expect(SettingsChange.safeParse({ key: "subagentModel", value: model }).success).toBe(true);
+      expect(SettingsChange.safeParse({ key: "defaultEngineModel", value: { engine: "claude", model } }).success).toBe(true);
+      expect(Command.safeParse({ type: "bot.configure", botId: "main", model, subagentModel: model }).success).toBe(true);
+    }
+    // The widened id class still refuses what has no place in an argument or a YAML line.
+    for (const model of ["opus 1m", "opus\n", "a;b", "a\"b", "a'b", "a`b", "a$b"]) expect(ModelId.safeParse(model).success, JSON.stringify(model)).toBe(false);
   });
 });
 

@@ -6,6 +6,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { BotSettings, SettingsSheet } from "../../src/renderer/Settings";
+import { claudeHint } from "../../src/renderer/ModelsWorkers";
 import type { Client } from "../../src/renderer/client";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
@@ -73,6 +74,14 @@ const radios = (host: HTMLElement, label: string) => {
 const pick = async (host: HTMLElement, label: string, text: string) => act(async () => radios(host, label).find((radio) => radio.textContent === text)!.click());
 const tab = async (host: HTMLElement, name: string) => act(async () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((one) => one.textContent?.startsWith(name))!.click());
 const headings = (host: HTMLElement) => [...host.querySelectorAll(".settings-group-head > h3")].map((heading) => heading.textContent);
+/** Text into a controlled input, as typing does (the native setter, then an input event). */
+const typeInto = async (input: HTMLInputElement, text: string) => act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+});
+const press = async (input: HTMLElement, key: string, init: KeyboardEventInit = {}) => act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init })); });
+const leave = async (input: HTMLElement) => act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+const box = (host: HTMLElement, label: string) => host.querySelector<HTMLInputElement>(`input[aria-label="${label}: custom model id"]`);
 async function choose(element: HTMLSelectElement, value: string) {
   await act(async () => { element.value = value; element.dispatchEvent(new Event("change", { bubbles: true })); });
 }
@@ -136,13 +145,7 @@ describe("Settings' model, effort and permission choices", () => {
 
   it("Models & workers: any Claude model id can be typed in (workers, head, component editor); a bad one is refused and not sent", async () => {
     const sent: any[] = [];
-    const type = async (input: HTMLInputElement, text: string, key: string) => {
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
-    };
+    const type = async (input: HTMLInputElement, text: string, key: string) => { await typeInto(input, text); await press(input, key); };
     const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({ subagentModelDefault: "claude-fable-5-2" }, sent), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
     try {
       // A saved custom id shows as itself, beside the three quick picks.
@@ -176,6 +179,53 @@ describe("Settings' model, effort and permission choices", () => {
       // The guide and hints name no model version.
       expect(host.textContent).not.toMatch(/Opus 5\.5|opus\[1m\]/);
     } finally { await done(); }
+  });
+
+  it("Models & workers: the custom box saves on leaving only a valid id, Esc closes only the box, Enter during composition saves nothing, the head takes one too", async () => {
+    const sent: any[] = [];
+    let closed = 0;
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "models", onClose() { closed++; } }));
+    try {
+      const saved = () => sent.filter((cmd) => cmd.type === "settings.set");
+      const label = "Claude workers model";
+      // Leaving the box with a valid id saves it; with one that is not Claude's saves nothing and says why.
+      await choose(select(host, label), "__custom__");
+      await typeInto(box(host, label)!, "claude-opus-5-5[1m]");
+      await leave(box(host, label)!);
+      expect(saved().at(-1)).toMatchObject({ change: { key: "subagentModel", value: "claude-opus-5-5[1m]" } });
+      expect(box(host, label)).toBeNull();
+      const count = saved().length;
+      await choose(select(host, label), "__custom__");
+      await typeInto(box(host, label)!, "gpt-6-luna");
+      await leave(box(host, label)!);
+      expect(saved().length).toBe(count);
+      expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
+      // Enter while an input method is composing is not a save; the same Enter afterwards is.
+      await typeInto(box(host, label)!, "claude-haiku-5-5");
+      await press(box(host, label)!, "Enter", { isComposing: true });
+      expect(saved().length).toBe(count);
+      expect(box(host, label)).not.toBeNull();
+      await press(box(host, label)!, "Enter");
+      expect(saved().at(-1)).toMatchObject({ change: { key: "subagentModel", value: "claude-haiku-5-5" } });
+      // Esc in the box closes the box and does not reach Settings' own Esc (which closes the sheet).
+      await choose(select(host, label), "__custom__");
+      await press(box(host, label)!, "Escape");
+      expect(box(host, label)).toBeNull();
+      expect(closed).toBe(0);
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      expect(closed).toBe(1);
+      // The head's model takes a custom id, saved as the app default for Claude.
+      await choose(select(host, "Claude head model"), "__custom__");
+      await typeInto(box(host, "Claude head model")!, "claude-fable-5-2");
+      await press(box(host, "Claude head model")!, "Enter");
+      expect(saved().at(-1)).toMatchObject({ change: { key: "defaultEngineModel", value: { engine: "claude", model: "claude-fable-5-2" } } });
+    } finally { await done(); }
+  });
+
+  it("claudeHint: a family has its own line, any other id (even a name on Object's prototype) is named as it is", () => {
+    expect(claudeHint("opus")).toBe("Claude Opus · strongest, highest cost");
+    expect(claudeHint("claude-fable-5-2")).toContain("claude-fable-5-2");
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) expect(claudeHint(name)).toBe(`${name} · a specific Claude model, as named`);
   });
 
   it("Models & workers: following config.toml shows what it says, read-only, instead of the workers' choices", async () => {
@@ -215,7 +265,7 @@ describe("Settings' model, effort and permission choices", () => {
     const { host, done, rerender } = await render(sheet());
     try {
       const summary = select(host, "Summary model");
-      expect(options(summary)).toEqual(["claude:haiku", "claude:sonnet", "claude:opus", "codex:gpt-6-luna", "codex:gpt-6-sol"]);
+      expect(options(summary)).toEqual(["claude:haiku", "claude:sonnet", "claude:opus", "codex:gpt-6-luna", "codex:gpt-6-sol", "claude:__custom__"]);
       expect(summary.value).toBe("codex:gpt-6-luna");
       expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex"]);
       await choose(summary, "codex:gpt-6-sol");
@@ -225,6 +275,18 @@ describe("Settings' model, effort and permission choices", () => {
       ]);
       await choose(select(host, "Summary model"), "claude:sonnet");
       expect(sent.slice(-2)).toMatchObject([{ key: "botling.catchup.model", value: "sonnet" }, { key: "botling.catchup.engine", value: "claude" }]);
+      // Any Claude id can be typed in: it is kept as the summary model of the Claude engine.
+      await choose(select(host, "Summary model"), "claude:__custom__");
+      await typeInto(box(host, "Summary model")!, "claude-haiku-5-5");
+      await press(box(host, "Summary model")!, "Enter");
+      expect(sent.slice(-2)).toMatchObject([{ key: "botling.catchup.model", value: "claude-haiku-5-5" }, { key: "botling.catchup.engine", value: "claude" }]);
+      expect(box(host, "Summary model")).toBeNull();
+      await choose(select(host, "Summary model"), "claude:__custom__");
+      const before = sent.length;
+      await typeInto(box(host, "Summary model")!, "gpt-6-luna");
+      await press(box(host, "Summary model")!, "Enter");
+      expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
+      expect(sent.length).toBe(before);
       // What the plugin keeps comes back in its view.
       await rerender(sheet({ "botling.catchup.model": "sonnet", "botling.catchup.engine": "claude" }));
       expect(select(host, "Summary model").value).toBe("claude:sonnet");
@@ -279,11 +341,27 @@ describe("Settings' model, effort and permission choices", () => {
       expect(where("Claude head effort")).toBe("Claude");
       expect(where("Codex head effort")).toBe("Codex");
       expect(options(select(host, "Codex head effort"))).toEqual(["", "low", "medium", "high", "xhigh"]);
-      expect(options(select(host, "Claude head model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Claude head model"))).toEqual(["", "haiku", "sonnet", "opus", "__custom__"]);
       // The old single effort shows for each engine that has none of its own.
       expect(select(host, "Claude head effort").value).toBe("high");
       expect(select(host, "Codex head effort").value).toBe("high");
-      expect(options(select(host, "Claude workers' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Claude workers' model"))).toEqual(["", "haiku", "sonnet", "opus", "__custom__"]);
+      // A bot's own models take any Claude id too, a [1m] suffix included; one that is not Claude's is refused.
+      await choose(select(host, "Claude head model"), "__custom__");
+      await typeInto(box(host, "Claude head model")!, "claude-fable-5-2");
+      await press(box(host, "Claude head model")!, "Enter");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", model: "claude-fable-5-2" });
+      await choose(select(host, "Claude workers' model"), "__custom__");
+      await typeInto(box(host, "Claude workers' model")!, "opus[1m]");
+      await press(box(host, "Claude workers' model")!, "Enter");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentModel: "opus[1m]" });
+      await choose(select(host, "Claude head model"), "__custom__");
+      const asked = sent.length;
+      await typeInto(box(host, "Claude head model")!, "gpt-6-luna");
+      await press(box(host, "Claude head model")!, "Enter");
+      expect(sent.length).toBe(asked);
+      expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
+      await press(box(host, "Claude head model")!, "Escape");
       expect(options(select(host, "Codex head model"))).toEqual(["", "gpt-5-old", "gpt-6-luna", "gpt-6-sol"]);
       await choose(select(host, "Claude head model"), "opus");
       expect(sent.at(-1)).toMatchObject({ type: "bot.configure", model: "opus" });

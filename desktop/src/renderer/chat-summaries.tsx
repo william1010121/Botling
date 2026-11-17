@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { PluginsView } from "../contract";
 import type { Client } from "./client";
 import { SummaryModelPicker, useModelDiscovery } from "./ModelPicker";
-import { CLAUDE_MODELS, Group, Row, Toggle, why } from "./settings-controls";
+import { CLAUDE_MODELS, claudeCustom, Group, Row, Toggle, why } from "./settings-controls";
 import { ENGINE_NAMES, type EngineId } from "./bot-defaults";
 
 /** The built-in plugin that writes chat summaries; its settings are set in Settings, not on the Plugins page. */
@@ -52,7 +52,7 @@ export function SummaryModelRow({ client, plugins, codexModels, modelBotId, onPr
   const chosen = { engine, model: model ?? String(setting("model")?.default ?? "") };
   return (
     <Row label="Chat summaries" hint={<>Writes catch-up summaries with {ENGINE_NAMES[chosen.engine]} · {chosen.model}. Claude or Codex; Antigravity can’t. <button type="button" className="settings-link" onClick={onOptions}>Summary options</button></>}>
-      <SummaryModelPicker label="Summary model" value={chosen} discovery={discovery} unavailable={["agy"]}
+      <SummaryModelPicker label="Summary model" value={chosen} discovery={discovery} unavailable={["agy"]} claudeCustom={claudeCustom}
         unavailableNote="Antigravity models can't write summaries: it has no read-only one-shot mode."
         onChange={(next) => { const id = next?.model.trim(); set("model", id || null); set("engine", id ? next!.engine : null); }} />
     </Row>

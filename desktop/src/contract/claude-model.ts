@@ -7,16 +7,21 @@
 export const CLAUDE_MODEL_ALIASES = ["haiku", "sonnet", "opus"] as const;
 export type ClaudeModelAlias = (typeof CLAUDE_MODEL_ALIASES)[number];
 
-/** A full model id as the CLI takes it (the same shape the worker launcher has always accepted). */
-const CLAUDE_FULL_ID = /^claude-[a-z0-9][a-z0-9.-]{0,99}$/;
+/**
+ * An alias or a full model id, then optionally one bracket suffix such as `[1m]` (the 1M-token window Claude Code takes
+ * on an alias or an id: opus[1m], claude-opus-5-5[1m]). The id after `claude-` is up to 100 characters. The class
+ * excludes whitespace, quotes and newlines, so a value is safe in an argument list and in a YAML `model:` line.
+ * `opusplan` and `default` are Claude Code's own modes, not models, and are not taken.
+ */
+const CLAUDE_MODEL = new RegExp(`^(?:${CLAUDE_MODEL_ALIASES.join("|")}|claude-[a-z0-9][a-z0-9.-]{0,99})(?:\\[[a-z0-9]{1,8}\\])?$`);
 
-/** True for an alias or a full `claude-*` id; any other value (including a non-string) is not a Claude model. */
+/** True for an alias or a full `claude-*` id, with an optional `[1m]`-style suffix; any other value (including a non-string) is not a Claude model. */
 export function isClaudeModel(value: unknown): value is string {
-  return typeof value === "string" && ((CLAUDE_MODEL_ALIASES as readonly string[]).includes(value) || CLAUDE_FULL_ID.test(value));
+  return typeof value === "string" && CLAUDE_MODEL.test(value);
 }
 
 /** `value` when it is a Claude model, else null (a saved value that is not one falls back to its default). */
 export const claudeModelOrNull = (value: unknown): string | null => (isClaudeModel(value) ? value : null);
 
 /** The message for a model Claude cannot take; says what is accepted without naming any one version. */
-export const CLAUDE_MODEL_HINT = "use haiku, sonnet, opus or a full Claude model id (claude-…)";
+export const CLAUDE_MODEL_HINT = "use haiku, sonnet, opus or a full Claude model id (claude-…), with an optional [1m]";

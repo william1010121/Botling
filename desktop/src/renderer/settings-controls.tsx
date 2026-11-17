@@ -63,31 +63,50 @@ export function EffortControl({ label, engine, value, blank, onChange, disabled 
 
 /** What a picker needs to take a value typed in, beside its list: a check, a placeholder, and what to say about a value that fails. */
 export interface CustomModelEntry { check: (value: string) => boolean; placeholder: string; invalid: string }
-const CUSTOM_CHOICE = "__custom__";
+/** The option value of "Custom model…" in a picker's list (no real model id has underscores around it). */
+export const CUSTOM_CHOICE = "__custom__";
+
+/**
+ * The text box of a "Custom model…" entry. Enter (not while an input method is composing) or leaving the box saves the
+ * typed id when `custom.check` accepts it; Escape closes the box (and stops there: it must not also close Settings);
+ * an id that fails is not saved and the reason shows. `initial` is the value being edited: typing it again changes nothing.
+ */
+export function CustomModelBox({ label, initial, custom, disabled, onSave, onCancel }: { label: string; initial: string; custom: CustomModelEntry; disabled?: boolean; onSave: (value: string) => void; onCancel: () => void }) {
+  const [draft, setDraft] = React.useState(initial);
+  const [rejected, setRejected] = React.useState(false);
+  const commit = () => {
+    const id = draft.trim();
+    if (!id || id === initial) { onCancel(); return; }
+    if (!custom.check(id)) { setRejected(true); return; }
+    onSave(id);
+  };
+  return (
+    <>
+      <input type="text" aria-label={`${label}: custom model id`} placeholder={custom.placeholder} value={draft} disabled={disabled} autoFocus spellCheck={false} aria-invalid={rejected}
+        onChange={(event) => { setDraft(event.target.value); setRejected(false); }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") { if (!event.nativeEvent.isComposing) { event.preventDefault(); commit(); } }
+          else if (event.key === "Escape") { event.stopPropagation(); onCancel(); }
+        }}
+        onBlur={() => { const id = draft.trim(); if (!id) return; if (custom.check(id)) commit(); else setRejected(true); }} />
+      {rejected && <span className="settings-hint" role="alert">{custom.invalid}</span>}
+    </>
+  );
+}
 
 /**
  * A dropdown of choices; `blank` is the first option, for no choice (null). A saved value the list does not
  * have (an older setting, a model the CLI no longer lists, a custom id) stays as an extra option, so it is not lost.
- * With `custom`, a last option "Custom model…" opens a text box: Enter (or leaving the box) saves the typed id when
- * `custom.check` accepts it, Escape closes the box; a value that fails stays unsaved with the reason shown.
+ * With `custom`, a last option "Custom model…" opens a `CustomModelBox`.
  */
 export function SelectSetting({ label, options, value, onChange, blank, disabled, custom }: { label: string; options: readonly { id: string; label: string }[]; value: string | null; onChange: (value: string | null) => void; blank?: string; disabled?: boolean; custom?: CustomModelEntry }) {
   const extra = value !== null && value !== "" && !options.some((option) => option.id === value);
   const [typing, setTyping] = React.useState(false);
-  const [draft, setDraft] = React.useState("");
-  const [rejected, setRejected] = React.useState(false);
-  const commit = () => {
-    const id = draft.trim();
-    if (!id || id === value) { setTyping(false); setRejected(false); return; }
-    if (!custom!.check(id)) { setRejected(true); return; }
-    setTyping(false); setRejected(false);
-    onChange(id);
-  };
   return (
     <>
       <select aria-label={label} value={typing ? CUSTOM_CHOICE : value ?? ""} disabled={disabled} onChange={(event) => {
-        if (event.target.value === CUSTOM_CHOICE) { setDraft(value ?? ""); setRejected(false); setTyping(true); return; }
-        setTyping(false); setRejected(false);
+        if (event.target.value === CUSTOM_CHOICE) { setTyping(true); return; }
+        setTyping(false);
         onChange(event.target.value || null);
       }}>
         {blank !== undefined && <option value="">{blank}</option>}
@@ -95,15 +114,7 @@ export function SelectSetting({ label, options, value, onChange, blank, disabled
         {extra && <option value={value}>{value}</option>}
         {custom && <option value={CUSTOM_CHOICE}>Custom model…</option>}
       </select>
-      {custom && typing && (
-        <>
-          <input type="text" aria-label={`${label}: custom model id`} placeholder={custom.placeholder} value={draft} disabled={disabled} autoFocus spellCheck={false} aria-invalid={rejected}
-            onChange={(event) => { setDraft(event.target.value); setRejected(false); }}
-            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commit(); } else if (event.key === "Escape") { event.stopPropagation(); setTyping(false); setRejected(false); } }}
-            onBlur={() => { if (draft.trim() && custom.check(draft.trim())) commit(); }} />
-          {rejected && <span className="settings-hint" role="alert">{custom.invalid}</span>}
-        </>
-      )}
+      {custom && typing && <CustomModelBox label={label} initial={value ?? ""} custom={custom} disabled={disabled} onSave={(id) => { setTyping(false); onChange(id); }} onCancel={() => setTyping(false)} />}
     </>
   );
 }

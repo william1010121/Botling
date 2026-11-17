@@ -31,7 +31,7 @@ const CLAUDE_HINT: Record<string, string> = {
   opus: "Claude Opus · strongest, highest cost",
 };
 /** The hint under a Claude model: the family's own for an alias, a generic line for a full id (it names its own model). */
-export const claudeHint = (model: string): string => CLAUDE_HINT[model] ?? `${model} · a specific Claude model, as named`;
+export const claudeHint = (model: string): string => (Object.hasOwn(CLAUDE_HINT, model) ? CLAUDE_HINT[model]! : `${model} · a specific Claude model, as named`);
 const WHEN: Record<EngineId, string> = {
   claude: "Head: next wake · Workers: next one that starts",
   codex: "Both: when a Codex head next wakes",

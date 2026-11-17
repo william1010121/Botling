@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ModelDiscovery, ModelEngine } from '../contract/model-discovery';
 import type { Client } from './client';
+import { CUSTOM_CHOICE, CustomModelBox, type CustomModelEntry } from './settings-controls';
 
 export function useModelDiscovery(client: Client, botId: string, engine: ModelEngine, enabled: boolean) {
   const [result, setResult] = useState<ModelDiscovery | null>(null);
@@ -20,30 +21,34 @@ export function useModelDiscovery(client: Client, botId: string, engine: ModelEn
   }, [client, botId, engine, enabled, revision]);
   return { result, loading, refresh: () => setRevision(value => value + 1) };
 }
-export function ModelPicker({ label, value, blank = 'Engine default', discovery, onChange, subagents = false }: {
+/** `custom`: a last option "Custom model…" for an id the engine's list does not have (Claude: any `claude-*`). */
+export function ModelPicker({ label, value, blank = 'Engine default', discovery, onChange, subagents = false, custom }: {
   label: string; value: string | null; blank?: string;
   discovery: ReturnType<typeof useModelDiscovery>;
-  onChange: (value: string | null) => void; subagents?: boolean;
+  onChange: (value: string | null) => void; subagents?: boolean; custom?: CustomModelEntry;
 }) {
+  const [typing, setTyping] = useState(false);
   const { result, loading, refresh } = discovery;
   const models = result?.status === 'ready' ? result.models : [];
   const selected = models.find(model => model.id === value);
   const missing = value !== null && !selected;
   return <div className="model-picker">
     <div className="model-picker-controls">
-      <select title={value ?? "Use the account / engine default"} aria-label={label} value={value ?? ''} onChange={event => onChange(event.target.value || null)}>
-        <button type="button" tabIndex={-1}><span className="model-selected-text">{value === null ? blank : selected?.name ?? `${value} (saved)`}</span></button>
+      <select title={value ?? "Use the account / engine default"} aria-label={label} value={typing ? CUSTOM_CHOICE : value ?? ''} onChange={event => { if (event.target.value === CUSTOM_CHOICE) { setTyping(true); return; } setTyping(false); onChange(event.target.value || null); }}>
+        <button type="button" tabIndex={-1}><span className="model-selected-text">{typing ? 'Custom model…' : value === null ? blank : selected?.name ?? `${value} (saved)`}</span></button>
         <option value="">{blank}</option>
         {missing && <option value={value!}>{value} (saved)</option>}
         {models.length > 0 && <optgroup label="Reported by engine">
           {models.map(model => <option key={model.id} value={model.id}>{model.name}{model.isDefault && !/default/i.test(model.name) ? ' (default)' : ''}</option>)}
         </optgroup>}
+        {custom && <option value={CUSTOM_CHOICE}>Custom model…</option>}
       </select>
       <button type="button" disabled={loading} aria-label={`Refresh ${label}`} onClick={refresh}>{loading ? 'Loading' : result?.status === 'ready' ? 'Refresh' : 'Retry'}</button>
     </div>
     <p className="settings-note" role="status">
       {loading ? 'Loading models from the engine…' : result ? <>{result.status === 'ready' ? `${models.length ? 'From ' + (result.source.startsWith('Claude') ? 'Claude Code' : result.source.startsWith('Codex') ? 'Codex' : 'Antigravity ACP') : 'No models returned'} · access checked when used.` : result.message}</> : 'Models have not been loaded.'}
     </p>
+    {custom && typing && <div className="model-picker-controls"><CustomModelBox label={label} initial={value ?? ''} custom={custom} onSave={id => { setTyping(false); onChange(id); }} onCancel={() => setTyping(false)} /></div>}
     {missing && !loading && <p className="settings-note">Saved ID is not in the current list; kept unchanged.</p>}
     {subagents && <p className="settings-note">Uses Claude’s catalog; whether workers can use a model is not reported separately.</p>}
   </div>;
@@ -59,35 +64,43 @@ const choiceKey = (engine: ModelEngine, model: string) => `${engine}:${model}`;
  * The chat summaries' model: the same lists as `ModelPicker`, grouped by engine, one select. Engines that cannot
  * write a summary (`unavailable`) are listed but disabled, with `unavailableNote` under the picker.
  */
-export function SummaryModelPicker({ label, value, discovery, unavailable = [], unavailableNote, onChange }: {
+/** `claudeCustom`: a "Custom Claude model…" option for any `claude-*` id the Claude list does not have. */
+export function SummaryModelPicker({ label, value, discovery, unavailable = [], unavailableNote, onChange, claudeCustom }: {
   label: string; value: SummaryChoice;
   discovery: Record<ModelEngine, ReturnType<typeof useModelDiscovery>>;
   unavailable?: ModelEngine[]; unavailableNote?: string;
-  onChange: (value: SummaryChoice) => void;
+  onChange: (value: SummaryChoice) => void; claudeCustom?: CustomModelEntry;
 }) {
+  const [typing, setTyping] = useState(false);
   const loading = Object.values(discovery).some(one => one.loading);
   const lists = SUMMARY_ENGINES.map(item => ({ ...item, models: discovery[item.engine].result?.status === 'ready' ? discovery[item.engine].result!.models : [] }));
   const selected = lists.find(item => item.engine === value.engine)?.models.find(model => model.id === value.model);
   const missing = !selected;
   const key = choiceKey(value.engine, value.model);
+  const customKey = choiceKey('claude', CUSTOM_CHOICE);
   const messages = lists.map(item => ({ item, result: discovery[item.engine].result })).filter(({ result }) => result && result.status !== 'ready');
   return <div className="model-picker">
     <div className="model-picker-controls">
-      <select title={`${value.engine}: ${value.model}`} aria-label={label} value={key} onChange={event => {
+      <select title={`${value.engine}: ${value.model}`} aria-label={label} value={typing ? customKey : key} onChange={event => {
         const at = event.target.value.indexOf(':');
-        onChange({ engine: event.target.value.slice(0, at) as ModelEngine, model: event.target.value.slice(at + 1) });
+        const model = event.target.value.slice(at + 1);
+        if (model === CUSTOM_CHOICE) { setTyping(true); return; }
+        setTyping(false);
+        onChange({ engine: event.target.value.slice(0, at) as ModelEngine, model });
       }}>
-        <button type="button" tabIndex={-1}><span className="model-selected-text">{selected?.name ?? `${value.model} (saved)`}</span></button>
+        <button type="button" tabIndex={-1}><span className="model-selected-text">{typing ? 'Custom Claude model…' : selected?.name ?? `${value.model} (saved)`}</span></button>
         {missing && <option value={key}>{value.model} (saved)</option>}
         {lists.map(item => item.models.length > 0 && <optgroup key={item.engine} label={unavailable.includes(item.engine) ? `${item.name} (not available for summaries)` : item.name}>
           {item.models.map(model => <option key={model.id} value={choiceKey(item.engine, model.id)} disabled={unavailable.includes(item.engine)}>{model.name}{model.isDefault && !/default/i.test(model.name) ? ' (default)' : ''}</option>)}
         </optgroup>)}
+        {claudeCustom && !unavailable.includes('claude') && <option value={customKey}>Custom Claude model…</option>}
       </select>
       <button type="button" disabled={loading} aria-label={`Refresh ${label}`} onClick={() => Object.values(discovery).forEach(one => one.refresh())}>{loading ? 'Loading' : 'Refresh'}</button>
     </div>
     <p className="settings-note" role="status">
       {loading ? 'Loading models from the engines…' : `From ${lists.filter(item => item.models.length).map(item => item.source).join(', ') || 'no engine'} · access checked when used.`}
     </p>
+    {claudeCustom && typing && <div className="model-picker-controls"><CustomModelBox label={label} initial={value.engine === 'claude' ? value.model : ''} custom={claudeCustom} onSave={id => { setTyping(false); onChange({ engine: 'claude', model: id }); }} onCancel={() => setTyping(false)} /></div>}
     {!loading && messages.map(({ item, result }) => <p key={item.engine} className="settings-note">{item.name}: {result!.message}</p>)}
     {unavailable.length > 0 && unavailableNote && <p className="settings-note">{unavailableNote}</p>}
   </div>;
