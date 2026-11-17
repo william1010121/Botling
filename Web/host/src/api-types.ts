@@ -25,9 +25,13 @@ export interface Keybinding { command: string; key: string; source: "default" | 
 export interface PluginEvents {
   messagePosted: { botId: string; role: "user" | "bot"; text: string; id: string };
   /** A turn began in a bot's session (`turnId` is the app's id for it). */
-  turnStarted: { botId: string; turnId: string };
+  turnStarted: { botId: string; turnId: string; /** Task ids of the workers whose final report or note this turn carries (an `<app_task_result>` / `<app_worker_note>` message); absent: none. */ reports?: string[] };
   turnFinished: { botId: string; ok: boolean; reply: string };
   workerDone: { botId: string; workerId: string; status: string; report: string };
+  /** A worker of `botId`'s began a run for a job its bot named (app_handoff's `group`; a worker with no named job is not announced): `title` is its short name. Told once while it runs. */
+  workerStarted: { botId: string; workerId: string; group: string; title: string };
+  /** A worker at work sent its owner a note (app_notify_owner): `kind` "report" (interim news) or "question". */
+  workerNote: { botId: string; workerId: string; kind: "report" | "question"; message: string };
   /** You read a chat up to its newest line (`through`); `unread`: how many of its lines were unread before. */
   chatRead: { botId: string; unread: number; through: string | null };
   /** The developer project (Settings → Developer) or developer mode changed: `before`/`now` are the project bot's ids (null: none); `turnedOn`: developer mode was just turned on. */
@@ -54,7 +58,7 @@ export interface PluginEvents {
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict", "workerReport"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "workerStarted", "workerNote", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged", "noteConflict", "workerReport"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }

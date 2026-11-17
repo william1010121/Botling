@@ -377,6 +377,7 @@ export class BotWorkers {
     if (this.shuttingDown || this.problem || this.profile.problem || bot.shuttingDown) return false;
     try {
       bot.add({ id: newId(), role: "relay", text: workerNoteLine(note), date: toSwiftDate() });
+      this.owner.options.workerNoted?.({ ...(note.id ? { id: note.id } : {}), kind: note.kind, message: note.message });
       this.relayIfCallInWork(bot.deliverTo(this.engine, text, null, { origin: "app", ...this.pluginBehind(note.id) }), note.id, "note");
       return true;
     } catch (error) { this.log(`worker note not delivered: ${(error as Error).message}`); return false; }

@@ -695,3 +695,83 @@ describe("a plain message the bot moves into a card", () => {
     expect(M.readBook(raw).pins[0]!.thread[0]!.msgId).toBeUndefined();
   });
 });
+
+describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)", () => {
+  it("finds the open card by its id, then its title, key or handle (ignoring case and punctuation), then a title that contains the name; ties and nothing give null", () => {
+    const b = book();
+    const a = make(b, { title: "Build 報告" });
+    const c = make(b, { title: "Deploy staging", botKey: "deploy" });
+    expect(M.cardForGroup(b, "p-0001")).toBe(a);
+    expect(M.cardForGroup(b, "BUILD-報告")).toBe(a);
+    expect(M.cardForGroup(b, "deploy")).toBe(c);
+    expect(M.cardForGroup(b, "deploy staging env")).toBe(c);
+    expect(M.cardForGroup(b, "報告")).toBeNull(); // too short to be a containment match
+    expect(M.cardForGroup(b, "")).toBeNull();
+    expect(M.cardForGroup(b, "something else")).toBeNull();
+    const twin = make(b, { title: "Build 報告" });
+    expect(M.cardForGroup(b, "build 報告")).toBeNull();
+    expect(M.cardForGroup(b, twin.id)).toBe(twin);
+    a.state = "done";
+    twin.state = "done";
+    expect(M.cardForGroup(b, "build 報告")).toBeNull();
+    expect(M.cardForGroup(b, "p-0001")).toBeNull();
+  });
+
+  it("puts a worker's words into the thread as one turn each (same words once), cut at MAX_REPORT, and reads them back", () => {
+    const b = book();
+    const pin = make(b);
+    const turn = M.addWorkerTurn(pin, "t-1", "final", "x".repeat(M.MAX_REPORT + 500), T0)!;
+    expect(turn.a).toHaveLength(M.MAX_REPORT);
+    expect(M.addWorkerTurn(pin, "t-1", "final", "x".repeat(M.MAX_REPORT + 500), T0 + 1)).toBeNull();
+    expect(M.addWorkerTurn(pin, "t-1", "note", "x".repeat(M.MAX_REPORT), T0 + 2)).not.toBeNull();
+    expect(M.addWorkerTurn(pin, "../bad", "final", "y", T0)).toBeNull();
+    expect(M.addWorkerTurn(pin, "t-1", "final", "  \n ", T0)).toBeNull();
+    const read = M.readBook(JSON.parse(JSON.stringify(b))).pins[0]!;
+    expect(read.thread.map((t) => [t.via, t.worker, t.wkind, t.a!.length])).toEqual([["worker", "t-1", "final", M.MAX_REPORT], ["worker", "t-1", "note", M.MAX_REPORT]]);
+    // a worker turn of a bad shape is read as nothing special, never with a worker id it does not have
+    const odd = M.readBook({ pins: [{ ...JSON.parse(JSON.stringify(pin)), thread: [{ rid: "r1", q: "", a: "z", via: "worker", worker: "../x", wkind: "final", qAt: 1 }, { rid: "r2", q: "", a: "z", via: "worker", worker: "t-1", wkind: "evil", qAt: 1 }] }] }).pins[0]!;
+    expect(odd.thread.map((t) => [t.via, t.worker])).toEqual([["at", undefined], ["at", undefined]]);
+  });
+
+  it("attachReply files the bot's reply with the newest unfiled report of those workers, once; the message becomes a trace, moved back its words come back", () => {
+    const b = book();
+    const pin = make(b);
+    M.linkFrom(pin, ["t-1"], M.MAX_LINKED);
+    M.addWorkerTurn(pin, "t-1", "final", "報告一", T0);
+    const second = M.addWorkerTurn(pin, "t-1", "note", "報告二", T0 + 5)!;
+    expect(M.attachReply(b, ["t-other"], "m1", "hi", T0 + 6)).toBe(false);
+    expect(M.attachReply(b, ["t-1"], "m1", "說明", T0 + 6)).toBe(true);
+    expect([second.msgId, second.say]).toEqual(["m1", "說明"]);
+    expect(M.attachReply(b, ["t-1"], "m1", "again", T0 + 7)).toBe(false); // a message id is used once
+    const trace = M.tracesOf(b);
+    expect(trace).toHaveLength(1);
+    expect(trace[0]).toMatchObject({ fold: ["m1"], data: { kind: "moved", worker: true, q: "報告二" } });
+    expect(M.moveBack(b, second.rid, T0 + 8)).toBe(true);
+    expect(b.fixes).toBeUndefined();
+    expect(M.tracesOf(b)[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "說明" } });
+    // a card taken down gives the line back to the chat too
+    const removed = M.remove(b, pin.id, T0 + 9, "user")!;
+    expect(removed).toBe(pin);
+    expect(M.tracesOf(b)[0]!.data.kind).toBe("back");
+  });
+
+  it("a worker turn with no reply cannot be moved back, and 改到… never takes a worker's turn", () => {
+    const b = book();
+    const pin = make(b);
+    const other = make(b, { title: "Other" });
+    const turn = M.addWorkerTurn(pin, "t-1", "final", "報告", T0)!;
+    expect(M.moveBack(b, turn.rid, T0 + 1)).toBe(false);
+    M.attachReply(b, ["t-1"], "m1", "", T0 + 2);
+    expect(M.moveTo(b, turn.rid, other.id, T0 + 3)).toBe(false);
+  });
+
+  it("a note: a question makes a running card wait, a report only logs; the same note twice changes nothing", () => {
+    const b = book();
+    const pin = make(b);
+    expect(M.applyWorkerNote(pin, "t-1", "report", "進度 50%", T0 + 1)).toBe(true);
+    expect(M.applyWorkerNote(pin, "t-1", "report", "進度 50%", T0 + 2)).toBe(false);
+    expect(pin.state).toBe("run");
+    expect(M.applyWorkerNote(pin, "t-1", "question", "A 或 B？", T0 + 3)).toBe(true);
+    expect([pin.state, pin.status, pin.source]).toEqual(["wait", "worker 問：A 或 B？", "app"]);
+  });
+});

@@ -48,10 +48,10 @@ function setup(seed: Record<string, unknown> = {}) {
 }
 
 describe("the program part", () => {
-  it("registers the nine methods, the four events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the nine methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
     expect([...exposed.keys()].sort()).toEqual(["collapse", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
-    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone"]);
+    expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone", "workerNote", "workerStarted"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
     const real = setup();
@@ -913,5 +913,144 @@ describe("「你不在時」: the digest of what happened while the user was awa
     const t = setup({ presence: "garbage" });
     await expect(t.call("touch", {})).rejects.toThrow("No bot.");
     expect(await t.call("touch", { botId: "B1" })).toEqual({ away: false });
+  });
+});
+
+// ---- Step 1 of the routing work: a worker is bound to a card by the job name its bot gave, and its words go into the card ----
+describe("a worker bound to a card by its job name", () => {
+  const started = (botId: string, workerId: string, group: string) => ({ botId, workerId, group, title: "worker" });
+  const card = (t = setup(), title = "Build 報告") => {
+    t.tag("B1", "pin-card", { id: "job", title, state: "run", min: "30" }, "進行中");
+    t.tick(1_000);
+    return t;
+  };
+
+  it("a worker whose group is the card's title follows it from then on; its final report goes into the thread whole and the status line gets the first line", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toEqual(["t-1"]);
+    expect(t.book("B1").pins[0]!.updates.at(-1)!.status).toBe("worker 開工：build 報告");
+    const report = "# 結果\n第一段\n\n第二段 ".repeat(50);
+    t.emit("workerDone", ended("B1", "t-1", report));
+    const pin = t.book("B1").pins[0]!;
+    expect(pin.status).toBe("worker 回報：結果");
+    expect(pin.thread).toHaveLength(1);
+    expect(pin.thread[0]).toMatchObject({ via: "worker", worker: "t-1", wkind: "final", q: "", a: report.trim() });
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect(view.pins[0]!.thread[0]!.a).toBe(report.trim());
+    // told again: nothing more
+    const draws = t.setData.mock.calls.length;
+    t.emit("workerDone", ended("B1", "t-1", report));
+    expect(t.setData.mock.calls.length).toBe(draws);
+  });
+
+  it("no card of that name, two cards alike, a done card, a worker of another bot: the worker is not bound and nothing changes", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-2", "完全不同的工作"));
+    t.emit("workerStarted", started("B2", "t-3", "build 報告"));
+    expect(t.book("B1").pins[0]!.from).toBeUndefined();
+    t.emit("workerDone", ended("B1", "t-2", "別的結果"));
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(0);
+    t.tag("B1", "pin-card", { id: "job2", title: "Build 報告二", state: "run", min: "30" }, "另一張");
+    t.emit("workerStarted", started("B1", "t-4", "build 報告")); // the exact title still wins over the longer one
+    expect(t.book("B1").pins.find((pin) => pin.title === "Build 報告")!.from).toEqual(["t-4"]);
+    t.tag("B1", "pin-card", { id: "twin", title: "Build 報告", state: "run", min: "30" }, "同名"); // handle differs, title the same
+    t.emit("workerStarted", started("B1", "t-5", "build 報告"));
+    expect(M.linksOf(t.book("B1"))).toEqual(["t-4"]);
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    t.emit("workerStarted", started("B1", "t-6", "build 報告二"));
+    expect(t.book("B1").pins.find((pin) => pin.title === "Build 報告二")!.from).toEqual(["t-6"]);
+  });
+
+  it("a worker that ended before it was bound lands at once, and a bad id or group is dropped", () => {
+    const t = card();
+    t.emit("workerDone", ended("B1", "t-early", "早就好了"));
+    t.emit("workerStarted", started("B1", "t-early", "build 報告"));
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ worker: "t-early", a: "早就好了" });
+    t.emit("workerStarted", started("B1", "../x", "build 報告"));
+    t.emit("workerStarted", { botId: "B1", workerId: "t-9", group: 5, title: "x" });
+    expect(t.book("B1").pins[0]!.from).toEqual(["t-early"]);
+  });
+
+  it("a done card keeps the report in its thread without changing its words; a failed run turns a running card into a waiting one", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "壞了\n細節很多", "failed"));
+    expect(t.book("B1").pins[0]).toMatchObject({ state: "wait", status: "worker 失敗：壞了" });
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ wkind: "failed", a: "壞了\n細節很多" });
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "收工");
+    t.emit("workerDone", ended("B1", "t-1", "遲來的報告"));
+    const pin = t.book("B1").pins[0]!;
+    expect([pin.state, pin.status]).toEqual(["done", "收工"]);
+    expect(pin.thread.map((turn) => turn.a)).toEqual(["壞了\n細節很多", "遲來的報告"]);
+  });
+
+  it("a note of a bound worker goes into the thread and the log; a question makes a running card wait; an unbound worker's note is ignored", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerNote", { botId: "B1", workerId: "t-1", kind: "report", message: "做到一半\n已經有三個檔案" });
+    let pin = t.book("B1").pins[0]!;
+    expect(pin.state).toBe("run");
+    expect(pin.updates.at(-1)).toMatchObject({ status: "worker 進度：做到一半", source: "app" });
+    expect(pin.thread.at(-1)).toMatchObject({ via: "worker", wkind: "note", a: "做到一半\n已經有三個檔案" });
+    t.emit("workerNote", { botId: "B1", workerId: "t-1", kind: "question", message: "用 A 還是 B？" });
+    pin = t.book("B1").pins[0]!;
+    expect([pin.state, pin.status]).toEqual(["wait", "worker 問：用 A 還是 B？"]);
+    expect(pin.thread.at(-1)).toMatchObject({ wkind: "question" });
+    const before = JSON.stringify(t.book("B1"));
+    t.emit("workerNote", { botId: "B1", workerId: "t-none", kind: "report", message: "x" });
+    t.emit("workerNote", { botId: "B2", workerId: "t-1", kind: "report", message: "x" });
+    expect(JSON.stringify(t.book("B1"))).toBe(before);
+  });
+
+  it("the bot's reply to a bound worker's report is folded behind one line (移回聊天 brings it back); a reply to anything else is not", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "完整報告\n很長"));
+    // a turn that carries no report: its reply stays in the chat
+    t.emit("turnStarted", { botId: "B1", turnId: "u1" });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "一般回覆", id: "m0" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "一般回覆" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
+    // the turn of the app's message for that worker
+    t.emit("turnStarted", { botId: "B1", turnId: "u2", reports: ["t-1"] });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "做完了，細節在卡片裡", id: "m1" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "做完了，細節在卡片裡" });
+    const turn = t.book("B1").pins[0]!.thread[0]!;
+    expect([turn.msgId, turn.say]).toEqual(["m1", "做完了，細節在卡片裡"]);
+    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
+    expect(traces).toHaveLength(1);
+    expect(traces[0]).toMatchObject({ fold: ["m1"], data: { kind: "moved", worker: true, pin: "p-0001", q: "完整報告" } });
+    // another message of that turn's chat does not fold again
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "又一句", id: "m2" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBe("m1");
+    // one tap: back in the chat, the card no longer shows it, the bot's words come back under the trace
+    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ moved: "chat" });
+    const back = t.decorate.mock.calls.at(-1)![1] as { after?: string; data: M.TraceData }[];
+    expect(back[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "做完了，細節在卡片裡" } });
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).pins[0]!.thread).toHaveLength(0);
+    // taking a worker line back is not a correction of the bot's routing guess
+    expect(t.book("B1").fixes).toBeUndefined();
+    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ unchanged: true });
+  });
+
+  it("a worker's turn with no reply of the bot yet cannot be moved back, and a reply never folds when the bot sent <no-reply/> (no message)", () => {
+    const t = card();
+    t.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    t.emit("workerDone", ended("B1", "t-1", "報告"));
+    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
+    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ unchanged: true });
+    t.emit("turnStarted", { botId: "B1", turnId: "u3", reports: ["t-1"] });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "之後的別件事", id: "m9" });
+    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
+  });
+
+  it("after a restart the binding and the thread are still there", () => {
+    const first = card();
+    first.emit("workerStarted", started("B1", "t-1", "build 報告"));
+    const second = setup(Object.fromEntries(first.stored));
+    second.emit("workerDone", ended("B1", "t-1", "重開機後的報告"));
+    expect(second.book("B1").pins[0]!.thread[0]!.a).toBe("重開機後的報告");
   });
 });

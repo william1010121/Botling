@@ -112,10 +112,29 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     const book = load(botId);
     const pins = book.pins.filter((pin) => pin.from?.includes(id));
     let any = false;
-    for (const pin of pins) if (M.applyNews(pin, item, now())) any = true;
+    for (const pin of pins) {
+      if (M.applyNews(pin, item, now())) any = true;
+      // a worker's own report goes into the card in full (even a card already done keeps it), not only its first line
+      if (item.from === "worker" && M.addWorkerTurn(pin, id, M.workerKindOf(item.kind), item.text, now())) any = true;
+    }
     if (any) save(botId, book);
     return any;
   };
+  /** A worker began a run for a job its bot named: the open card that name points at follows it from now on (none, or two alike: it stays in the chat). */
+  const bind = (botId: string, workerId: string, group: string): void => {
+    const book = load(botId);
+    if (M.cardOfWorker(book, workerId)) return;
+    const pin = M.cardForGroup(book, group);
+    if (!pin) return;
+    M.linkFrom(pin, [workerId], M.MAX_LINKED);
+    M.logLine(pin, `worker 開工：${group}`, now());
+    save(botId, book);
+    // it may have ended before this was heard (the events of one run come close together)
+    const ended = ends.get(workerId);
+    if (ended && ended.botId === botId) news(botId, workerId, { kind: ended.kind, from: "worker", text: ended.text });
+  };
+  /** The worker reports (final or a note) a bot's turn carries, and the card ids they went into: the bot's reply is folded behind one line of trace. */
+  const carried = new Map<string, string[]>();
   // A sub bot is followed only by the card of the bot it works under: its parent is checked now, not when the card was made.
   const parents = { at: 0, byId: new Map<string, string | null>() };
   const parentOf = async (id: string): Promise<string | null> => {
@@ -150,13 +169,14 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
 
   const subs = [
     // the bot's turn began: what was in the chat before it has been seen
-    api.events.on("turnStarted", ({ botId }) => {
+    api.events.on("turnStarted", ({ botId, reports }) => {
       if (!bots.has(botId)) return;
       turnStart.set(botId, now());
       // the line that was in the chat before this turn began is the one it answers; a line that comes while it runs waits for the next turn
       const line = lastLine.get(botId);
       if (line) { turnLine.set(botId, line); lastLine.delete(botId); } else turnLine.delete(botId);
       saidInTurn.delete(botId);
+      if (reports?.length) carried.set(botId, reports.filter(M.isFrom).slice(0, 8)); else carried.delete(botId);
       const book = load(botId);
       if (M.markSeen(book, now())) save(botId, book);
     }),
@@ -171,7 +191,17 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       // a sub bot a card follows spoke: its reply goes into that card (the parent is checked first)
       if (role === "bot" && followers.has(botId) && followers.get(botId) !== botId) void subBotNews(botId, String(text ?? ""));
       if (!bots.has(botId)) return;
-      if (role === "bot") { lastBotLine.set(botId, { text: String(text ?? ""), at: now() }); return; }
+      if (role === "bot") {
+        lastBotLine.set(botId, { text: String(text ?? ""), at: now() });
+        // the bot's reply to a worker's report that a card holds in full: one line of trace in the chat, the words kept with it
+        const workers = carried.get(botId);
+        if (workers?.length && typeof id === "string" && id) {
+          carried.delete(botId);
+          const book = load(botId);
+          if (M.attachReply(book, workers, id, String(text ?? ""), now())) save(botId, book);
+        }
+        return;
+      }
       if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) lastLine.set(botId, { id, text: M.stripBriefing(String(text)), at: now() });
       const asked = M.parseAsk(String(text ?? ""));
       if (!asked) return;
@@ -182,6 +212,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.events.on("turnFinished", ({ botId, ok, reply }) => {
       if (!bots.has(botId)) return;
       turnLine.delete(botId);
+      carried.delete(botId);
       try {
         const line = lastBotLine.get(botId);
         const started = turnStart.get(botId) ?? 0;
@@ -207,6 +238,27 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
         if (bots.has(botId)) news(botId, workerId, { kind, from: "worker", text: String(report ?? "") });
       } catch (error) {
         console.error("botling.pin-area: workerDone", error);
+      }
+    }),
+
+    // a worker began a run for a named job: the card of that name follows it
+    api.events.on("workerStarted", ({ botId, workerId, group }) => {
+      try {
+        if (!bots.has(botId) || typeof workerId !== "string" || !M.isFrom(workerId) || typeof group !== "string" || !group.trim()) return;
+        bind(botId, workerId, group);
+      } catch (error) {
+        console.error("botling.pin-area: workerStarted", error);
+      }
+    }),
+    // a worker at work sent its owner a note: it goes into the card that follows it (thread and 過程 log)
+    api.events.on("workerNote", ({ botId, workerId, kind, message }) => {
+      try {
+        if (!bots.has(botId) || typeof workerId !== "string" || !M.isFrom(workerId) || followers.get(workerId) !== botId) return;
+        const book = load(botId);
+        const pin = M.cardOfWorker(book, workerId);
+        if (pin && M.applyWorkerNote(pin, workerId, kind === "question" ? "question" : "report", String(message ?? ""), now())) save(botId, book);
+      } catch (error) {
+        console.error("botling.pin-area: workerNote", error);
       }
     }),
 

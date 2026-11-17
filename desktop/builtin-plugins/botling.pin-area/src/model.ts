@@ -5,7 +5,9 @@
 export type State = "run" | "wait" | "done";
 /** Who vouches for a card's status line: the bot itself, the app (a worker's own report: Phase 2) or the user (a card they pinned by hand). */
 export type Source = "bot" | "app" | "user";
-export type Via = "at" | "auto";
+export type Via = "at" | "auto" | "worker";
+/** What a worker said into a card: its final report, a failed/stopped run, an interim note, or a question. */
+export type WorkerKind = "final" | "failed" | "note" | "question";
 
 /**
  * One exchange in a card's thread. `postedAt`: the line showed in the chat; `seenAt`: a turn of the bot began after that (the bot saw it);
@@ -16,6 +18,8 @@ export interface Turn {
   rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via; moved?: boolean;
   /** `via` "auto": the user's own line in the chat (it is folded behind the trace while the turn is in the card). `redirected`: the user chose this card with 改到…. */
   msgId?: string; redirected?: boolean;
+  /** `via` "worker": the worker's task id and what it said (`a` holds the words, `q` is empty); `msgId` is then the bot's reply in the chat to it (folded behind a trace), `say` that reply. */
+  worker?: string; wkind?: WorkerKind; say?: string;
 }
 export interface Update { at: number; state: State; status: string; source: Source }
 export interface Step { done: number; total: number }
@@ -58,8 +62,11 @@ export const MAX_BOT_OPEN = 3;
 export const MAX_TURNS = 50;
 export const MAX_UPDATES = 50;
 export const MAX_REMOVED = 3;
-/** Workers / sub bots one card may follow. */
+/** Workers / sub bots one card may follow by a bot's tag (the oldest go over it); `MAX_LINKED` when the app binds them by their job name. */
 export const MAX_FROM = 4;
+export const MAX_LINKED = 12;
+/** Longest worker report kept in a card's thread (the bot got all of it; a card shows this much). */
+export const MAX_REPORT = 12_000;
 export const MAX_FIXES = 3;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
@@ -110,12 +117,14 @@ function readTurn(raw: unknown): Turn | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
   if (!isRid(t.rid) || typeof t.q !== "string") return null;
-  const a = typeof t.a === "string" ? t.a.slice(0, MAX_A) : null;
+  const a = typeof t.a === "string" ? t.a.slice(0, t.via === "worker" ? MAX_REPORT : MAX_A) : null;
+  const wkind = (["final", "failed", "note", "question"] as const).find((kind) => kind === t.wkind);
   const time = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
   return {
     rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt),
-    via: t.via === "auto" ? "auto" : "at", ...(t.moved === true ? { moved: true } : {}),
+    via: t.via === "auto" ? "auto" : t.via === "worker" && isFrom(t.worker) && wkind ? "worker" : "at", ...(t.moved === true ? { moved: true } : {}),
     ...(typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}), ...(t.redirected === true ? { redirected: true } : {}),
+    ...(t.via === "worker" && isFrom(t.worker) && wkind ? { worker: t.worker, wkind, ...(typeof t.say === "string" && t.say ? { say: t.say.slice(0, MAX_A) } : {}) } : {}),
   };
 }
 function readUpdate(raw: unknown): Update | null {
@@ -135,7 +144,7 @@ export function readPin(raw: unknown): Pin | null {
   const handle = oneLine(p.handle, MAX_TITLE).replace(/\s+/g, "-");
   if (!isId(p.id) || !state || !source || !title || !handle || (p.origin !== "user" && p.origin !== "bot")) return null;
   const step = readStep(p.step);
-  const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_FROM);
+  const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_LINKED);
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
@@ -352,11 +361,54 @@ export function parseFrom(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).filter(isFrom))].slice(0, MAX_FROM);
 }
 /** Adds ids to the card's links (the oldest go when over MAX_FROM). True when something was added. */
-export function linkFrom(pin: Pin, ids: string[]): boolean {
+export function linkFrom(pin: Pin, ids: string[], cap = MAX_FROM): boolean {
   const fresh = ids.filter((id) => !(pin.from ?? []).includes(id));
   if (!fresh.length) return false;
-  pin.from = [...(pin.from ?? []), ...fresh].slice(-MAX_FROM);
+  pin.from = [...(pin.from ?? []), ...fresh].slice(-cap);
   return true;
+}
+
+// ---- a worker bound to a card by the job name its bot gave (app_handoff's `group`), and what it says into the card ----
+
+/** A name as compared for a match: no case, no spaces or punctuation. */
+const fold = (value: string): string => value.toLowerCase().replace(/[\s\-_·:：,，.。、/\\|()（）「」『』"'`]+/g, "");
+/**
+ * The open card a worker's job name points at: its p-0001 id, else its title, key or handle (exactly, ignoring case and punctuation),
+ * else a title or key that contains the name or the name contains it (3 characters or more). The best kind of match wins; two cards
+ * tied on it, or none, give null (the worker then stays in the chat). A done card is never bound.
+ */
+export function cardForGroup(book: Book, group: string): Pin | null {
+  const raw = oneLine(group, 80);
+  const wanted = fold(raw);
+  if (!wanted) return null;
+  const rank = (pin: Pin): number => {
+    if (raw.toLowerCase() === pin.id) return 3;
+    const names = [pin.title, pin.botKey ?? "", pin.handle].map(fold).filter(Boolean);
+    if (names.includes(wanted)) return 2;
+    return names.some((name) => Math.min(name.length, wanted.length) >= 3 && (name.includes(wanted) || wanted.includes(name))) ? 1 : 0;
+  };
+  const ranked = book.pins.filter((pin) => pin.state !== "done").map((pin) => ({ pin, rank: rank(pin) })).filter((item) => item.rank > 0);
+  const best = Math.max(0, ...ranked.map((item) => item.rank));
+  const top = ranked.filter((item) => item.rank === best);
+  return top.length === 1 ? top[0]!.pin : null;
+}
+/** The card that follows `workerId`, if any. */
+export const cardOfWorker = (book: Book, workerId: string): Pin | null => book.pins.find((pin) => pin.from?.includes(workerId)) ?? null;
+
+/**
+ * What a worker said goes into the card's thread as a turn of its own (`via: "worker"`, no words of the user's), full length up to
+ * MAX_REPORT. The same words of the same worker twice are one. Null: nothing was added.
+ */
+export function addWorkerTurn(pin: Pin, workerId: string, kind: WorkerKind, text: string, now: number): Turn | null {
+  const words = clean(text, MAX_REPORT * 2).trim().slice(0, MAX_REPORT);
+  if (!words || !isFrom(workerId)) return null;
+  if (pin.thread.some((turn) => turn.via === "worker" && turn.worker === workerId && turn.wkind === kind && turn.a === words)) return null;
+  const turn = addTurn(pin, `w${now.toString(36)}-${pin.thread.length}-${workerId.slice(0, 12).replace(/[^A-Za-z0-9_-]/g, "_")}`, "", now, "worker");
+  turn.a = words;
+  turn.aAt = now;
+  turn.worker = workerId;
+  turn.wkind = kind;
+  return turn;
 }
 /** Every id a book's cards follow, by card: for the host's index. */
 export function linksOf(book: Book): string[] {
@@ -397,6 +449,31 @@ export function applyNews(pin: Pin, news: { kind: NewsKind; from: "worker" | "bo
   }
   const failed = news.kind === "failed" || news.kind === "stopped" || news.kind === "interrupted";
   return applyUpdate(pin, { status, source: "app", ...(failed ? { state: "wait" as const } : {}) }, now);
+}
+
+/** What a worker's end is, as a thread entry. */
+export const workerKindOf = (kind: NewsKind): WorkerKind => (kind === "completed" || kind === "reply" ? "final" : "failed");
+/** A line in the card's 過程 log only (no change of state or words): a worker started, a note came. */
+export function logLine(pin: Pin, status: string, now: number): boolean {
+  const line = oneLine(status, MAX_STATUS);
+  const last = pin.updates[pin.updates.length - 1];
+  if (!line || (last && last.status === line && last.source === "app")) return false;
+  pin.updates.push({ at: now, state: pin.state, status: line, source: "app" });
+  if (pin.updates.length > MAX_UPDATES) pin.updates.splice(0, pin.updates.length - MAX_UPDATES);
+  pin.updatedAt = now;
+  return true;
+}
+/**
+ * A worker at work sent a note (app_notify_owner) to a card that follows it: the words go into the thread, a line into the log. A question
+ * makes a running card wait for the user (the user may have to answer). A done card keeps its state. True when anything changed.
+ */
+export function applyWorkerNote(pin: Pin, workerId: string, kind: "report" | "question", message: string, now: number): boolean {
+  const turn = addWorkerTurn(pin, workerId, kind === "question" ? "question" : "note", message, now);
+  const line = firstLine(message, 80);
+  const head = kind === "question" ? "worker 問" : "worker 進度";
+  const status = oneLine(line ? `${head}：${line}` : head, MAX_STATUS);
+  if (kind === "question" && pin.state === "run") return applyUpdate(pin, { state: "wait", status, source: "app" }, now) || !!turn;
+  return logLine(pin, status, now) || !!turn;
 }
 
 // ---- the user's messages into a card ----
@@ -570,10 +647,29 @@ function addFix(book: Book, text: string, from: string, to: string, now: number)
 /** 移回聊天: the turn stays in the card's data (so the chat can show its answer) but leaves its thread. False: not an automatic turn of a live card, or already back. */
 export function moveBack(book: Book, rid: string, now: number): boolean {
   const hit = findTurn(book, rid);
-  if (!hit || hit.removed || hit.turn.via !== "auto" || hit.turn.moved) return false;
+  // a worker's report the bot's reply was folded for is taken back too (no guess of the bot's to correct: nothing is noted for it)
+  if (!hit || hit.removed || (hit.turn.via !== "auto" && !(hit.turn.via === "worker" && hit.turn.msgId)) || hit.turn.moved) return false;
   hit.turn.moved = true;
   hit.pin.updatedAt = now;
-  addFix(book, hit.turn.q, hit.pin.id, "chat", now);
+  if (hit.turn.via === "auto") addFix(book, hit.turn.q, hit.pin.id, "chat", now);
+  return true;
+}
+/**
+ * The bot's reply in the chat to a worker's report (or note) turn: its message is folded behind a one-line trace (the full words are in the card), `say` is
+ * what it said. It goes with the newest report of one of `workers` not yet filed with a reply; false when there is none.
+ */
+export function attachReply(book: Book, workers: string[], msgId: string, say: string, now: number): boolean {
+  if (!msgId || msgId.length > 200 || lineUsed(book, msgId)) return false;
+  let found: Turn | null = null;
+  for (const pin of book.pins) for (const turn of pin.thread) {
+    if (turn.via === "worker" && !turn.msgId && !turn.moved && turn.worker && workers.includes(turn.worker) && (!found || turn.aAt! >= found.aAt!)) found = turn;
+  }
+  if (!found) return false;
+  found.msgId = msgId;
+  const line = clean(say, MAX_A).trim();
+  if (line) found.say = line;
+  const pin = book.pins.find((candidate) => candidate.thread.includes(found!));
+  if (pin) pin.updatedAt = now;
   return true;
 }
 /** 改到…: the turn, with its answer, goes to another live card. False: no such turn or card, the same card, or the turn is back in the chat. */
@@ -596,16 +692,21 @@ export function moveTo(book: Book, rid: string, to: string, now: number): boolea
 }
 
 /** What the chat draws for the lines the bot moved (`chat.decorate`): a one-line trace in place of the user's line, or, once moved back, the answer under it. */
-export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user" }
+export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user"; /** The line is the bot's reply to a worker's report that went into the card (q: the report's first line). */ worker?: true }
 export const MAX_TRACES = 120;
 export function tracesOf(book: Book): { key: string; fold?: string[]; after?: string; data: TraceData }[] {
   const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
-  for (const pin of book.pins) for (const turn of pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin, turn, live: true });
+  for (const pin of book.pins) for (const turn of pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin, turn, live: true });
   // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
-  for (const entry of book.removed) for (const turn of entry.pin.thread) if (turn.via === "auto" && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
+  for (const entry of book.removed) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
   return all.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
     const back = turn.moved === true || !live;
-    const data: TraceData = { kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot", ...(back && turn.a ? { a: clean(turn.a, 600) } : {}) };
+    const worker = turn.via === "worker";
+    const shown = worker ? turn.say ?? turn.a : turn.a;
+    const data: TraceData = {
+      kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot",
+      ...(back && shown ? { a: clean(shown, 600) } : {}), ...(worker ? { worker: true as const } : {}),
+    };
     return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: [turn.msgId!], data };
   });
 }

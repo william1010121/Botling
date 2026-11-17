@@ -142,6 +142,8 @@ export interface BotOptions {
   callInFollowUp?: (caller: string, asked: string, record: ChatRecord, by?: "user") => void;
   /** Its turn on such a worker's report ended without a reply (`why`): that chat is told so (`callInFollowUpMissed`). */
   callInFollowUpMissed?: (caller: string, asked: string, why: string, by?: "user") => void;
+  /** A worker at work sent it a note (app_notify_owner; `id`: the worker's task id): plugins listening hear it (`workerNote`). */
+  workerNoted?: (note: { id?: string; kind: "report" | "question"; message: string }) => void;
   /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
   callInNote?: () => string | null;
   /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */

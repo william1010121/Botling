@@ -527,8 +527,17 @@ export class PinUi {
         parts.thread.append(mine);
       }
       if (turn.a !== null) {
-        const bot = el("div", "pt-msg pt-bot");
-        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
+        const worker = turn.via === "worker";
+        const bot = el("div", `pt-msg pt-bot${worker ? " pt-worker" : ""}`);
+        // what a worker said (its whole report, a note, a question) is the worker's, not the bot's
+        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${worker ? words(`worker.${turn.wkind ?? "final"}`) : words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
+        // a report whose reply in the chat was folded to one line: one tap brings it back
+        if (worker && turn.msgId) {
+          const back = el("button", "pt-mv-act", words("trace.backBtn"));
+          back.type = "button";
+          back.addEventListener("click", () => this.moveBack(turn.rid));
+          bot.append(back);
+        }
         parts.thread.append(bot);
       }
     }
@@ -571,7 +580,7 @@ export class PinUi {
       if (data.a) root.append(el("div", "pt-mv-ans", `${words("bot.name")}：${data.a}`));
       return;
     }
-    const open = el("button", "pt-mv-open", words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
+    const open = el("button", "pt-mv-open", data.worker ? words("trace.worker", { q: data.q, title: data.title }) : words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
     open.type = "button";
     open.title = words("trace.open", { title: data.title });
     open.addEventListener("click", () => this.open(data.pin));
@@ -582,7 +591,9 @@ export class PinUi {
     other.type = "button";
     other.setAttribute("aria-expanded", String(this.alts.has(data.rid)));
     other.addEventListener("click", () => { if (this.alts.has(data.rid)) this.alts.delete(data.rid); else this.alts.add(data.rid); this.trace(root, data); });
-    line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
+    // a worker's report has no other card to go to: only back to the chat
+    if (data.worker) line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back);
+    else line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
     root.append(line);
     if (this.alts.has(data.rid)) {
       const list = el("div", "pt-mv-alts");
