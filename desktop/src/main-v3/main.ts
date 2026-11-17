@@ -7,7 +7,9 @@
 // - Otherwise run the Botling 3 window: `./guard` first, content/editor hooks, then the 2.x main with `./core-client`
 //   swapped for `./server-client` (build.mjs `buildMainV3`).
 import { readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { shotCommand, shotWrapperDirs } from "../core/shot-command";
 import { scrubEnvironment } from "../main/packaged";
 import type { ServerCliOptions } from "../server/main";
 import { electronUtilityOf, isPackagedElectron, loadElectron, type ElectronMainLike } from "../server/packaged-electron";
@@ -35,11 +37,12 @@ export function packagedAppId(root = resolve(__dirname, "..", "..")): string | u
  * which with the RunAsNode fuse off starts the Botling 3 window instead. Always this build's own (scrubbed or inherited
  * values are replaced).
  */
-export function setPackagedSelfCommands(env: Record<string, string | undefined>, execPath: string): void {
+export function setPackagedSelfCommands(env: Record<string, string | undefined>, execPath: string, wrapperDirs?: readonly string[]): void {
   const self = `env -u ELECTRON_RUN_AS_NODE '${execPath.replaceAll("'", "'\\''")}'`;
   env.BOTLING_APP_COMMAND = self;
   env.BOTLING_CHECK_COMMAND = `${self} --check-plugin`;
-  env.BOTLING_SHOT_COMMAND = `${self} --component-shot`;
+  // A path to a script, not the command: a bot's zsh does not split a variable (core/shot-command.ts).
+  env.BOTLING_SHOT_COMMAND = shotCommand([execPath], wrapperDirs ?? shotWrapperDirs({ dataDir: env.BOTLING_SERVER_DATA_DIR, home: env.HOME || homedir(), tmp: tmpdir(), uid: process.getuid?.() }));
 }
 
 /**

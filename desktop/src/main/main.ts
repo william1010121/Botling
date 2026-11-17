@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { shotPluginFile, shotWebSpecs } from "../core/shot-plugins";
+import { shotCommand, shotWrapperDirs } from "../core/shot-command";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
@@ -332,6 +333,7 @@ const checkForRelease = () => { void updater.check(false).then(announce, (error)
 const openedReleases: string[] = [];
 (globalThis as unknown as { __botlingOpenedReleases: string[] }).__botlingOpenedReleases = openedReleases;
 
+let shotCommandText: string | undefined;
 function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
@@ -352,7 +354,11 @@ function coreEnvironment(): Record<string, string> {
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
   const self = `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`}`;
-  env.BOTLING_SHOT_COMMAND ??= `${self} --component-shot`;
+  // A path to a script that runs it (core/shot-command.ts): a bot's zsh would not split a command held in a variable.
+  // Not written by a shot itself (it starts no core and must leave no files).
+  env.BOTLING_SHOT_COMMAND ??= shotMode
+    ? `${self} --component-shot`
+    : (shotCommandText ??= shotCommand([process.execPath, ...(app.isPackaged ? [] : [root])], shotWrapperDirs({ dataDir, home: process.env.HOME || homedir(), tmp: tmpdir(), uid: process.getuid?.() })));
   // And its plugin check (1.x: "'<botling>' --check-plugin"); a packaged build cannot run Electron as Node.
   env.BOTLING_CHECK_COMMAND ??= `${self} --check-plugin`;
   // The app itself, for the commands shipped plugins give the bots (botling.report: `--render-report`; its guide is in the plugin, outside app.asar).
