@@ -9,6 +9,8 @@ import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition } from "../../
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
 import { API_RETRY_NOTE } from "../../src/core/api-retry";
+import { headArguments, type HeadConfig } from "../../src/core/agent/head";
+import { launchSettings, workerExtraDirs } from "../../src/core/settings";
 
 const CLOUDFLARE = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare";
 /** claude 2.1.323's lines for a turn the API turned away: its error message, then a result with is_error and the status. */
@@ -674,5 +676,61 @@ describe("a held run and the tree checks of earlier processes (spec/models/worke
     expect(h.heads).toHaveLength(3);
     expect(h.heads[2]!.sent.map((m) => m.text)).toEqual(["Run three"]);
     expect(h.heads[2]!.config).toMatchObject({ resume: true, sessionId: first.config.sessionId });
+  });
+});
+
+describe("workerExtraDirs: a worktree folder outside the project stays a working folder (so its Bash cd sticks)", () => {
+  it("adds an existing folder from settings.json to the worker's --add-dir, keeps the head's own, and skips a missing one", async () => {
+    const work = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
+    const missing = join(work, "not-mounted"), file = join(work, "a-file");
+    writeFileSync(file, "x");
+    const h = harness(undefined, { base: { command: "claude", cwd: "/elsewhere", sessionId: "coordinator", resume: true, allowedTools: ["Read"], addDirs: ["/bot/inbox"], model: "opus", effort: "high" }, extraDirs: () => [work, missing, file, work] });
+    await h.workers.tool("app_handoff", { name: "Build", instructions: "go" });
+    const config = h.heads[0]!.config;
+    expect(config.addDirs).toEqual(["/bot/inbox", work]);
+    const args = headArguments(config);
+    expect(args.slice(args.indexOf("--add-dir"))).toEqual(expect.arrayContaining(["--add-dir", work]));
+    expect(args).not.toContain(missing);
+    expect(args).not.toContain(file);
+  });
+
+  it("reads the folders again for each new process, so a settings.json change reaches the next worker", async () => {
+    const one = mkdtempSync(join(tmpdir(), "botling-work-dir-")), two = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
+    let now = [one];
+    const h = harness(undefined, { extraDirs: () => now });
+    await h.workers.tool("app_handoff", { name: "A", instructions: "go" });
+    now = [two];
+    await h.workers.tool("app_handoff", { name: "B", instructions: "go" });
+    expect(h.heads.map((head) => head.config.addDirs)).toEqual([[one], [two]]);
+  });
+
+  it("gives a worker on another machine none (the folder is a path on this one)", async () => {
+    const work = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
+    const configs: HeadConfig[] = [];
+    const remote: RemoteWorkerHost = {
+      resolve: (name) => ({ id: "m1", name }),
+      head: (_machine, _worker, _cwd, config) => { configs.push(config); return { pid: -1, running: false, start() {}, send() {}, answer() {}, finish() {}, terminate: async () => ({ killed: [], forced: false }) }; },
+    };
+    const h = harness(undefined, { extraDirs: () => [work], remote: () => remote });
+    await h.workers.tool("app_handoff", { name: "Far", instructions: "go", machine: "box" });
+    expect(configs).toHaveLength(1);
+    expect(configs[0]!.addDirs).toBeUndefined();
+    await h.workers.tool("app_handoff", { name: "Near", instructions: "go" });
+    expect(h.heads[0]!.config.addDirs).toEqual([work]);
+  });
+
+  it("adds nothing when no folder is set, and the head's folders stay as they were", async () => {
+    const h = harness();
+    await h.workers.tool("app_handoff", { name: "Plain", instructions: "go" });
+    expect(h.heads[0]!.config.addDirs).toBeUndefined();
+  });
+
+  it("reads settings.json's workerExtraDirs: absolute folders only, deduplicated, default none; launchSettings carries it", () => {
+    expect(workerExtraDirs({})).toEqual([]);
+    expect(workerExtraDirs({ workerExtraDirs: "/x" } as any)).toEqual([]);
+    expect(workerExtraDirs({ workerExtraDirs: ["/Volumes/My-SSD/botling-work/", "relative/dir", 3, "", "/Volumes/My-SSD/botling-work", "/a\nb"] } as any)).toEqual(["/Volumes/My-SSD/botling-work"]);
+    expect(workerExtraDirs({ workerExtraDirs: Array.from({ length: 25 }, (_, i) => `/d${i}`) } as any)).toHaveLength(20);
+    expect(launchSettings({ workerExtraDirs: ["/w"] } as any).workerExtraDirs).toEqual(["/w"]);
+    expect(launchSettings({}).workerExtraDirs).toEqual([]);
   });
 });

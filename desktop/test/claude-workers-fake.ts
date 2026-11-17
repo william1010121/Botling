@@ -3,12 +3,12 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeWorkers, type ClaudeWorkerHead } from "../src/core/agent/claude-workers";
+import { ClaudeWorkers, type ClaudeWorkerHead, type RemoteWorkerHost } from "../src/core/agent/claude-workers";
 import type { HeadConfig, HeadHandlers } from "../src/core/agent/head";
 
 export interface FakeHead extends ClaudeWorkerHead { config: HeadConfig; handlers: HeadHandlers; sent: { text: string; uuid: string }[]; answers: unknown[]; finished: boolean; terminated: boolean; running: boolean; exit(code?: number | null, expected?: boolean): void }
 
-export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-workers-")), options: { settleMs?: number; keepAliveMs?: number; base?: HeadConfig | null; maxRunning?: number | (() => number); subagentEffort?: string | null; subagentModel?: () => string | null; siteToolsFolder?: () => string | null } = {}) {
+export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-workers-")), options: { settleMs?: number; keepAliveMs?: number; base?: HeadConfig | null; maxRunning?: number | (() => number); subagentEffort?: string | null; subagentModel?: () => string | null; siteToolsFolder?: () => string | null; extraDirs?: () => string[]; remote?: () => RemoteWorkerHost | null } = {}) {
   const items: any[] = [], reports: { id: string; text: string; run: number }[] = [], heads: FakeHead[] = [];
   let accept = true;
   const cwd = join(dir, "project");
@@ -18,6 +18,8 @@ export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-w
     file: join(dir, "claude-workers.json"), ownerSessionId: () => "coordinator", base: () => options.base === undefined ? base : options.base, cwd: () => cwd,
     subagentModel: options.subagentModel ?? (() => "sonnet"), subagentEffort: () => options.subagentEffort ?? null, settleMs: options.settleMs ?? 5, ...(options.maxRunning ? { maxRunning: typeof options.maxRunning === "function" ? options.maxRunning : () => options.maxRunning as number } : {}), keepAliveMs: options.keepAliveMs ?? 60_000, home: join(dir, "home"),
     ...(options.siteToolsFolder ? { siteToolsFolder: options.siteToolsFolder } : {}),
+    ...(options.extraDirs ? { extraDirs: options.extraDirs } : {}),
+    ...(options.remote ? { remote: options.remote } : {}),
   }, (item) => items.push(item), (id, text, run) => { if (!accept) return false; reports.push({ id, text, run }); return true; }, (config, handlers) => {
     const head: FakeHead = {
       config, handlers, sent: [], answers: [], finished: false, terminated: false, running: false, pid: -1,

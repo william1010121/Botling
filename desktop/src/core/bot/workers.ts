@@ -277,6 +277,7 @@ export class BotWorkers {
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
+      extraDirs: () => this.options.launch?.().workerExtraDirs ?? [],
       siteToolsFolder: () => this.options.siteToolsFolder,
       browser: (name, args, caller) => this.botTool(name, args, caller),
       remote: () => this.options.remoteWorkers?.() ?? null,
