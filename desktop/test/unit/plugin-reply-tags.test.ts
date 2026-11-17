@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { tempDir, until } from "../helpers";
 import { readManifest, type FolderView } from "../../src/core/plugins/manifest";
 import { ofKind } from "../../src/core/plugins/contributions";
-import { parseReply, pluginTagNames, saysNothing, setPluginTags } from "../../src/core/reply";
+import { parseReply, pluginTagNames, saysNoReply, saysNothing, setPluginTags } from "../../src/core/reply";
 import { streamingText } from "../../src/core/bot";
 import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, WHITEBOARD_PICTURE_LINE, withPluginSections } from "../../src/core/prompts";
 import { Plugins, type PluginWorld } from "../../src/core/plugins";
@@ -109,12 +109,35 @@ describe("a plugin's tag in a reply", () => {
     expect(parseReply('<pin-say id="p-0001">好</pin-say>', ["pin-say"]).body).toBe("好");
     expect(parseReply('<pin-say id="p-0001"/>', ["pin-say"])).toMatchObject({ body: "", pluginTags: [{ tag: "pin-say", body: "" }] });
     expect(parseReply('`<pin-say id="p-0001">x</pin-say>`', ["pin-say"]).pluginTags).toBeUndefined();
-    // a tag the answer carries inside is still read by the core
-    expect(parseReply('<pin-say id="p-0001">選一個\n<choices>\n- A\n- B\n</choices></pin-say>', ["pin-say"])).toMatchObject({ body: "選一個", choices: [{ label: "A" }, { label: "B" }] });
+    // a tag the answer carries inside is still read by the core; code inside the words stays an example (nothing in it is taken out), and the plugin's copy has no raw tag text either
+    expect(parseReply('<pin-say id="p-0001">選一個\n<choices>\n- A\n- B\n</choices> `<no-reply/>`</pin-say>', ["pin-say"])).toMatchObject({ body: "選一個\n `<no-reply/>`", choices: [{ label: "A" }, { label: "B" }], pluginTags: [{ body: "選一個\n `<no-reply/>`" }] });
+    const fenced = '看:\n```\n<no-reply/>\n<choices>\n- A\n</choices>\n```\n好';
+    expect(parseReply(`<pin-say id="p-0001">${fenced}</pin-say>`, ["pin-say"])).toMatchObject({ body: fenced, choices: null, pluginTags: [{ body: fenced }] });
+    expect(parseReply('<pin-say id="p-0001">好<no-reply/></pin-say>', ["pin-say"])).toMatchObject({ body: "好", pluginTags: [{ body: "好" }] });
     // while it streams: held back until it is closed, then its words show
     setPluginTags(["pin-say"]);
     expect(streamingText('Go <pin-say id="p-0001">half an ans')).toBe("Go");
     expect(streamingText('Go <pin-say id="p-0001">whole</pin-say>')).toBe("Go whole");
+  });
+
+  it("<pin-say> keeps a code span or fence at either end of its words (the match runs on the mask: the words are cut from the text), in the chat and in the plugin's copy", () => {
+    for (const words of ["執行 `npm test`", "`a` 然後", "看:\n```sh\nls\n```", "`a`", "```\ncode only\n```"]) {
+      const parsed = parseReply(`<pin-say id="p-0001">${words}</pin-say>`, ["pin-say"]);
+      expect(parsed.body, words).toBe(words);
+      expect(parsed.pluginTags, words).toEqual([{ tag: "pin-say", attributes: { id: "p-0001" }, body: words }]);
+    }
+    expect(parseReply('前 <pin-say id="p-0001">`a`</pin-say> 後', ["pin-say"]).body).toBe("前 `a` 後");
+  });
+
+  it("<pin-say>: a tag of the plugin inside its words is neither dispatched nor shown as raw text; a <no-reply/> in it does not make a background turn say nothing", () => {
+    const parsed = parseReply('<pin-say id="p-0001">好 <pin-card id="x" state="run">s</pin-card></pin-say>', ["pin-say", "pin-card"]);
+    expect(parsed.body).toBe("好");
+    expect(parsed.pluginTags).toEqual([{ tag: "pin-say", attributes: { id: "p-0001" }, body: "好" }]);
+    setPluginTags(["pin-say"]);
+    expect(saysNoReply('<pin-say id="p-0001">好<no-reply/></pin-say>')).toBe(false);
+    expect(saysNoReply("<no-reply/>")).toBe(true);
+    expect(saysNoReply('<pin-say id="p-0001">好</pin-say><no-reply/>')).toBe(true);
+    expect(saysNoReply('`<no-reply/>`')).toBe(false);
   });
 
   it("is held back while it streams, like the core's tags", () => {

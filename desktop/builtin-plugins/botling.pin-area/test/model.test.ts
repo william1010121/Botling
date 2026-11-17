@@ -679,7 +679,7 @@ describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)
     expect(odd.thread).toEqual([]);
   });
 
-  it("a worker's report is a COPY: the user may take it out of the card (dropCopy), and nothing about the chat changes; the same report heard again is not added behind the user's back", () => {
+  it("a worker's report is a COPY: the user may take it out of the card (dropCopy), and nothing about the chat changes; the same report delivered again is not put back", () => {
     const b = book();
     const pin = make(b);
     M.linkFrom(pin, ["t-1"], M.MAX_LINKED);
@@ -689,6 +689,16 @@ describe("a worker bound to a card by its job name (cardForGroup, addWorkerTurn)
     expect(M.dropCopy(b, turn.rid, T0 + 1)).toBe(true);
     expect(pin.thread).toEqual([]);
     expect(b.fixes).toBeUndefined(); // a worker's report teaches the sorter nothing
+    // the same report delivered again is not put back; another report of the same worker, and the same words of another worker, are
+    expect(M.addWorkerTurn(pin, "t-1", "final", "報告", T0 + 2)).toBeNull();
+    expect(M.addWorkerTurn(pin, "t-1", "final", "第二份報告", T0 + 3)).not.toBeNull();
+    expect(M.addWorkerTurn(pin, "t-2", "final", "報告", T0 + 4)).not.toBeNull();
+    // and it is remembered after a restart, up to 20
+    const read = M.readBook(JSON.parse(JSON.stringify(b))).pins[0]!;
+    expect(read.gone).toHaveLength(1);
+    expect(M.addWorkerTurn(read, "t-1", "final", "報告", T0 + 5)).toBeNull();
+    for (let n = 0; n < 25; n++) { const copy = M.addWorkerTurn(pin, "t-1", "note", `n${n}`, T0 + 10 + n)!; M.dropCopy(b, copy.rid, T0 + 10 + n); }
+    expect(pin.gone).toHaveLength(20);
   });
 
   it("a note: a question makes a running card wait, a report only logs; the same note twice changes nothing", () => {

@@ -52,6 +52,8 @@ export interface Pin {
   seenAt?: number;
   /** When it became done (the hour after which it takes itself down); older books have none: its last change then. */
   doneAt?: number;
+  /** Worker copies the user took out of this card (`worker|kind|hash`, the newest 20): the same report delivered again is not put back. */
+  gone?: string[];
   /** Workers the app bound to it that have not ended yet (`bind`); with none and one end seen (`endedAt`), the card waits on nobody. */
   live?: string[];
   endedAt?: number;
@@ -183,13 +185,14 @@ export function readPin(raw: unknown): Pin | null {
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
   const at = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined);
   const live = (Array.isArray(p.live) ? p.live : []).filter(isFrom).slice(0, MAX_LINKED);
+  const gone = (Array.isArray(p.gone) ? p.gone : []).filter((key): key is string => typeof key === "string" && key.length > 0 && key.length <= 200).slice(-MAX_GONE);
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
     source, ...(step ? { step } : {}), ...(state === "wait" ? { waitingSince: num(p.waitingSince) } : {}),
     thread: (Array.isArray(p.thread) ? p.thread.slice(-MAX_TURNS) : []).map(readTurn).filter((x): x is Turn => !!x),
     updates: (Array.isArray(p.updates) ? p.updates.slice(-MAX_UPDATES) : []).map(readUpdate).filter((x): x is Update => !!x),
     ...(typeof p.msgRef === "string" && p.msgRef ? { msgRef: p.msgRef.slice(0, 200) } : {}), createdAt: num(p.createdAt), updatedAt: num(p.updatedAt), ...seenSeen,
-    ...(from.length ? { from } : {}),
+    ...(from.length ? { from } : {}), ...(gone.length ? { gone } : {}),
     ...(state === "done" && at(p.doneAt) ? { doneAt: at(p.doneAt)! } : {}), ...(live.length ? { live } : {}), ...(at(p.endedAt) ? { endedAt: at(p.endedAt)! } : {}),
     ...(state !== "done" && at(p.stale) ? { stale: at(p.stale)! } : {}), ...(state === "run" && p.nudge === true ? { nudge: true as const } : {}),
   };
@@ -508,10 +511,19 @@ export const cardOfWorker = (book: Book, workerId: string): Pin | null => book.p
  * What a worker said goes into the card's thread as a turn of its own (`via: "worker"`, no words of the user's), full length up to
  * MAX_REPORT. The same words of the same worker twice are one. Null: nothing was added.
  */
+const MAX_GONE = 20;
+/** What names one worker copy: who said it, what kind, and a hash of its words. */
+const copyKey = (workerId: string, kind: WorkerKind, words: string): string => {
+  let hash = 5381;
+  for (let at = 0; at < words.length; at++) hash = ((hash * 33) ^ words.charCodeAt(at)) >>> 0;
+  return `${workerId}|${kind}|${words.length}-${hash.toString(36)}`;
+};
 export function addWorkerTurn(pin: Pin, workerId: string, kind: WorkerKind, text: string, now: number): Turn | null {
   const words = clean(text, MAX_REPORT * 2).trim().slice(0, MAX_REPORT);
   if (!words || !isFrom(workerId)) return null;
   if (pin.thread.some((turn) => turn.via === "worker" && turn.worker === workerId && turn.wkind === kind && turn.a === words)) return null;
+  // a copy the user took out of the card is not put back when the same report is delivered again
+  if (pin.gone?.includes(copyKey(workerId, kind, words))) return null;
   const turn = addTurn(pin, `w${now.toString(36)}-${pin.thread.length}-${workerId.slice(0, 12).replace(/[^A-Za-z0-9_-]/g, "_")}`, "", now, "worker");
   turn.a = words;
   turn.aAt = now;
@@ -634,7 +646,7 @@ export const openTurn = (pin: Pin): Turn | undefined =>
 
 /**
  * A `<pin-say id>` from the bot: the open turn of that card gets the answer. With no open turn (a second answer, or one the bot
- * offers by itself) it is a turn of its own, never dropped: the core has already taken it out of the chat. False: no such card.
+ * offers by itself) it is a turn of its own, never dropped (the chat shows the same words as a reply). False: no such card.
  */
 export function answerTurn(book: Book, id: string, body: string, now: number): boolean {
   if (!isId(id)) return false;
@@ -769,6 +781,7 @@ export function dropCopy(book: Book, rid: string, now: number): boolean {
     const turn = pin.thread[at]!;
     if (turn.via === "at") return false;
     pin.thread.splice(at, 1);
+    if (turn.via === "worker" && turn.worker && turn.wkind && turn.a) pin.gone = [...(pin.gone ?? []), copyKey(turn.worker, turn.wkind, turn.a)].slice(-MAX_GONE);
     if (turn.via === "auto") addFix(book, turn.q, pin.id, now);
     return true;
   }
