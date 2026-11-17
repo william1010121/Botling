@@ -15,7 +15,8 @@
 //                      Started: the engine stops it after the commit; its `turn.finished{stopped}` ends the row.
 //   chat.choose / chat.answer / chat.ignoreQuestion / component.approve {messageId = cardId}: the card basis check
 //                      (open, and rev ≤ basis) passed; the core applies the answer now. A turn the answer starts is
-//                      kept aside (`deferTurn`) and becomes `turn.queued` + a queued row in this transaction.
+//                      kept aside (`deferTurn`) and becomes `turn.queued` + a queued row in this transaction. A component card's
+//                      "Allow and run" (component.approve) names a plain line with no `cards` row: that line existing is enough.
 //   chat.react / settings.set / bots.create: the core applies them now (bots.create's new bot gets its stream from
 //                      its first event).
 //   callin.ask / callin.cancel   (M5-02b, server/callin) a call-in from another server: one `callin` effect row (the
@@ -74,6 +75,8 @@ export const effectBasisReader: BasisReader = {
     return !!row && (row.state === "queued" || row.state === "started");
   },
   card: (tx, botId, cardId) => dbBasisReader.card(tx, botId, cardId),
+  // The reader the server really runs with (runtime.ts): without this, component.approve on a component card is still refused.
+  line: (tx, botId, messageId) => dbBasisReader.line?.(tx, botId, messageId) === true,
 };
 
 function refuseFrom(error: unknown): never {

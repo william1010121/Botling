@@ -7,12 +7,14 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { ApprovalAskView, Command } from "../contract";
 import type { Client } from "./client";
 import { approvalWords } from "./approval-text";
+import { RequestFailed } from "./client";
 import { ShellOverlay } from "./ShellOverlay";
 
 /** How long Allow stays off after the sheet opens. */
 export const ARM_MS = 500;
 
-export function ApprovalSheet({ ask, lang, onAllow, onCancel, armMs = ARM_MS }: { ask: ApprovalAskView; lang: string | null | undefined; onAllow: () => void; onCancel: () => void; armMs?: number }) {
+/** `problem` is why the last Allow did nothing (shown on the sheet, which stays open); `sending` is an Allow still waiting for the core. */
+export function ApprovalSheet({ ask, lang, onAllow, onCancel, armMs = ARM_MS, problem = null, sending = false }: { ask: ApprovalAskView; lang: string | null | undefined; onAllow: () => void; onCancel: () => void; armMs?: number; problem?: string | null; sending?: boolean }) {
   const words = approvalWords(lang);
   const [armed, setArmed] = useState(armMs <= 0);
   useEffect(() => {
@@ -37,9 +39,10 @@ export function ApprovalSheet({ ask, lang, onAllow, onCancel, armMs = ARM_MS }: 
           <pre className="approval-command approval-detail">{ask.detail}</pre>
         </>}
         <p className="approval-note">{words.remembered}</p>
+        {problem !== null && <p className="approval-error" role="alert">{problem}</p>}
         <div className="dialog-buttons">
           <button type="button" className="dialog-cancel" onClick={onCancel} autoFocus>{words.cancel}</button>
-          <button type="button" className="dialog-primary approval-allow" disabled={!armed} onClick={onAllow}>{words.allow}</button>
+          <button type="button" className="dialog-primary approval-allow" disabled={!armed || sending} onClick={onAllow}>{words.allow}</button>
         </div>
       </div>
     </div></ShellOverlay>
@@ -49,25 +52,44 @@ export function ApprovalSheet({ ask, lang, onAllow, onCancel, armMs = ARM_MS }: 
 /**
  * One sheet at a time for a page: `ask` opens it for what the core answered, with the command its Allow sends. While
  * one is open, another ask is ignored (a frame cannot swap what you are reading for something else). `done` hears
- * how it ended: true once Allow was pressed and the core accepted it; false for Cancel, a failure or an ignored ask.
+ * how it ended: true once Allow was pressed and the core accepted it; false for Cancel or an ignored ask. An Allow the
+ * core refuses or fails keeps the sheet open with the reason on it (Cancel then ends it: `done(false)`), never silence.
  */
 export function useApprovalSheet(client: Client, lang: string | null | undefined, onError: (failure: unknown) => void, armMs = ARM_MS): { ask: (view: ApprovalAskView, approve: Command, done?: (allowed: boolean) => void) => void; sheet: ReactNode } {
   type Open = { view: ApprovalAskView; approve: Command; done?: (allowed: boolean) => void };
   const [open, setOpen] = useState<Open | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const current = useRef(open);
+  const inFlight = useRef(false);
+  const words = approvalWords(lang);
   const ask = useCallback((view: ApprovalAskView, approve: Command, done?: (allowed: boolean) => void) => {
     if (current.current) { done?.(false); return; }
     current.current = { view, approve, ...(done ? { done } : {}) };
+    inFlight.current = false;
+    setProblem(null);
+    setSending(false);
     setOpen(current.current);
   }, []);
-  const close = useCallback(() => { current.current = null; setOpen(null); }, []);
+  const close = useCallback(() => { current.current = null; inFlight.current = false; setOpen(null); setProblem(null); setSending(false); }, []);
   const sheet = open && (
-    <ApprovalSheet ask={open.view} lang={lang} armMs={armMs} onCancel={() => { close(); open.done?.(false); }}
+    <ApprovalSheet ask={open.view} lang={lang} armMs={armMs} problem={problem} sending={sending} onCancel={() => { close(); open.done?.(false); }}
       onAllow={() => {
-        close();
+        if (inFlight.current) return;
+        inFlight.current = true;
+        setSending(true);
+        setProblem(null);
+        const stale = () => current.current !== open;
+        const stop = (why: string) => { if (stale()) return; inFlight.current = false; setSending(false); setProblem(why); };
         void client.request(open.approve).then(
-          (result) => open.done?.((result as { accepted?: unknown } | null)?.accepted === true),
-          (failure) => { open.done?.(false); onError(failure); },
+          (result) => {
+            if (stale()) return;
+            if ((result as { accepted?: unknown } | null)?.accepted === true) { close(); open.done?.(true); } else stop(words.refused);
+          },
+          (failure) => {
+            stop(words.failed(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)));
+            if (!(failure instanceof RequestFailed)) onError(failure);
+          },
         );
       }} />
   );
