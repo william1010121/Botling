@@ -75,6 +75,7 @@ describe("the sleep after a restart's recovery", () => {
     const first = r.peek.session.sessionId;
     // What `retainRestartIdentity` leaves behind after a core restart, for as long as the bot object lives.
     r.peek.restarts.recoveryStarted();
+    r.peek.headRun.lastModelAt = Date.now() - 60_000;
     await r.b.sleep({ tidyMs: 0 });
     expect(r.peek.session.started).toBe(false);
     expect(r.peek.briefing).toBe(true);
