@@ -4,6 +4,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
@@ -74,7 +75,10 @@ describe("the guidance in the prompt", () => {
       expect(text).toContain("yours to use, no request needed");
       expect(text).toContain("A block is not a sentence");
       expect(text).toContain("a report page is the exception");
-      expect(text).toContain("you need no usage lookup");
+      // The no-lookup sentence covers only the shown examples; any other kind or type is looked up first (2026-11-18: a bot guessed a waterfall as `items`).
+      expect(text).toContain("the examples below need no usage lookup");
+      expect(text).toContain("for any other kind or type call app_component_usage first");
+      expect(text).not.toContain("so you need no usage lookup");
       // The main bot's results rule is its own line (it hands work over), without the list.
       if (role !== "main") {
         // Inline is the default and comes first; a page is for screenshots, previews, really long content or a page the user asks for.
@@ -103,30 +107,57 @@ describe("the guidance in the prompt", () => {
   it("Antigravity draws no components: even asked for, it gets neither the guidance nor the shorter list", () => {
     expect(withIt("agy")).toBe(without("agy"));
   });
-  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 700 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55)", () => {
+  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 800 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55; one example per chart kind, +~160)", () => {
     const a = botPrompts({ profile: profile("bot"), inlineBlocks: true }).system;
     const b = botPrompts({ profile: { ...profile("bot"), name: "Other", folder: "/somewhere/else" }, inlineBlocks: true }).system;
     expect(a).toContain(INLINE_BLOCK_GUIDANCE);
     expect(b).toContain(INLINE_BLOCK_GUIDANCE);
-    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(2700);
+    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3400);
   });
-  it("carries six examples (five report blocks and one inline-chart), each a one-line block its drawer accepts", () => {
-    const all = INLINE_BLOCK_GUIDANCE.split("\n").slice(1).map((line) => JSON.parse(/: (\{.*\})$/.exec(line)![1]!));
+  /** The example lines of the guidance: `label: {json}`, one block each. */
+  const examples = () => INLINE_BLOCK_GUIDANCE.split("\n").slice(1).map((line) => ({ line, json: JSON.parse(/: (\{.*\})$/.exec(line)![1]!) }));
+  /** Draws a chart with inline-chart's own template (the real validator and drawer) in jsdom: what the chat would show. */
+  function drawChart(chart: unknown) {
+    const html = readFileSync(join(cardsFolder, "inline-chart", "template.html"), "utf8");
+    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, {
+      runScripts: "dangerously",
+      beforeParse(window) { (window as unknown as { ccb: unknown }).ccb = { data: JSON.stringify(chart), setStatus() {}, onData() {} }; },
+    });
+    const root = dom.window.document.getElementById("root")!;
+    const result = { error: root.querySelector(".err")?.textContent ?? null, drawn: root.querySelector(".ch") !== null };
+    dom.window.close();
+    return result;
+  }
+
+  it("carries one example per kind it names: five report blocks and four inline-chart kinds (bars, waterfall, dumbbell, line), each a one-line block its drawer accepts", () => {
+    const all = examples().map((entry) => entry.json);
     // A report block has a `type`, an inline-chart a `kind`.
-    expect(all.map((block) => block.type ?? block.kind)).toEqual(["kpi", "progress", "options", "steps", "bars", "flowchart"]);
+    expect(all.map((block) => block.type ?? block.kind)).toEqual(["kpi", "progress", "options", "steps", "bars", "waterfall", "dumbbell", "line", "flowchart"]);
     for (const block of all) expect(typeof block.title).toBe("string");
     const blocks = all.filter((block) => block.type !== undefined);
     const charts = all.filter((block) => block.kind !== undefined);
     expect(blocks).toHaveLength(5);
-    expect(charts).toHaveLength(1);
-    // The chart follows inline-chart's about.md: a known kind, plain numbers >= 0, a `base` that is one of the items.
+    expect(charts).toHaveLength(4);
+    // The guidance names exactly the kinds it gives an example for (a kind named without one is guessed: waterfall `items` instead of `steps`, 2026-11-18).
+    const named = /\(kind ([a-z, ]+?) or ([a-z]+)\)/.exec(INLINE_BLOCK_GUIDANCE)!;
+    expect([...named[1]!.split(", "), named[2]!].sort()).toEqual(charts.map((chart) => chart.kind).sort());
+    // Each chart follows inline-chart's about.md (a known kind) and is drawn by its real template without the error card.
     const about = readFileSync(join(cardsFolder, "inline-chart", "about.md"), "utf8");
     for (const chart of charts) {
       expect(about).toContain(`\`${chart.kind}\``);
-      expect(chart.items.length).toBeGreaterThan(1);
-      for (const item of chart.items) { expect(typeof item.label).toBe("string"); expect(typeof item.value).toBe("number"); expect(item.value).toBeGreaterThanOrEqual(0); }
-      expect(chart.items.map((item: { label: string }) => item.label)).toContain(chart.base);
+      const drawn = drawChart(chart);
+      expect(drawn.error, `${chart.kind}: ${drawn.error}`).toBeNull();
+      expect(drawn.drawn, chart.kind).toBe(true);
     }
+    // The field each kind needs (the one a bot got wrong): bars `items`, waterfall `steps`, dumbbell `rows`, line `x` + `series`.
+    const byKind = (kind: string) => charts.find((chart) => chart.kind === kind)!;
+    expect(Array.isArray(byKind("bars").items)).toBe(true);
+    expect(Array.isArray(byKind("waterfall").steps)).toBe(true);
+    expect(Array.isArray(byKind("dumbbell").rows)).toBe(true);
+    expect(Array.isArray(byKind("line").x) && Array.isArray(byKind("line").series)).toBe(true);
+    // The base of the bars example is one of its items.
+    expect(byKind("bars").items.map((item: { label: string }) => item.label)).toContain(byKind("bars").base);
+    // The five report blocks pass the report command's own check.
     const dir = tempDir("inline-examples");
     const file = join(dir, "spec.json");
     writeFileSync(file, JSON.stringify({ version: 2, lang: "zh-Hant", kind: "explainer", title: "範例檢查", asOf: "2026-11-17", tldr: "範例區塊檢查。", sections: [{ title: "範例", takeaway: "五個範例都能畫", blocks }], asks: [] }));
@@ -134,6 +165,12 @@ describe("the guidance in the prompt", () => {
     const code = runCli(["--check", file], { stdout: (text) => { out += text; }, stderr: (text) => { out += text; } });
     expect(JSON.parse(out.trim().split("\n").at(-1)!)).toMatchObject({ ok: true, errors: [] });
     expect(code).toBe(0);
+  });
+  it("the drawer check has teeth: a waterfall written with `items` (what a bot guessed) draws the error card", () => {
+    const wrong = drawChart({ kind: "waterfall", title: "x", items: [{ label: "a", value: 1 }] });
+    expect(wrong.error).toContain("必須是陣列");
+    expect(wrong.error).toContain("steps");
+    expect(wrong.drawn).toBe(false);
   });
   it("chart rule: decide what the figure must show first, inline-chart only if it shows that clearly, else a matplotlib PNG shown inline; never a page for a chart", () => {
     expect(INLINE_BLOCK_GUIDANCE).toContain('<show name="inline-chart">{chart}</show>');
