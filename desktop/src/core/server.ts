@@ -67,7 +67,7 @@ import { CoreEvents } from "./server/events";
 
 // AppOp, AppAnswer, PEER_ID, PEER_MESSAGE_BYTES, oneLine, CoreOptions, ApplyNowCommand and BotMaking live in ./server/options (M7-S70b) and are re-exported here.
 import type { CoreOptions } from "./server/options";
-import { PhaseMarks, Slowest } from "./phase-marks";
+import { PhaseMarks, PhaseTally, Slowest } from "./phase-marks";
 export { PEER_ID, PEER_MESSAGE_BYTES, oneLine } from "./server/options";
 export type { AppOp, AppAnswer, ApplyNowCommand, BotMaking, CoreOptions } from "./server/options";
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
@@ -81,6 +81,8 @@ export class Core {
   readonly epoch = randomUUID().slice(0, 18);
   activated = false;
   readonly ledger: ProcessLedger;
+  /** Startup timing only: set while the constructor makes the bots (read by `CoreBots.build`). */
+  buildTally?: PhaseTally;
   /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
   readonly usage: UsageBook;
   get imported() { return this.coreProjects.imported; }
@@ -263,9 +265,13 @@ export class Core {
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.markPluginsShown(JSON.stringify(this.plugins.view()));
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
+    // Startup timing: the steps inside "usage book, projects, maintainer profile" that take 100 ms or more.
+    const fine = new PhaseMarks(options.phaseLog, "core construct", undefined, 100);
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
+    fine.lap("usage book");
     const loaded = loadProfiles(options.dataDir, { mainBotId: this.mainBotId, maintainerId: this.maintainerId });
+    fine.lap("load project profiles");
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
     try {
       const removed = readJSON(join(options.dataDir, "removed-bots.json"));
@@ -273,6 +279,7 @@ export class Core {
     } catch { /* none */ }
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null)
       + "\n" + maintainerVisualToolRules(siteToolsFolder(options.dataDir, options.app?.dataDir)), this.maintainerId);
+    fine.lap("maintainer profile");
     const baseProfiles = this.runMainBot
       ? loaded.profiles
       : loaded.profiles.flatMap((profile) => {
@@ -287,6 +294,7 @@ export class Core {
           return hasHistory ? [{ ...profile, role: "bot" as const, name: "Main (old)" }] : [];
         });
     const profiles = [...baseProfiles, appMaintainer];
+    fine.lap("old main bot chat check");
     marks.lap("usage book, projects, maintainer profile");
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig, this.maintainerId);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
@@ -305,14 +313,19 @@ export class Core {
       return bot;
     };
     const slowestBots = new Slowest(5);
+    // Startup timing: where each Bot's construction went (bot.ts), summed over the bots, with the slowest of each step.
+    const buildTally = options.phaseLog ? new PhaseTally() : undefined;
+    this.buildTally = buildTally;
     for (const profile of profiles) {
       const began = performance.now();
       this.newBot(profile);
       this.order.push(profile.id);
       slowestBots.add(profile.name, performance.now() - began);
     }
+    this.buildTally = undefined;
     marks.lap(`${profiles.length} bots`);
     options.phaseLog?.(`timing: core construct: bots ${slowestBots.line(profiles.length)}`);
+    buildTally?.report(options.phaseLog, "bot build");
     this.conversations = new Conversations({
       dataDir: options.dataDir,
       // Everyone who can answer outside their own chat, in turn order (`everyMember`).

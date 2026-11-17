@@ -10,6 +10,8 @@ export class PhaseMarks {
     private readonly out: ((line: string) => void) | undefined,
     private readonly label: string,
     private readonly now: () => number = () => performance.now(),
+    /** Laps shorter than this are counted but not written (0: every lap is written). */
+    private readonly minMs = 0,
   ) {
     this.began = this.last = this.now();
   }
@@ -18,7 +20,7 @@ export class PhaseMarks {
     const t = this.now();
     const ms = Math.round(t - this.last);
     this.last = t;
-    this.out?.(`timing: ${this.label}: ${what} ${ms} ms`);
+    if (ms >= this.minMs) this.out?.(`timing: ${this.label}: ${what} ${ms} ms`);
     return ms;
   }
 
@@ -46,5 +48,32 @@ export class Slowest {
   line(total: number): string {
     const shown = this.items.map((item) => `${JSON.stringify(item.name.slice(0, 40))} ${Math.round(item.ms)} ms`).join(", ");
     return `${this.items.length} slowest of ${total}: ${shown || "none"}`;
+  }
+}
+
+/** Phases that repeat once per item (per bot, per plugin): the total of each phase, and its 5 slowest items, as two lines. */
+export class PhaseTally {
+  private readonly phases = new Map<string, { total: number; items: Slowest; count: number }>();
+
+  /** `item` took `ms` in `phase`. */
+  add(phase: string, item: string, ms: number): void {
+    let entry = this.phases.get(phase);
+    if (!entry) this.phases.set(phase, entry = { total: 0, items: new Slowest(5), count: 0 });
+    entry.total += ms;
+    entry.count += 1;
+    entry.items.add(item, ms);
+  }
+
+  /**
+   * One total line and one slowest line for each phase whose total reached `minMs` (ordered as they were first added):
+   * `timing: <label>: <phase> (N items) T ms` and `timing: <label>: bots 5 slowest of N: …` (the card reader's shape).
+   */
+  report(out: ((line: string) => void) | undefined, label: string, minMs = 100): void {
+    if (!out) return;
+    for (const [phase, entry] of this.phases) {
+      if (entry.total < minMs) continue;
+      out(`timing: ${label}: ${phase} (${entry.count}x) ${Math.round(entry.total)} ms`);
+      out(`timing: ${label} ${phase}: bots ${entry.items.line(entry.count)}`);
+    }
   }
 }

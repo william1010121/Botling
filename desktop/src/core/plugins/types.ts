@@ -215,6 +215,8 @@ export interface PluginWorld {
 
 export interface PluginsOptions {
   dataDir: string;
+  /** Startup timing lines (`timing: …`, core/phase-marks.ts); unset: none are written. */
+  phaseLog?: (line: string) => void;
   world: PluginWorld;
   /** How to run Node for the plugin host (null: program parts cannot run). */
   node: HostCommand | null;

@@ -237,7 +237,11 @@ export class Botlingd {
       // `timing:` lines of startCore, startRuntime and startPush and of the core itself say where a long one went.
       const clock = new PhaseClock(log, START_PHASE_LOG_MS);
       const began = Date.now();
-      store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir, { compaction: options.compaction === false ? false : { log, ...options.compaction } }));
+      store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir, {
+        compaction: options.compaction === false ? false : { log, ...options.compaction },
+        // Startup timing: a write batch (BEGIN to the end of COMMIT, one fsync) that took 100 ms or more.
+        onBatch: (info) => { if (info.ms >= 100) log(`timing: server.db: batch of ${info.size} command(s) ${Math.round(info.ms)} ms`); },
+      }));
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
       Object.assign(s, await clock.time("start", "identity", () => openIdentity(s)));
       Object.assign(s, await clock.time("start", "core", () => startCore(s)));

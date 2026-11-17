@@ -18,6 +18,7 @@
 // emitted them in, whichever path they take. Each event is written in its own savepoint: one the log refuses (it does
 // not validate) is logged and skipped, never failing the command it rode in.
 import { randomUUID } from "node:crypto";
+import { Slowest } from "../../core/phase-marks";
 import type { Event as ContractEvent } from "../../contract";
 import { canonicalJson, type Entry } from "../../protocol";
 import type { ContractLiveFeed } from "../live";
@@ -151,10 +152,38 @@ export class EventTap {
         setImmediate(() => { this.options.scope.submit(() => undefined).catch(() => { this.scheduled = false; }); });
       }
     });
-    for (const event of taken) this.store(tx, event);
+    // Startup timing: what storing the waiting events cost, written only when it took 100 ms or more.
+    const began = performance.now();
+    const byType = new Map<string, { n: number; ms: number }>();
+    const slowest = new Slowest(5);
+    let writeMs = 0, hookMs = 0;
+    for (const event of taken) {
+      const at = performance.now();
+      this.store(tx, event);
+      const ms = performance.now() - at;
+      writeMs += this.stored.write;
+      hookMs += this.stored.hook;
+      const entry = byType.get(event.type) ?? { n: 0, ms: 0 };
+      entry.n += 1; entry.ms += ms;
+      byType.set(event.type, entry);
+      slowest.add(`${event.type} ${botOfEvent(event) ?? "server"}`, ms);
+    }
+    const total = performance.now() - began;
+    if (total >= 100 && this.options.log) {
+      const types = [...byType].sort((a, b) => b[1].ms - a[1].ms).slice(0, 5).map(([type, entry]) => `${type} ${entry.n}x ${Math.round(entry.ms)}`).join(", ");
+      this.options.log(`timing: event tap flush: ${taken.length} events, entries ${Math.round(writeMs)} ms, summary and push hooks ${Math.round(hookMs)} ms, all ${Math.round(total)} ms`);
+      this.options.log(`timing: event tap flush by type (events x ms): ${types} ms`);
+      this.options.log(`timing: event tap flush: bots ${slowest.line(taken.length)}`);
+    }
   }
 
+  /** Startup timing: the last `store` call's time in the entry write and in the `eventStored` hook. */
+  private readonly stored = { write: 0, hook: 0 };
+
   private store(tx: Db, event: ContractEvent): void {
+    this.stored.write = 0;
+    this.stored.hook = 0;
+    const began = performance.now();
     tx.exec("SAVEPOINT tap_event");
     try {
       this.write(tx, event);
@@ -167,11 +196,14 @@ export class EventTap {
       return;
     }
     const stored = this.options.hooks?.eventStored;
+    this.stored.write = performance.now() - began;
     if (!stored) return;
+    const hookBegan = performance.now();
     tx.exec("SAVEPOINT tap_stored");
     try {
       stored(tx, event);
       tx.exec("RELEASE tap_stored");
+      this.stored.hook = performance.now() - hookBegan;
     } catch (error) {
       if (!tx.inTransaction) throw error;
       tx.exec("ROLLBACK TO tap_stored");

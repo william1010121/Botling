@@ -291,10 +291,21 @@ export class Bot {
   get headEvents(): HeadEvents { return this.botHeadEvents ??= new HeadEvents(this, this.ctx); }
 
   constructor(/** Read by BotContext (M7-S41). */ public options: BotOptions) {
+    // Startup timing: each step's time goes into the core's tally (a partner's own steps are left out: they are inside `partner heads`).
+    const tally = options.primary ? undefined : options.buildTally;
+    const name = options.profile.name;
+    let lapAt = tally ? performance.now() : 0;
+    const lap = (phase: string, detail = "") => {
+      if (!tally) return;
+      const now = performance.now();
+      tally.add(phase, `${name}${detail}`, now - lapAt);
+      lapAt = performance.now();
+    };
     const primary = options.primary;
     this.engine = options.engine ?? "claude";
     const storeDir = primary ? join(primary.profile.storeDir, `partner-${this.engine}`) : options.profile.storeDir;
     this.store = options.botStore ? options.botStore(storeDir) : new BotStore(storeDir);
+    lap("store open");
     // A new session at every start: the app starting is a wake (1.x).
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).store.loadAlwaysAllowed();
@@ -305,6 +316,7 @@ export class Bot {
     // Its app-managed workers' rows are the worker ledger's projection (`projectWorker`), never their end notices.
     this.subagents.workerProjection = true;
     this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
+    lap("settings, unread, subagent list");
     if (!primary) {
       this.recordsBook.specList = this.recordsBook.readList("specs.json", readStoredSpec);
       const list = this.store.loadSettings().components;
@@ -324,13 +336,20 @@ export class Bot {
       if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.headRun.sessionResumed(saved); }
     }
     this.conductor = new Conductor(this.headsSettings);
+    lap("specs, heads, conductor");
     this.recordsBook.load();
+    lap("chat lines load (SQL, parse)", ` (${this.recordsBook.records.length} lines)`);
     this.workers.restoreAtStart();
+    lap("workers restore");
     if (!options.deferStartup) this.activateStartup();
+    lap("activate startup (archive, routines)");
     if (!primary) {
       if (!this.readOnly) this.settings.saveHeads();
+      lap("save heads (2 writes)");
       for (const engine of this.headsSettings.engines) if (engine !== this.engine) this.makePartner(engine, true);
+      lap("partner heads");
       this.cards.giveFirstComponents();
+      lap("first components");
     }
   }
 

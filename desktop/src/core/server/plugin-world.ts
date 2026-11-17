@@ -64,6 +64,7 @@ export class CorePluginWorld {
     const self = this;
     return {
       dataDir: options.dataDir,
+      ...(options.phaseLog ? { phaseLog: options.phaseLog } : {}),
       node: host?.node ?? null,
       hostScript: host?.hostScript ?? "",
       builtIns: host?.builtIns ?? null,
