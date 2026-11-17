@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MessageView, QUESTION_OPTIONS_MAX, QUESTION_OPTION_INDEX, parseInbound } from "../../src/contract";
+import { MessageView, QuestionPickView, QUESTION_OPTIONS_MAX, QUESTION_OPTION_INDEX, parseInbound } from "../../src/contract";
 import { Core } from "../../src/core/server";
 import { saveProjectRow } from "../../src/core/projects";
 import { messageView } from "../../src/core/bot";
@@ -45,6 +45,16 @@ describe("question group answers", () => {
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [7, 11], notes: { "7": "n", "11": "m" } }] } }).ok).toBe(true);
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [12] }] } }).ok).toBe(false);
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: Array.from({ length: 13 }, (_, i) => i % 12) }] } }).ok).toBe(false);
+  });
+
+  it("a multiple-choice question can tick all twelve options: the command and the view both take twelve and refuse thirteen", () => {
+    const all = Array.from({ length: QUESTION_OPTIONS_MAX }, (_, i) => i);
+    const cmd = (options: number[]) => parseInbound({ v: 10, id: "a", cmd: { type: "chat.answer", botId: PROJECT, messageId: QUESTION, text: "", picks: [{ options }] } }).ok;
+    expect(cmd(all)).toBe(true);
+    expect(cmd([...all, 0])).toBe(false);
+    const view = (options: number[]) => QuestionPickView.safeParse({ options, other: null, skipped: false }).success;
+    expect(view(all)).toBe(true);
+    expect(view([...all, 0])).toBe(false);
   });
 
   it("the note-key pattern admits exactly the option indices 0 up to QUESTION_OPTIONS_MAX - 1", () => {
