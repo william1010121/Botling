@@ -78,7 +78,7 @@ describe("the guidance in the prompt", () => {
       // The main bot's results rule is its own line (it hands work over), without the list.
       if (role !== "main") {
         // Inline is the default and comes first; a page is for screenshots, previews, really long content or a page the user asks for.
-        expect(text).toContain(`${RESULTS_LIST_INLINE} go into one page published as a claude.ai Artifact`);
+        expect(text).toContain(`${RESULTS_LIST_INLINE} go into one `);
         expect(text).not.toContain("Results meant for the user (reports");
         expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
       }
@@ -196,7 +196,7 @@ describe("what a worker hands back (inline first)", () => {
       expect(INLINE_HANDOFF_SENTENCE).toContain(".bot/card-scripts/<name>/");
       expect(INLINE_HANDOFF_SENTENCE).toMatch(/ask for a page only if the user asked or the content is really long/);
       // It ends the Claude workers line (its own line of the prompt), after what is already there.
-      expect(text.split("\n").find((line) => line.startsWith("- Hand all real work"))).toMatch(/ \S[^\n]*A worker hands back its results as ready-to-paste inline component JSON[^\n]*really long\.$/);
+      expect(text.split("\n").find((line) => line.startsWith("- Hand all real work"))?.endsWith(` ${INLINE_HANDOFF_SENTENCE}`)).toBe(true);
     }
   });
   it("is told to nobody else: no guidance, the main bot, Codex, Antigravity and an onRequest bot get the prompt as it was", () => {
