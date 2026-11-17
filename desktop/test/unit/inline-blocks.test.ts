@@ -49,6 +49,10 @@ describe("settings.json inlineBlockGuidance: who gets the guidance", () => {
     expect(inlineBlocksFor(list, b)).toBe(false);
     expect(inlineBlocksFor({ inlineBlockGuidance: [link] }, a)).toBe(true);
     expect(inlineBlocksFor({ inlineBlockGuidance: [join(a, "not", "yet")] }, join(link, "not", "yet"))).toBe(true);
+    // The nearest existing ancestor can be "/" itself: the first letter of the missing part must survive (it was cut once).
+    expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/inline-blocks-missing-top/x")).toBe(true);
+    expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/nline-blocks-missing-top/x")).toBe(false);
+    expect(inlineBlocksFor({ inlineBlockGuidance: ["/inline-blocks-missing-top/x"] }, "/oline-blocks-missing-top/x")).toBe(false);
     // A list does not fall back to the default: the source project is in only when it is named.
     expect(inlineBlocksFor({ inlineBlockGuidance: [] }, a)).toBe(false);
   });

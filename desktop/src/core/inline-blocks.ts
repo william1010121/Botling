@@ -7,7 +7,7 @@
 //   "off"         no bot
 //   ["/path", …]  the bots whose project folder is one of these paths
 import { existsSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 /** Whether the bot in `folder` gets the inline block guidance (see the header). A malformed value is the default. */
 export function inlineBlocksFor(raw: Record<string, unknown> | undefined, folder: string | null | undefined): boolean {
@@ -30,7 +30,7 @@ function realFolder(path: string): string {
     try { return join(realpathSync.native(at), ...rest.reverse()); } catch { /* not there yet: its parent */ }
     const parent = resolve(at, "..");
     if (parent === at) break;
-    rest.push(at.slice(parent.length + 1));
+    rest.push(basename(at));
     at = parent;
   }
   return resolve(path);
