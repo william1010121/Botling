@@ -122,7 +122,6 @@ describe("buildSummary reads the newest few lines", () => {
       }
       // A running turn (its checkpoint on the bot's row) and a status that comes from the lines' kind.
       db.exec("UPDATE bots SET liveTurnId = 'T1', liveAt = 5 WHERE botId = 'B1'");
-      const live = { running: () => ({ turnId: "T1", turnText: "streaming text of the running turn" }) };
       expect(canonicalJson(buildSummary(db, "B1", view, { live }))).toBe(canonicalJson(legacyBuildSummary(db, "B1", view, { live })));
     });
   }

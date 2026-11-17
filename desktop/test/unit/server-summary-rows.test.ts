@@ -228,7 +228,7 @@ describe("summary rows: botlingd's start builds each row once (holdUntilReconcil
   const messagesReads = (db: Db) => {
     const reads = { n: 0 };
     const prepare = db.prepare.bind(db);
-    vi.spyOn(db, "prepare").mockImplementation(((sql: string) => { if (sql.includes("FROM messages WHERE botId")) reads.n += 1; return prepare(sql); }) as never);
+    vi.spyOn(db, "prepare").mockImplementation(((sql: string) => { if (sql.includes("FROM messages WHERE botId = ? ORDER BY seq DESC")) reads.n += 1; return prepare(sql); }) as never);
     return reads;
   };
 

@@ -291,7 +291,10 @@ describe("DbBotStore", () => {
   });
 
   describe("chat rows are parsed once", () => {
-    const chatKey = (db: Db, id: string) => String(db.prepare("SELECT key FROM rows WHERE stream = 'chat:bot' AND key LIKE ?").get(`%${id}`)?.key);
+    const chatKey = (db: ServerStore, id: string) => {
+      const reader = db.openReader();
+      try { return String(reader.prepare("SELECT key FROM rows WHERE stream = 'chat:bot' AND key = ?").get(id)?.key); } finally { reader.close(); }
+    };
 
     /** The lines persisted by one host, then a fresh host (its cache empty) that will read them. */
     async function persisted(count: number) {
