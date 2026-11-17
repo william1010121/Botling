@@ -112,12 +112,16 @@ export class ComposerSubmit {
     let text = this.text;
     const key = this.draftKey;
     // What each chip sends, as it was when sent: a chip changed meanwhile stays.
-    const chips = (this.chips.get(key ?? "") ?? []).map((entry) => ({ entry, text: entry.chip.serialize() }));
+    const here = this.chips.get(key ?? "") ?? [];
+    const chips = here.filter((entry) => !entry.chip.standing).map((entry) => ({ entry, text: entry.chip.serialize() }));
     if (text.trim() === "" && !this.hasFiles && !chips.length) return true;
     if (key && (this.sending.has(key) || this.submissionStates.get(key)?.uncertain)) { this.drawSubmissionStatus(); return true; }
     const original = text;
     const typed = this.answer ? answerPrefix(text, this.answer) : null;
     if (typed) text = typed.rest;
+    // a standing chip says where the words go (never for a slash command)
+    const lead = text.trim() === "" || text.trimStart().startsWith("/") ? "" : here.map((entry) => (entry.chip.standing ? entry.chip.prefix?.() ?? "" : "")).join("");
+    if (lead) text = lead + text;
     if (chips.length) text = [text.trim() === "" ? "" : text, ...chips.map((chip) => chip.text)].filter(Boolean).join("\n\n");
     const to = this.answer ? typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen : undefined;
     if (composerHost && key) {
@@ -266,7 +270,7 @@ export class ComposerSubmit {
   }
 
   refreshSend(): void {
-    this.sendButton.disabled = !!(this.draftKey && (this.sending.has(this.draftKey) || this.models.blocked(this.draftKey))) || (this.text.trim() === "" && !this.hasFiles && !this.chips.get(this.draftKey ?? "")?.length);
+    this.sendButton.disabled = !!(this.draftKey && (this.sending.has(this.draftKey) || this.models.blocked(this.draftKey))) || (this.text.trim() === "" && !this.hasFiles && !(this.chips.get(this.draftKey ?? "") ?? []).some((entry) => !entry.chip.standing));
   }
 
   /** A plugin's chip in the chat open now; it stays with that chat's draft until sent or removed. */

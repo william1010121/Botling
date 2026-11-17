@@ -150,7 +150,7 @@ describe("釘選 on a message", () => {
     expect([call!.plugin, call!.method, call!.params]).toEqual([PLUGIN, "pinMessage", { botId: "B1", messageId: "m2", text: "## Plan\nsteps" }]);
     host.hostReply(call!.callID, true, { id: "p-0001" });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(slots.overlay.querySelector(".pt-panel")).not.toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).not.toBeNull();
   });
 
   it("does nothing more when the program part refuses (a full strip), and does not throw", async () => {
@@ -159,39 +159,73 @@ describe("釘選 on a message", () => {
     mine.querySelector<HTMLButtonElement>(".pt-pin-msg")!.click();
     host.hostReply(calls()[0]!.callID, false, "最多釘 8 張");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(slots.overlay.querySelector(".pt-panel")).toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).toBeNull();
   });
 });
 
-describe("the card's own input box", () => {
-  it("sends '@handle words' as an ordinary message of the chat's bot", () => {
+describe("the chip in the main input box (the card has no box of its own)", () => {
+  const chipText = () => composer.root.querySelector(".composer-chips .pt-chip")?.textContent ?? null;
+  const sends = () => sent.filter((action) => action.type === "send").map((action) => (action as { text: string }).text);
+
+  it("opening a card puts 「回覆到 <card>」 in the input box, what is typed goes into that card ('@id words'), and the chip stays after the send", () => {
     host.chatState(stateOf(view(card("p-0001"))));
+    expect(chipText()).toBeNull();
     slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
-    const input = slots.overlay.querySelector<HTMLInputElement>(".pt-input")!;
-    input.value = "先停一下";
-    slots.overlay.querySelector<HTMLFormElement>(".pt-form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    expect(sent.filter((action) => action.type === "send")).toEqual([{ type: "send", text: "@Deploy 先停一下" }]);
+    expect(chipText()).toBe("Reply toDeploy");
+    expect(slots.topArea.querySelector("input, textarea, form")).toBeNull();
+    type("先停一下");
+    composer.submit();
+    expect(sends()).toEqual(["@p-0001 先停一下"]);
+    expect(chipText()).toBe("Reply toDeploy");
+    // an empty box sends nothing
+    composer.submit();
+    expect(sends()).toHaveLength(1);
   });
 
-  it("speaks the page's language, and changes with it", () => {
+  it("the ✕ of the chip, Esc, and a press on the chat's empty space each leave the card and take the chip away; then a message goes as typed", () => {
+    const scroller = document.createElement("main");
+    scroller.id = "scroller";
+    document.body.append(scroller);
+    host.chatState(stateOf(view(card("p-0001"))));
+    const open = () => slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
+    open();
+    composer.root.querySelector<HTMLButtonElement>(".pt-chip-x")!.click();
+    expect(chipText()).toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).toBeNull();
+    open();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(chipText()).toBeNull();
+    open();
+    scroller.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(chipText()).toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).toBeNull();
+    type("hello");
+    composer.submit();
+    expect(sends()).toEqual(["hello"]);
+  });
+
+  it("another chat has no chip, and the chip speaks the page's language", () => {
     host.chatState(stateOf(view(card("p-0001"))));
     slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
-    const input = () => slots.overlay.querySelector<HTMLInputElement>(".pt-input")!;
-    expect(input().placeholder).toBe("Say something to “Deploy”…");
+    host.chatState(stateOf(view(card("p-0001")), "B2"));
+    expect(chipText()).toBeNull();
     setLanguage("zh-Hant");
-    host.chatState(stateOf(view(card("p-0001"))));
-    expect(input().placeholder).toBe("對「Deploy」說…");
+    host.chatState(stateOf(view(card("p-0001")), "B2"));
+    slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
+    expect(chipText()).toBe("回覆到Deploy");
+    expect(composer.root.querySelector(".pt-chip-x")!.getAttribute("aria-label")).toBe("離開這張卡（Esc）");
   });
 });
 
 describe("unloading the plugin", () => {
-  it("takes the strip, the panel, the @ rows, the bubble and the button away", async () => {
+  it("takes the list, the card, the chip, the @ rows, the bubble and the button away", async () => {
     host.chatState(stateOf(view(card("p-0001"))));
     slots.topArea.querySelector<HTMLButtonElement>(".pt-row")!.click();
-    expect(slots.overlay.querySelector(".pt-panel")).not.toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).not.toBeNull();
     await host.sync([], async () => (() => {}) as never);
     expect(slots.topArea.querySelector(".pt-strip")).toBeNull();
-    expect(slots.overlay.querySelector(".pt-panel")).toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).toBeNull();
+    expect(composer.root.querySelector(".pt-chip")).toBeNull();
     type("@de");
     expect(names()).toEqual([]);
     expect(messageElement(message(), {}).querySelector(".pt-pin-msg")).toBeNull();
@@ -302,14 +336,14 @@ describe("「你不在時」 in the page", () => {
     expect(touches()).toHaveLength(0);
   });
 
-  it("draws the digest above the strip, a click on another bot's line goes to that chat (the page's openChat), and a card's row opens its panel", () => {
+  it("draws the digest above the strip, a click on another bot's line goes to that chat (the page's openChat), and a card's row opens the card", () => {
     host.chatState(stateOf({ ...view(card("p-0001")), away } as never));
     const line = slots.topArea.querySelector<HTMLElement>(".pt-digest .pt-orow")!;
     line.click();
     expect(sent.filter((action) => action.type === "openChat")).toEqual([{ type: "openChat", botID: "B2", messageID: "q9" }]);
     host.chatState(stateOf({ ...view(card("p-0001")), away: { ...away, rows: [{ id: "p-0001", title: "Deploy", state: "run", status: "building", source: "user", at: 5_000 }], counts: { wait: 0, run: 1, done: 0 } } } as never));
     slots.topArea.querySelector<HTMLElement>(".pt-drow")!.click();
-    expect(slots.overlay.querySelector(".pt-panel")).not.toBeNull();
+    expect(slots.topArea.querySelector(".pt-card")).not.toBeNull();
   });
 
   it("看完了 asks the program part to fold it for this chat's bot", () => {

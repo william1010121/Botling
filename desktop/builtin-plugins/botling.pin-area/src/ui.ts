@@ -1,5 +1,7 @@
-// botling.pin-area, what the page draws: the strip of cards above the chat (one row each, faded until you point at it, a card that
-// waits for you always clear) and the floating panel a row opens (status, steps, the card's own thread and its own input box).
+// botling.pin-area, what the page draws: the list of cards above the chat (A 細清單: one thin row per card, a card that waits for you
+// has an orange edge; a click opens the row in place into the card: status, steps, its thread and a collapsed 過程 log). At most 4 rows
+// show, then 「還有 N 件」. An open card stays at the top while the chat scrolls below it; it has no input box: the chat's own box gets a
+// 「回覆到 <card>」 chip (`Deps.chip`) and what is typed goes into the card. A click on the chat's empty space, Esc or the chevron closes it.
 // Every word from a bot or a thread goes in with textContent, never as HTML. No Botling import: `Deps` is all this needs, so a test
 // draws it in jsdom with fakes (no window, no focus taken).
 import { readView, spanOf, type DigestRow, type DigestView, type PinsView } from "./digest";
@@ -9,12 +11,15 @@ import type { Words } from "./words";
 export interface Deps {
   /** Calls the program part (`ccb.call`). */
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
-  /** Sends words to the chat's bot as the user (`ccb.page.post({ type: "send" })`). */
-  send(text: string): void;
   words: Words;
   now(): number;
-  /** The user asked for no motion: the panel then leaves at once instead of sliding out. */
-  reduceMotion(): boolean;
+  /**
+   * The chat's input box says where its words go: 「回覆到 <title>」 with a ✕ that leaves the card (`PinUi.close`); null takes the chip away.
+   * What is typed while it shows goes into that card (the chip puts `@id ` before the words).
+   */
+  chip(card: { id: string; title: string } | null): void;
+  /** Puts the caret in the chat's input box (a card was opened: the next thing is to write). */
+  focusComposer(): void;
   /** Shows another bot's chat (`ccb.page.openChat`), at one of its lines when `messageId` is given. */
   openChat(botId: string, messageId?: string): void;
 }
@@ -28,6 +33,7 @@ const icon = (paths: string[], size = 12, width = 2): SVGElement => {
   return svg;
 };
 export const pinIcon = (size = 12): SVGElement => icon(PIN_PATH, size);
+export const closeIcon = (size = 12): SVGElement => icon(["M6 6l12 12M18 6L6 18"], size, 2.4);
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -36,10 +42,13 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?
 };
 
 const TOAST_MS = 8_000;
-/** A send waits for its line in the thread (the program part's answer to the page); one that never shows (another plugin stopped it) lets go after this long. */
-const SEND_WAIT_MS = 4_000;
 const MAX_BARS = 12;
 const KEYS = 3;
+/** More cards than this: the first rows, then one 「還有 N 件」 row (a tap shows the rest). */
+export const MAX_ROWS = 4;
+/** A press on one of these in the chat's list is the chat's own business; on the list or a message row itself (the blank space) it leaves the open card. */
+const BLANK = "#scroller, #messages, #messages .row, #messages .stamped";
+const OWN_THINGS = "a, button, input, textarea, select, summary, [contenteditable], .bubble, .message-footer, .decoration-extra";
 
 export function barsOf(pin: PinView): { done: number; total: number } | null {
   if (!pin.step) return null;
@@ -58,13 +67,22 @@ export class PinUi {
   private readonly section = el("section", "pt-strip");
   private readonly head = el("div", "pt-head");
   private readonly rows = el("div", "pt-rows");
+  /** The rows above the open card, the card's own place, the rows below it, and 「還有 N 件」: only the rows are redrawn, so the card keeps its scroll. */
+  private readonly above = el("div", "pt-above");
+  private readonly below = el("div", "pt-below");
+  private readonly more = el("button", "pt-more");
   private readonly toastLine = el("div", "pt-toast");
   private panel: HTMLElement | null = null;
-  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement; input: HTMLInputElement; hint: HTMLElement } | null = null;
+  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
   private toast: { text: string; undo?: { id: string }; until: number } | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly sending = new Map<string, { at: number; turns: number }>();
   private updatesOpen = false;
+  /** 「還有 N 件」 was pressed (or the open card is below the first rows): every row shows. */
+  private showAll = false;
+  /** Cards that were unread when they were opened: their 剛更新 mark stays while they are open. */
+  private readonly fresh = new Set<string>();
+  /** What the chat's input box shows now (`id|title`), so it is told only when that changes. */
+  private chipKey: string | null = null;
   /** Traces whose "改到…" list is open, and the moves under way (a double tap moves once). */
   private readonly alts = new Set<string>();
   private readonly moving = new Set<string>();
@@ -73,16 +91,18 @@ export class PinUi {
   private folding: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new AbortController();
 
-  constructor(private readonly top: HTMLElement, private readonly overlay: HTMLElement, private readonly deps: Deps) {
+  constructor(private readonly top: HTMLElement, private readonly deps: Deps) {
     this.section.setAttribute("aria-label", deps.words("strip.label"));
+    this.more.type = "button";
+    this.more.addEventListener("click", () => { this.showAll = !this.showAll; this.draw(); });
+    this.rows.append(this.above, this.below, this.more);
     this.section.append(this.head, this.rows, this.toastLine);
     this.top.append(this.digest, this.section);
     const { signal } = this.listeners;
-    // Outside a panel, a click closes it (a click on a row is that row's own toggle); Esc closes it, and ⌘1–3 open a card.
+    // A press on the chat's empty space leaves the open card (a press on a message, a button, the input box or the list above is not that);
+    // Esc leaves it too, and ⌘1–3 open a card.
     document.addEventListener("pointerdown", (event) => {
-      if (!this.openId) return;
-      const target = event.target as Node | null;
-      if (target && (this.panel?.contains(target) || this.section.contains(target))) return;
+      if (!this.openId || !this.isBlank(event.target)) return;
       this.close();
     }, { capture: true, signal });
     document.addEventListener("keydown", (event) => this.onKey(event), { capture: true, signal });
@@ -96,7 +116,14 @@ export class PinUi {
     this.panel?.remove();
     this.digest.remove();
     this.section.remove();
-    document.body.classList.remove("pt-panel-open");
+    this.deps.chip(null);
+    this.chipKey = null;
+  }
+
+  /** The chat's empty space: its list or a message row itself, not what is drawn on a row. */
+  private isBlank(target: EventTarget | null): boolean {
+    if (!(target instanceof Element) || this.section.contains(target) || this.digest.contains(target)) return false;
+    return target.matches(BLANK) && !target.closest(OWN_THINGS) && !!target.closest("#scroller");
   }
 
   /** The chat drew `botId` with these pins (null: the program part has not said yet). */
@@ -105,18 +132,15 @@ export class PinUi {
       // another chat: its own cards, nothing of the last chat's panel
       this.botId = botId;
       this.openId = null;
-      this.sending.clear();
       this.lastThread.clear();
       this.toast = null;
       this.removePanel();
+      this.showAll = false;
+      this.fresh.clear();
     }
     const away = data ? readView(data.away) : null;
     this.data = data && Array.isArray(data.pins) ? { ...data, ...(away ? { away } : { away: undefined }) } : { v: 1, pins: [] };
     if (this.folding) { clearTimeout(this.folding); this.folding = null; }
-    for (const [id, guard] of [...this.sending]) {
-      const pin = this.pin(id);
-      if (!pin || pin.thread.length > guard.turns || this.deps.now() - guard.at > SEND_WAIT_MS) this.sending.delete(id);
-    }
     if (this.openId && !this.pin(this.openId)) { this.openId = null; this.removePanel(); }
     this.draw();
   }
@@ -134,7 +158,13 @@ export class PinUi {
 
   private pin(id: string): PinView | undefined { return this.data.pins.find((pin) => pin.id === id); }
 
-  // ---- the strip ----
+  // ---- the list ----
+
+  /** The time of a card's last change: "HH:MM" today, month/day before. */
+  private when(at: number): string {
+    const day = (time: number) => new Date(time).toDateString();
+    return day(at) === day(this.deps.now()) ? clock(at) : new Date(at).toLocaleDateString([], { month: "numeric", day: "numeric" });
+  }
 
   private draw(): void {
     const { words } = this.deps;
@@ -151,38 +181,53 @@ export class PinUi {
     }
     // a row that has the keyboard focus keeps it across the redraw
     const active = document.activeElement instanceof HTMLElement && this.rows.contains(document.activeElement) ? document.activeElement.dataset.pin ?? null : null;
-    this.rows.replaceChildren(...pins.map((pin, index) => this.row(pin, index)));
+    // the first rows (the open card counts as one and shows in its place); the rest sit behind 「還有 N 件」
+    const shown = (index: number) => this.showAll || index < MAX_ROWS;
+    const openAt = pins.findIndex((pin) => pin.id === this.openId);
+    this.above.replaceChildren(...pins.flatMap((pin, index) => (index < openAt && shown(index) ? [this.row(pin)] : [])));
+    this.below.replaceChildren(...pins.flatMap((pin, index) => (index > openAt && shown(index) ? [this.row(pin)] : [])));
+    // the card goes between the two groups (it is made once and keeps its scroll)
+    if (this.panel && this.above.nextSibling !== this.panel) this.above.after(this.panel);
+    const hidden = this.showAll ? 0 : Math.max(0, pins.length - MAX_ROWS);
+    this.more.hidden = pins.length <= MAX_ROWS;
+    this.more.className = `pt-more${this.showAll ? " open" : ""}`;
+    this.more.replaceChildren(el("span", "", hidden ? words("strip.more", { n: hidden }) : words("strip.less", { n: MAX_ROWS })), icon([hidden ? "M6 9l6 6 6-6" : "M18 15l-6-6-6 6"], 14));
+    this.more.setAttribute("aria-expanded", String(this.showAll));
     const focusId = this.lastFocusId ?? active;
     this.lastFocusId = null;
-    if (focusId) (Array.from(this.rows.children) as HTMLElement[]).find((row) => row.dataset.pin === focusId)?.focus({ preventScroll: true });
+    if (focusId) (Array.from(this.rows.querySelectorAll<HTMLElement>(".pt-row"))).find((row) => row.dataset.pin === focusId)?.focus({ preventScroll: true });
     this.drawToast();
+    this.drawChip();
     if (this.openId) this.drawPanel();
   }
 
-  private row(pin: PinView, index: number): HTMLElement {
+  /** One thin row (A 細清單): a dot of its state, the title, the one-line status, when it changed (剛更新 while unread), a chevron. */
+  private row(pin: PinView): HTMLElement {
     const { words } = this.deps;
-    const row = el("button", `pt-row pt-${pin.state}${this.openId === pin.id ? " on" : ""}`);
+    const row = el("button", `pt-row pt-${pin.state}`);
     row.type = "button";
     row.dataset.pin = pin.id;
-    row.setAttribute("aria-expanded", String(this.openId === pin.id));
+    row.setAttribute("aria-expanded", "false");
     row.setAttribute("aria-label", `${words("row.open", { title: pin.title })} · ${words(`state.${pin.state}`)} · ${pin.status}`);
-    const first = el("span", "pt-l1");
-    first.append(el("span", `pt-dot pt-dot-${pin.state}`));
-    first.append(el("span", "pt-fd pt-title", pin.title));
-    first.append(el("span", "pt-fd pt-short", pin.status));
-    if (pin.unread && this.openId !== pin.id) {
-      const unread = el("span", "pt-unread");
-      unread.title = words("row.unread");
-      first.append(unread);
-    }
-    first.append(el("span", "pt-fd pt-tag", words(tagKey(pin))));
-    if (index < KEYS) first.append(el("span", "pt-fd pt-kc", `⌘${index + 1}`));
-    const second = el("span", "pt-l2");
-    second.append(this.bars(pin, "pt-bars-s"));
-    second.append(el("span", "pt-l2-text", pin.status));
-    row.append(first, second);
-    row.addEventListener("click", () => (this.openId === pin.id ? this.close(true) : this.open(pin.id)));
+    const when = this.when(pin.updatedAt);
+    row.append(
+      el("span", `pt-dot pt-dot-${pin.state}`),
+      el("b", "pt-title", pin.title),
+      el("span", "pt-short", pin.status),
+      el("span", `pt-meta${pin.unread ? " fresh" : ""}`, pin.unread ? `${when} ${words("row.fresh")}` : when),
+      icon(["M6 9l6 6 6-6"], 14),
+    );
+    row.addEventListener("click", () => this.open(pin.id));
     return row;
+  }
+
+  /** The chat's input box shows 「回覆到 <title>」 while a card is open. */
+  private drawChip(): void {
+    const pin = this.openId ? this.pin(this.openId) : undefined;
+    const key = pin ? `${pin.id}|${pin.title}` : null;
+    if (key === this.chipKey) return;
+    this.chipKey = key;
+    this.deps.chip(pin ? { id: pin.id, title: pin.title } : null);
   }
 
   private bars(pin: PinView, className: string): HTMLElement {
@@ -326,21 +371,25 @@ export class PinUi {
     this.showToast(this.deps.words("toast.failed", { why: why.slice(0, 120) }));
   }
 
-  // ---- the panel ----
+  // ---- the card (a row, opened in place) ----
 
   open(id: string): void {
-    if (!this.pin(id)) return;
+    const pin = this.pin(id);
+    if (!pin) return;
     const was = this.openId;
     if (was && was !== id) this.leave(was);
     this.openId = id;
     this.updatesOpen = false;
-    this.removePanel(true);
+    if (pin.unread) this.fresh.add(id); else this.fresh.delete(id);
+    // a card below the first rows is shown, so the rows around it are too
+    if (this.data.pins.findIndex((candidate) => candidate.id === id) >= MAX_ROWS) this.showAll = true;
+    this.removePanel();
     this.draw();
-    this.panelParts?.input.focus({ preventScroll: true });
+    this.deps.focusComposer();
     void this.deps.call("seen", { botId: this.botId, id }).catch(() => {});
   }
 
-  /** Closes the panel; a done card the user opened and now closes is unpinned (with a 釘回). */
+  /** Closes the card (it is a row again, the chip is gone); a done card the user opened and now closes is unpinned (with a 釘回). */
   close(refocus = false): void {
     const id = this.openId;
     if (!id) return;
@@ -352,6 +401,7 @@ export class PinUi {
   }
 
   private leave(id: string): void {
+    this.fresh.delete(id);
     const pin = this.pin(id);
     if (!pin || pin.state !== "done") return;
     void this.deps.call("unpin", { botId: this.botId, id, by: "seen" }).then(
@@ -370,32 +420,29 @@ export class PinUi {
     );
   }
 
-  private removePanel(instant = false): void {
+  private removePanel(): void {
     const panel = this.panel;
     this.panel = null;
     this.panelParts = null;
-    document.body.classList.toggle("pt-panel-open", this.openId !== null);
-    if (!panel) return;
-    if (instant || this.deps.reduceMotion()) { panel.remove(); return; }
-    panel.classList.add("x");
-    panel.setAttribute("inert", "");
-    setTimeout(() => panel.remove(), 140);
+    panel?.remove();
   }
 
   private drawPanel(): void {
     const pin = this.openId ? this.pin(this.openId) : undefined;
     if (!pin) return;
     const { words } = this.deps;
-    if (!this.panel) this.buildPanel(pin);
+    if (!this.panel) { this.buildPanel(pin); this.above.after(this.panel!); }
     const parts = this.panelParts!;
-    document.body.classList.add("pt-panel-open");
     this.panel!.setAttribute("aria-label", pin.title);
     parts.dot.className = `pt-dot pt-dot-${pin.state}`;
     parts.title.textContent = pin.title;
     parts.tag.textContent = words(tagKey(pin));
     parts.tag.className = `pt-ptag pt-ptag-${pin.source}`;
+    parts.at.textContent = words("card.at", { time: this.when(pin.updatedAt) });
+    parts.fresh.hidden = !this.fresh.has(pin.id);
     parts.status.textContent = pin.status;
     parts.before.hidden = !pin.prev;
+    parts.note.hidden = parts.fresh.hidden && !pin.prev;
     parts.before.replaceChildren();
     if (pin.prev) { parts.before.append(document.createTextNode(words("panel.before")), el("s", "", pin.prev)); }
     parts.bars.replaceChildren();
@@ -404,57 +451,46 @@ export class PinUi {
       const left = pin.step.total - pin.step.done;
       parts.bars.append(el("span", "pt-left", left === 1 ? words("panel.leftOne") : words("panel.left", { n: left })));
     }
-    parts.input.placeholder = words("panel.say", { title: pin.title });
     this.drawThread(pin, parts);
     this.drawUpdates(pin, parts);
   }
 
   private buildPanel(pin: PinView): void {
     const { words } = this.deps;
-    const panel = el("section", "pt-panel");
-    panel.setAttribute("role", "dialog");
+    const panel = el("article", "pt-card");
     panel.dataset.pin = pin.id;
     const head = el("div", "pt-phead");
     const dot = el("span", "pt-dot");
     const title = el("b", "pt-ptitle");
     const tag = el("span", "pt-ptag");
+    const at = el("span", "pt-cat");
     const unpin = el("button", "pt-ib");
     unpin.type = "button";
     unpin.title = words("panel.unpin");
     unpin.setAttribute("aria-label", words("panel.unpin"));
     unpin.append(icon([...PIN_PATH, "M4 4l16 16"], 16));
     unpin.addEventListener("click", () => this.unpin(pin.id));
-    const close = el("button", "pt-ib");
+    const close = el("button", "pt-ib pt-collapse");
     close.type = "button";
-    close.title = "Esc";
+    close.title = words("panel.close");
     close.setAttribute("aria-label", words("panel.close"));
-    close.append(icon(["M6 6l12 12M18 6L6 18"], 16));
+    close.append(icon(["M18 15l-6-6-6 6"], 16));
     close.addEventListener("click", () => this.close(true));
-    head.append(dot, title, tag, el("span", "pt-grow"), unpin, close);
+    head.append(dot, title, tag, el("span", "pt-grow"), at, unpin, close);
     const status = el("span", "pt-pstatus");
+    const fresh = el("span", "pt-pill", words("row.fresh"));
     const before = el("span", "pt-pbefore");
     const bars = el("div", "pt-pbars");
+    const note = el("div", "pt-pnote");
+    note.append(fresh, before);
     const summary = el("div", "pt-psummary");
-    summary.append(status, before, bars);
+    summary.append(note, status, bars);
     const thread = el("div", "pt-thread");
     thread.setAttribute("role", "log");
     const updates = el("div", "pt-updates");
-    const form = el("form", "pt-form");
-    const input = el("input", "pt-input");
-    input.type = "text";
-    input.autocomplete = "off";
-    input.maxLength = 2000;
-    const hint = el("span", "pt-hint");
-    const send = el("button", "pt-send");
-    send.type = "submit";
-    send.setAttribute("aria-label", words("panel.send"));
-    send.append(icon(["M5 12h14M13 6l6 6-6 6"], 18));
-    form.append(input, send);
-    form.addEventListener("submit", (event) => { event.preventDefault(); this.submit(input, hint); });
-    panel.append(head, summary, thread, updates, hint, form);
-    this.overlay.append(panel);
+    panel.append(head, summary, thread, updates);
     this.panel = panel;
-    this.panelParts = { title, tag, dot, status, before, bars, thread, updates, input, hint };
+    this.panelParts = { title, tag, dot, at, note, fresh, status, before, bars, thread, updates };
   }
 
   private drawThread(pin: PinView, parts: NonNullable<PinUi["panelParts"]>): void {
@@ -557,7 +593,7 @@ export class PinUi {
     const toggle = el("button", "pt-updates-toggle");
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(this.updatesOpen));
-    toggle.append(icon([this.updatesOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"]), document.createTextNode(words("panel.updates", { n: lines.length, last: lines[lines.length - 1]!.status })));
+    toggle.append(icon([this.updatesOpen ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"]), el("span", "", words("panel.updates", { n: lines.length })), el("span", "pt-grow"), el("span", "pt-updates-last", lines[lines.length - 1]!.status));
     toggle.addEventListener("click", () => { this.updatesOpen = !this.updatesOpen; this.drawUpdates(pin, parts); });
     parts.updates.append(toggle);
     if (this.updatesOpen) {
@@ -565,26 +601,6 @@ export class PinUi {
       for (const line of lines) list.append(el("li", "", `${clock(line.at)} · ${line.status}`));
       parts.updates.append(list);
     }
-  }
-
-  /** The panel's own input: "@handle words" goes the way a message typed in the main box goes (beforeSend writes it into the thread). */
-  private submit(input: HTMLInputElement, hint: HTMLElement): void {
-    const pin = this.openId ? this.pin(this.openId) : undefined;
-    const text = input.value.trim();
-    if (!pin || !text) return;
-    const guard = this.sending.get(pin.id);
-    const now = this.deps.now();
-    // a double tap, or the same words again at once: one send
-    if (guard && now - guard.at < SEND_WAIT_MS) {
-      hint.textContent = this.deps.words("panel.again");
-      hint.hidden = false;
-      setTimeout(() => { hint.textContent = ""; hint.hidden = true; }, 1_800);
-      return;
-    }
-    this.sending.set(pin.id, { at: now, turns: pin.thread.length });
-    input.value = "";
-    hint.textContent = "";
-    this.deps.send(`@${pin.handle} ${text}`);
   }
 
   // ---- keys ----

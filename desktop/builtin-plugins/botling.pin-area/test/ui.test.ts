@@ -1,56 +1,63 @@
 // @vitest-environment jsdom
-// What the page draws (src/ui.ts) in jsdom with fakes: the strip, the panel a row opens, the keys, the done-card auto-unpin with 釘回,
-// the send guard and the "@" rows. Nothing here opens a window or takes the real focus.
+// What the page draws (src/ui.ts) in jsdom with fakes: the list of cards (A 細清單), the row that opens in place into the card, the card's
+// 過程 log, 「還有 N 件」, the 「回覆到」 chip, the keys, a press on the chat's empty space, the done-card auto-unpin with 釘回 and the "@" rows.
+// Nothing here opens a window or takes the real focus.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PinView } from "../src/model";
-import { PinUi, barsOf, tagKey } from "../src/ui";
+import { MAX_ROWS, PinUi, barsOf, tagKey } from "../src/ui";
 import { wordsFor } from "../src/words";
 
 let clock = 5_000_000;
 let ui: PinUi;
 let top: HTMLElement;
-let overlay: HTMLElement;
 const failing = new Set<string>();
 const call = vi.fn(async (method: string, _params: Record<string, unknown>) => {
   if (failing.has(method)) throw new Error(`${method} failed`);
   return {};
 });
-const send = vi.fn();
 const openChat = vi.fn();
-let motion = true;
+const chip = vi.fn();
+const focusComposer = vi.fn();
 
 const pin = (id: string, over: Partial<PinView> = {}): PinView => ({
   id, title: `Title ${id}`, handle: `Handle-${id}`, origin: "bot", state: "run", status: `status of ${id}`, source: "bot", unread: false, thread: [], updates: [{ at: clock, state: "run", status: "first", source: "bot" }],
   createdAt: clock, updatedAt: clock, ...over,
 });
 const view = (...pins: PinView[]) => ({ v: 1 as const, pins });
+const many = (n: number, over: (index: number) => Partial<PinView> = () => ({})) => Array.from({ length: n }, (_, index) => pin(`p-${String(index + 1).padStart(4, "0")}`, over(index)));
 const rows = () => [...top.querySelectorAll<HTMLElement>(".pt-row")];
-const panel = () => overlay.querySelector<HTMLElement>(".pt-panel");
+const panel = () => top.querySelector<HTMLElement>(".pt-card");
+const more = () => top.querySelector<HTMLButtonElement>(".pt-more")!;
+/** What the strip shows, top to bottom: a row is its card's id, the open card is "[id]", the 「還有 N 件」 row is its text. */
+const order = (): string[] => {
+  const out: string[] = [];
+  for (const node of Array.from(top.querySelector(".pt-rows")!.children) as HTMLElement[]) {
+    if (node.classList.contains("pt-above") || node.classList.contains("pt-below")) out.push(...Array.from(node.children).map((row) => (row as HTMLElement).dataset.pin!));
+    else if (node.classList.contains("pt-card")) out.push(`[${node.dataset.pin}]`);
+    else if (!node.hidden) out.push(node.textContent!);
+  }
+  return out;
+};
 const flush = async () => { for (let n = 0; n < 5; n++) await Promise.resolve(); };
 const key = (init: KeyboardEventInit, target: EventTarget = document.body) => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
-const submit = (text: string) => {
-  const input = overlay.querySelector<HTMLInputElement>(".pt-input")!;
-  input.value = text;
-  overlay.querySelector<HTMLFormElement>(".pt-form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-};
+const press = (target: Element) => target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
 
 beforeEach(() => {
   document.body.innerHTML = "";
   document.body.className = "";
   top = document.createElement("div");
-  overlay = document.createElement("div");
-  document.body.append(top, overlay);
+  document.body.append(top);
   clock = 5_000_000;
-  motion = true;
   failing.clear();
   call.mockClear();
-  send.mockClear();
   openChat.mockClear();
-  ui = new PinUi(top, overlay, { call, send, openChat, words: wordsFor(() => "zh-Hant"), now: () => clock, reduceMotion: () => motion });
+  chip.mockClear();
+  focusComposer.mockClear();
+  ui = new PinUi(top, { call, openChat, words: wordsFor(() => "zh-Hant"), now: () => clock, chip, focusComposer });
 });
 afterEach(() => { ui.dispose(); vi.useRealTimers(); });
 
-describe("the strip", () => {
+describe("the list", () => {
   it("takes no room with no cards, and draws one row per card in the order it is given, with the count and the key hint", () => {
     expect(top.querySelector<HTMLElement>(".pt-strip")!.hidden).toBe(true);
     ui.update("B1", view(pin("p-0001", { state: "wait" }), pin("p-0002"), pin("p-0003", { state: "done" })));
@@ -62,38 +69,54 @@ describe("the strip", () => {
     expect(top.querySelector(".pt-head")!.classList.contains("has-wait")).toBe(true);
   });
 
-  it("says ⌘1 for one card, offers ⌘ keys to the first three rows only, and has no wait mark when nothing waits", () => {
+  it("has no pill row, no 問這件事 entry and no question buttons", () => {
+    ui.update("B1", view(pin("p-0001")));
+    ui.open("p-0001");
+    expect(top.textContent).not.toContain("問這件事");
+    expect(top.querySelector(".pt-pills, .pt-ask, .pt-faq, .pt-pill-row")).toBeNull();
+    expect(top.querySelectorAll("input, textarea, form")).toHaveLength(0);
+  });
+
+  it("says ⌘1 for one card, and has no wait mark when nothing waits", () => {
     ui.update("B1", view(pin("p-0001")));
     expect(top.querySelector(".pt-head-keys")!.textContent).toBe("⌘1");
     expect(top.querySelector(".pt-head")!.classList.contains("has-wait")).toBe(false);
-    ui.update("B1", view(pin("p-0001"), pin("p-0002"), pin("p-0003"), pin("p-0004"), pin("p-0005")));
-    expect(rows().map((row) => row.querySelector(".pt-kc")?.textContent ?? null)).toEqual(["⌘1", "⌘2", "⌘3", null, null]);
+    ui.update("B1", view(...many(5)));
     expect(top.querySelector(".pt-head-keys")!.textContent).toBe("⌘1–3");
   });
 
-  it("gives each row its title, short status, who says so, a dot of its state, and a label a screen reader can use", () => {
+  it("gives each row its dot, title, short status, when it changed, a chevron and a label a screen reader can use", () => {
     ui.update("B1", view(pin("p-0001", { state: "wait", title: "等你確認", status: "要重跑嗎？", source: "user" })));
     const row = rows()[0]!;
     expect(row.querySelector(".pt-title")!.textContent).toBe("等你確認");
     expect(row.querySelector(".pt-short")!.textContent).toBe("要重跑嗎？");
-    expect(row.querySelector(".pt-tag")!.textContent).toBe("你釘的");
+    expect(row.querySelector(".pt-meta")!.textContent).toBe(new Date(clock).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }));
+    expect(row.querySelector("svg")).not.toBeNull();
     expect(row.querySelector(".pt-dot")!.classList.contains("pt-dot-wait")).toBe(true);
     expect(row.getAttribute("aria-label")).toBe("打開 等你確認 · 等你 · 要重跑嗎？");
     expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(row.querySelector(".pt-tag, .pt-kc, .pt-l2")).toBeNull();
   });
 
-  it("marks what you have not read, and not on the card that is open", () => {
+  it("says 剛更新 on a row that has not been read, and not on the card that is open", () => {
     ui.update("B1", view(pin("p-0001", { unread: true }), pin("p-0002")));
-    expect(rows().map((row) => !!row.querySelector(".pt-unread"))).toEqual([true, false]);
+    expect(rows().map((row) => row.querySelector(".pt-meta")!.classList.contains("fresh"))).toEqual([true, false]);
+    expect(rows()[0]!.querySelector(".pt-meta")!.textContent).toContain("剛更新");
     ui.open("p-0001");
-    expect(rows()[0]!.querySelector(".pt-unread")).toBeNull();
+    expect(rows().map((row) => row.dataset.pin)).toEqual(["p-0002"]);
+    expect(panel()!.querySelector<HTMLElement>(".pt-pill")!.hidden).toBe(false);
+    ui.open("p-0002");
+    expect(panel()!.querySelector<HTMLElement>(".pt-pill")!.hidden).toBe(true);
   });
 
-  it("shows the bars of a step on the row's second line, at most 12", () => {
+  it("shows the bars of a step in the open card only, at most 12", () => {
     ui.update("B1", view(pin("p-0001", { step: { done: 2, total: 4 } }), pin("p-0002", { step: { done: 3, total: 40 } })));
-    expect(rows()[0]!.querySelectorAll(".pt-l2 .pt-bar")).toHaveLength(4);
-    expect(rows()[0]!.querySelectorAll(".pt-l2 .pt-bar.on-run")).toHaveLength(2);
-    expect(rows()[1]!.querySelectorAll(".pt-l2 .pt-bar")).toHaveLength(12);
+    expect(top.querySelectorAll(".pt-row .pt-bar")).toHaveLength(0);
+    ui.open("p-0001");
+    expect(panel()!.querySelectorAll(".pt-bars-l .pt-bar")).toHaveLength(4);
+    expect(panel()!.querySelectorAll(".pt-bar.on-run")).toHaveLength(2);
+    ui.open("p-0002");
+    expect(panel()!.querySelectorAll(".pt-bars-l .pt-bar")).toHaveLength(12);
     expect(barsOf(pin("x"))).toBeNull();
     expect(tagKey(pin("x", { source: "app" }))).toBe("tag.app");
     expect(tagKey(pin("x", { source: "user" }))).toBe("tag.user");
@@ -114,18 +137,75 @@ describe("the strip", () => {
 
   it("puts every word of a bot in as text: a title or status with markup draws no element", () => {
     const evil = '<img src=x onerror="window.pwned=1"><script>window.pwned=1</script>';
-    ui.update("B1", view(pin("p-0001", { title: evil, status: evil, prev: `<b>${evil}</b>`, thread: [{ rid: "r1", q: evil, a: evil, qAt: clock, postedAt: clock, seenAt: clock, aAt: clock, via: "at" }], step: { done: 1, total: 2 } })));
-    ui.open("p-0001");
-    for (const root of [top, overlay]) { expect(root.querySelector("img")).toBeNull(); expect(root.querySelector("script")).toBeNull(); }
+    ui.update("B1", view(pin("p-0001", { title: evil, status: evil, prev: `<b>${evil}</b>`, thread: [{ rid: "r1", q: evil, a: evil, qAt: clock, postedAt: clock, seenAt: clock, aAt: clock, via: "at" }], step: { done: 1, total: 2 } }), pin("p-0002", { title: evil })));
     expect(rows()[0]!.querySelector(".pt-title")!.textContent).toBe(evil);
+    ui.open("p-0001");
+    expect(top.querySelector("img")).toBeNull();
+    expect(top.querySelector("script")).toBeNull();
+    expect(panel()!.querySelector(".pt-ptitle")!.textContent).toBe(evil);
     expect(panel()!.querySelector(".pt-pbefore s")!.textContent).toBe(`<b>${evil}</b>`);
     expect(panel()!.querySelector(".pt-pbefore b")).toBeNull();
     expect(panel()!.querySelectorAll(".pt-bubble")[0]!.textContent).toBe(evil);
+    expect(chip).toHaveBeenLastCalledWith({ id: "p-0001", title: evil });
     expect((window as unknown as { pwned?: number }).pwned).toBeUndefined();
   });
 });
 
-describe("the panel", () => {
+describe("more than four cards: the first rows and 「還有 N 件」", () => {
+  it("shows at most four rows and one 「還有 N 件」 row for the rest, in the order given", () => {
+    ui.update("B1", view(...many(4)));
+    expect(more().hidden).toBe(true);
+    expect(rows()).toHaveLength(4);
+    ui.update("B1", view(...many(7)));
+    expect(MAX_ROWS).toBe(4);
+    expect(rows().map((row) => row.dataset.pin)).toEqual(["p-0001", "p-0002", "p-0003", "p-0004"]);
+    expect(more().hidden).toBe(false);
+    expect(more().textContent).toBe("還有 3 件");
+    expect(more().getAttribute("aria-expanded")).toBe("false");
+    expect(order()).toEqual(["p-0001", "p-0002", "p-0003", "p-0004", "還有 3 件"]);
+  });
+
+  it("a tap on it shows the rest (the list in the same order), and the same row folds them again", () => {
+    ui.update("B1", view(...many(6)));
+    more().click();
+    expect(rows().map((row) => row.dataset.pin)).toEqual(["p-0001", "p-0002", "p-0003", "p-0004", "p-0005", "p-0006"]);
+    expect(more().textContent).toBe("只看前 4 件");
+    expect(more().getAttribute("aria-expanded")).toBe("true");
+    more().click();
+    expect(rows()).toHaveLength(4);
+    expect(more().textContent).toBe("還有 2 件");
+  });
+
+  it("a card that waits is among the first rows (waiting cards come first), so a hidden card never hides a question", () => {
+    ui.update("B1", view(...many(6, (index) => (index < 2 ? { state: "wait" as const } : { state: "run" as const }))));
+    expect(rows().filter((row) => row.classList.contains("pt-wait"))).toHaveLength(2);
+  });
+
+  it("opening a card that is behind the fold (a digest row, the 釘選 button, ⌘ key) shows every row, the card in its own place", () => {
+    ui.update("B1", view(...many(6)));
+    ui.open("p-0006");
+    expect(order()).toEqual(["p-0001", "p-0002", "p-0003", "p-0004", "p-0005", "[p-0006]", "只看前 4 件"]);
+  });
+
+  it("an open card in the first rows counts as one of the four, in its own place, with the others around it", () => {
+    ui.update("B1", view(...many(6)));
+    ui.open("p-0002");
+    expect(order()).toEqual(["p-0001", "[p-0002]", "p-0003", "p-0004", "還有 2 件"]);
+  });
+
+  it("with the count back to four or fewer, the row goes away; another chat starts folded", () => {
+    ui.update("B1", view(...many(6)));
+    more().click();
+    ui.update("B1", view(...many(3)));
+    expect(more().hidden).toBe(true);
+    ui.update("B1", view(...many(6)));
+    expect(rows()).toHaveLength(6);
+    ui.update("B2", view(...many(6)));
+    expect(rows()).toHaveLength(4);
+  });
+});
+
+describe("the card (a row opened in place)", () => {
   const rich = () => pin("p-0001", {
     title: "Deploy", handle: "Deploy", source: "user", status: "跑第 3 輪", prev: "跑第 2 輪", step: { done: 2, total: 4 }, state: "run",
     thread: [
@@ -136,12 +216,11 @@ describe("the panel", () => {
     updates: [{ at: clock, state: "run", status: "開始", source: "bot" }, { at: clock, state: "run", status: "跑第 2 輪", source: "bot" }, { at: clock, state: "run", status: "跑第 3 輪", source: "bot" }],
   });
 
-  it("opens from a row click with the title, who says so, the status rewritten in place with 原本, the bars and 剩 N 步, and an input addressed to the card", () => {
-    ui.update("B1", view(rich()));
-    rows()[0]!.click();
+  it("opens from a row click in place of that row: title, who says so, the status rewritten with 原本, the bars and 剩 N 步, no input of its own", () => {
+    ui.update("B1", view(pin("p-0000"), rich(), pin("p-0002")));
+    rows()[1]!.click();
     const p = panel()!;
-    expect(p).not.toBeNull();
-    expect(p.getAttribute("role")).toBe("dialog");
+    expect(order()).toEqual(["p-0000", "[p-0001]", "p-0002"]);
     expect(p.querySelector(".pt-ptitle")!.textContent).toBe("Deploy");
     expect(p.querySelector(".pt-ptag")!.textContent).toBe("你釘的");
     expect(p.querySelector(".pt-pstatus")!.textContent).toBe("跑第 3 輪");
@@ -149,11 +228,40 @@ describe("the panel", () => {
     expect(p.querySelector(".pt-pbefore s")!.textContent).toBe("跑第 2 輪");
     expect(p.querySelectorAll(".pt-bars-l .pt-bar")).toHaveLength(4);
     expect(p.querySelector(".pt-left")!.textContent).toBe("剩 2 步");
-    expect(p.querySelector<HTMLInputElement>(".pt-input")!.placeholder).toBe("對「Deploy」說…");
-    expect(document.body.classList.contains("pt-panel-open")).toBe(true);
-    expect(rows()[0]!.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(p.querySelector(".pt-input"));
+    expect(p.querySelector(".pt-cat")!.textContent).toMatch(/更新$/);
+    expect(p.querySelector("input, textarea, form")).toBeNull();
     expect(call).toHaveBeenCalledWith("seen", { botId: "B1", id: "p-0001" });
+  });
+
+  it("opening it asks the chat's input box for the chip 「回覆到 <card>」 and the caret; leaving takes the chip away", () => {
+    ui.update("B1", view(pin("p-0001", { title: "Deploy" })));
+    expect(chip).not.toHaveBeenCalled();
+    ui.open("p-0001");
+    expect(chip).toHaveBeenCalledTimes(1);
+    expect(chip).toHaveBeenLastCalledWith({ id: "p-0001", title: "Deploy" });
+    expect(focusComposer).toHaveBeenCalledTimes(1);
+    // the strip redrawing for news does not put the chip again
+    ui.update("B1", view(pin("p-0001", { title: "Deploy", status: "news" })));
+    expect(chip).toHaveBeenCalledTimes(1);
+    // the card's title changed: the chip says so
+    ui.update("B1", view(pin("p-0001", { title: "Deploy 2" })));
+    expect(chip).toHaveBeenLastCalledWith({ id: "p-0001", title: "Deploy 2" });
+    ui.close();
+    expect(chip).toHaveBeenLastCalledWith(null);
+    expect(chip).toHaveBeenCalledTimes(3);
+  });
+
+  it("another card moves the chip to it; the card going away, or another chat, takes it away", () => {
+    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
+    ui.open("p-0001");
+    ui.open("p-0002");
+    expect(chip).toHaveBeenLastCalledWith({ id: "p-0002", title: "Title p-0002" });
+    ui.update("B1", view(pin("p-0001")));
+    expect(chip).toHaveBeenLastCalledWith(null);
+    ui.open("p-0001");
+    ui.update("B2", view(pin("p-0001")));
+    expect(chip).toHaveBeenLastCalledWith(null);
+    expect(ui.isOpen()).toBe(false);
   });
 
   it("says 剩 1 步 for one step, and shows no bars and no 原本 for a card without steps or an earlier status", () => {
@@ -163,6 +271,7 @@ describe("the panel", () => {
     ui.open("p-0002");
     expect(panel()!.querySelector(".pt-left")).toBeNull();
     expect(panel()!.querySelector<HTMLElement>(".pt-pbefore")!.hidden).toBe(true);
+    expect(panel()!.querySelector<HTMLElement>(".pt-pnote")!.hidden).toBe(true);
   });
 
   it("draws the thread with receipts: 已送出 until the bot has seen it, 已看到 after, and the bot's answer under the question", () => {
@@ -182,17 +291,18 @@ describe("the panel", () => {
     expect(bubbles).toEqual([["bot", "順便說一下"]]);
   });
 
-  it("says so when the thread is empty", () => {
+  it("says so when the thread is empty, and where to write", () => {
     ui.update("B1", view(pin("p-0001")));
     ui.open("p-0001");
-    expect(panel()!.querySelector(".pt-empty")!.textContent).toContain("還沒有對話");
+    expect(panel()!.querySelector(".pt-empty")!.textContent).toContain("下面的輸入框");
   });
 
-  it("folds the updates after the first into 'N 則更新 · last', and opens them on a click", () => {
+  it("keeps the rest in a folded 「過程 · N 則更新」 (worker news lands here), the newest line on the same row, and opens them on a click", () => {
     ui.update("B1", view(rich(), pin("p-0002")));
     ui.open("p-0001");
     const toggle = panel()!.querySelector<HTMLButtonElement>(".pt-updates-toggle")!;
-    expect(toggle.textContent).toBe("2 則更新 · 跑第 3 輪");
+    expect(toggle.querySelector("span")!.textContent).toBe("過程 · 2 則更新");
+    expect(toggle.querySelector(".pt-updates-last")!.textContent).toBe("跑第 3 輪");
     expect(panel()!.querySelectorAll(".pt-updates-list li")).toHaveLength(0);
     toggle.click();
     expect(panel()!.querySelectorAll(".pt-updates-list li")).toHaveLength(2);
@@ -201,7 +311,7 @@ describe("the panel", () => {
     expect(panel()!.querySelector<HTMLElement>(".pt-updates")!.hidden).toBe(true);
   });
 
-  it("rewrites the open panel in place when the bot changes the card, without closing it", () => {
+  it("rewrites the open card in place when the bot changes it, without closing it or moving it", () => {
     ui.update("B1", view(pin("p-0001", { status: "one" })));
     ui.open("p-0001");
     const same = panel();
@@ -212,15 +322,16 @@ describe("the panel", () => {
     expect(panel()!.querySelector(".pt-dot")!.classList.contains("pt-dot-wait")).toBe(true);
   });
 
-  it("switches from one card to another, and a click on its own row closes it", () => {
+  it("switches from one card to another, and the chevron (or its key) closes it back into a row", () => {
     ui.update("B1", view(pin("p-0001"), pin("p-0002")));
     rows()[0]!.click();
-    rows()[1]!.click();
-    expect(overlay.querySelectorAll(".pt-panel")).toHaveLength(1);
+    rows()[0]!.click();
+    expect(top.querySelectorAll(".pt-card")).toHaveLength(1);
     expect(panel()!.dataset.pin).toBe("p-0002");
-    rows()[1]!.click();
+    expect(order()).toEqual(["p-0001", "[p-0002]"]);
+    panel()!.querySelector<HTMLButtonElement>(".pt-collapse")!.click();
     expect(panel()).toBeNull();
-    expect(document.body.classList.contains("pt-panel-open")).toBe(false);
+    expect(order()).toEqual(["p-0001", "p-0002"]);
   });
 
   it("closes when the card is gone, and when the chat is another bot's", () => {
@@ -232,28 +343,71 @@ describe("the panel", () => {
     ui.update("B2", view(pin("p-0002", { title: "Another bot's" })));
     expect(panel()).toBeNull();
     expect(ui.isOpen()).toBe(false);
-    expect(document.body.classList.contains("pt-panel-open")).toBe(false);
   });
 
-  it("leaves with a slide when motion is wanted (the panel is out of the way at once and gone after 140 ms), and at once when reduced motion is asked", () => {
-    vi.useFakeTimers();
-    motion = false;
+  it("is in the top slot above the chat (the chat scrolls below it), not a floating panel", () => {
     ui.update("B1", view(pin("p-0001")));
     ui.open("p-0001");
-    ui.close();
-    expect(panel()!.classList.contains("x")).toBe(true);
-    expect(panel()!.hasAttribute("inert")).toBe(true);
-    vi.advanceTimersByTime(140);
-    expect(panel()).toBeNull();
-    motion = true;
-    ui.open("p-0001");
-    ui.close();
-    expect(panel()).toBeNull();
+    expect(top.contains(panel())).toBe(true);
+    expect(document.querySelector(".pt-panel")).toBeNull();
+    expect(document.body.classList.contains("pt-panel-open")).toBe(false);
   });
 });
 
-describe("keys and clicks outside", () => {
-  it("Esc closes the panel and gives the row the focus back; with no panel it does nothing", () => {
+describe("keys, and a press on the chat's empty space", () => {
+  /** The chat page's own skeleton: a scroller, the list, a message row with a bubble and a button, a stamp. */
+  const chat = () => {
+    const scroller = document.createElement("main");
+    scroller.id = "scroller";
+    scroller.innerHTML = '<div id="messages"><div class="stamped"><div class="stamp">today</div></div><div class="row bot" data-id="m1"><div class="bubble"><p>hello <a href="#">link</a></p></div><button class="reply-button">r</button></div></div>';
+    document.body.append(scroller);
+    return scroller;
+  };
+  const stub = () => { ui.update("B1", view(pin("p-0001"), pin("p-0002"))); ui.open("p-0001"); };
+
+  it("a press on the chat's blank space (the list, a message row's own space, a stamp line) folds the card back into a row, and the chip goes", () => {
+    const scroller = chat();
+    for (const target of [scroller, scroller.querySelector("#messages")!, scroller.querySelector(".row")!, scroller.querySelector(".stamped")!]) {
+      stub();
+      expect(panel()).not.toBeNull();
+      press(target);
+      expect(panel()).toBeNull();
+      expect(order()).toEqual(["p-0001", "p-0002"]);
+      expect(chip).toHaveBeenLastCalledWith(null);
+    }
+  });
+
+  it("a press on what is in the chat (a bubble, its words, a link, a button of a message) or outside the chat (the input box, the page, the card, the rows) leaves the card open", () => {
+    const scroller = chat();
+    const outside = document.createElement("textarea");
+    document.body.append(outside);
+    stub();
+    for (const target of [scroller.querySelector(".bubble")!, scroller.querySelector("p")!, scroller.querySelector("a")!, scroller.querySelector(".reply-button")!, outside, document.body, panel()!.querySelector(".pt-pstatus")!, rows()[0]!]) {
+      press(target);
+      expect(panel()).not.toBeNull();
+    }
+    expect(ui.isOpen("p-0001")).toBe(true);
+  });
+
+  it("a press on the blank space with no card open does nothing (and takes no call)", () => {
+    const scroller = chat();
+    ui.update("B1", view(pin("p-0001")));
+    call.mockClear();
+    press(scroller);
+    expect(call).not.toHaveBeenCalled();
+    expect(rows()).toHaveLength(1);
+  });
+
+  it("closing that way unpins a done card like any other close, with 釘回", async () => {
+    const scroller = chat();
+    ui.update("B1", view(pin("p-0001", { state: "done" })));
+    ui.open("p-0001");
+    press(scroller);
+    await flush();
+    expect(call).toHaveBeenCalledWith("unpin", { botId: "B1", id: "p-0001", by: "seen" });
+  });
+
+  it("Esc closes the card and gives the row the focus back; with no card it does nothing", () => {
     ui.update("B1", view(pin("p-0001")));
     const nothing = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     document.body.dispatchEvent(nothing);
@@ -289,28 +443,20 @@ describe("keys and clicks outside", () => {
     expect(panel()).not.toBeNull();
   });
 
-  it("a press outside the panel and the strip closes it; a press in either does not", () => {
-    ui.update("B1", view(pin("p-0001")));
-    ui.open("p-0001");
-    const press = (target: Element) => target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    press(panel()!.querySelector(".pt-pstatus")!);
-    press(rows()[0]!);
-    expect(panel()).not.toBeNull();
-    press(document.body);
-    expect(panel()).toBeNull();
-    press(document.body);
-  });
-
-  it("stops listening when it is disposed, and takes its strip and panel away", () => {
+  it("stops listening when it is disposed, takes its list and card away and the chip with them", () => {
+    const scroller = chat();
     ui.update("B1", view(pin("p-0001")));
     ui.open("p-0001");
     ui.dispose();
     expect(top.querySelector(".pt-strip")).toBeNull();
     expect(panel()).toBeNull();
-    expect(document.body.classList.contains("pt-panel-open")).toBe(false);
+    expect(chip).toHaveBeenLastCalledWith(null);
     const after = new KeyboardEvent("keydown", { key: "1", metaKey: true, bubbles: true, cancelable: true });
     document.body.dispatchEvent(after);
     expect(after.defaultPrevented).toBe(false);
+    call.mockClear();
+    press(scroller);
+    expect(call).not.toHaveBeenCalled();
   });
 });
 
@@ -349,6 +495,7 @@ describe("taking a card down and putting it back", () => {
     await flush();
     expect(call).toHaveBeenCalledWith("unpin", { botId: "B1", id: "p-0001" });
     expect(panel()).toBeNull();
+    expect(chip).toHaveBeenLastCalledWith(null);
     expect(top.querySelector(".pt-toast-text")!.textContent).toBe("你取消釘選「Plan」");
     expect(top.querySelector(".pt-toast-act")).not.toBeNull();
   });
@@ -379,51 +526,6 @@ describe("taking a card down and putting it back", () => {
     top.querySelector<HTMLButtonElement>(".pt-toast-act")!.click();
     await flush();
     expect(top.querySelector(".pt-toast-text")!.textContent).toBe("沒做成：repin failed");
-  });
-});
-
-describe("the panel's own input", () => {
-  beforeEach(() => { ui.update("B1", view(pin("p-0001", { handle: "Deploy" }))); ui.open("p-0001"); });
-
-  it("sends '@handle words' the way a typed message goes, and empties the box; empty words send nothing", () => {
-    submit("   ");
-    expect(send).not.toHaveBeenCalled();
-    submit("  先停一下  ");
-    expect(send).toHaveBeenCalledWith("@Deploy 先停一下");
-    expect(overlay.querySelector<HTMLInputElement>(".pt-input")!.value).toBe("");
-  });
-
-  it("sends a double tap once and says 剛送過了, and lets the next one through when the thread has the line, or after 4 seconds", () => {
-    submit("go");
-    submit("go");
-    submit("again");
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(overlay.querySelector(".pt-hint")!.textContent).toBe("剛送過了");
-    const turn = { rid: "r1", q: "go", a: null, qAt: clock, postedAt: null, seenAt: null, aAt: null, via: "at" as const };
-    ui.update("B1", view(pin("p-0001", { handle: "Deploy", thread: [turn] })));
-    submit("second");
-    expect(send).toHaveBeenCalledTimes(2);
-    submit("third");
-    expect(send).toHaveBeenCalledTimes(2);
-    clock += 4_000;
-    submit("third");
-    expect(send).toHaveBeenCalledTimes(3);
-  });
-
-  it("holds a send per card: another card's box is not blocked", () => {
-    ui.update("B1", view(pin("p-0001", { handle: "Deploy" }), pin("p-0002", { handle: "Other" })));
-    submit("one");
-    ui.open("p-0002");
-    submit("two");
-    expect(send.mock.calls.map(([text]) => text)).toEqual(["@Deploy one", "@Other two"]);
-  });
-
-  it("forgets a held send when the chat is another bot's", () => {
-    submit("one");
-    ui.update("B2", view(pin("p-0001", { handle: "Deploy" })));
-    ui.open("p-0001");
-    submit("one");
-    expect(send).toHaveBeenCalledTimes(2);
   });
 });
 

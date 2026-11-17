@@ -2,7 +2,7 @@ import type { CcbWeb } from "../../../../Web/src/plugins";
 import type { ChatState } from "../../../../Web/src/types";
 import type { PinsView } from "./digest";
 import { parseAsk, stripBriefing, type TraceData } from "./model";
-import { PinUi, pinIcon } from "./ui";
+import { PinUi, closeIcon, pinIcon } from "./ui";
 import { wordsFor } from "./words";
 
 export const PLUGIN = "botling.pin-area";
@@ -25,20 +25,49 @@ export function traceOf(raw: unknown): TraceData | null {
 }
 
 /**
- * Pin 區: the strip of cards above the chat (the page's `topArea` slot), the panel a card opens (the `overlay` slot), the 釘選 button
+ * Pin 區: the strip of cards above the chat (the page's `topArea` slot), the card a row opens in place (it has no box of its own: the input box gets a 「回覆到」 chip), the 釘選 button
  * on every message, and the cards in the input box's @ list (`ccb.composer.mentionSource`). What a card is, who may change it and where a
  * message written into it goes is the program part's (pins.ts); this draws what it publishes and sends what the user does.
  */
 export function activate(ccb: CcbWeb): () => void {
   const words = wordsFor(() => ccb.page.language());
   let botId = "";
-  const ui = new PinUi(ccb.page.slots.topArea, ccb.page.slots.overlay, {
+  // 「回覆到 <card>」 in the input box while a card is open: a standing chip (it stays after a send) that puts "@p-0001 " before the words,
+  // so what is typed goes into that card (the program part's beforeSend does the rest). Its ✕ leaves the card.
+  let replyChip: { remove(): void } | null = null;
+  const ui: PinUi = new PinUi(ccb.page.slots.topArea, {
     call: (method, params) => ccb.call(method, params),
-    send: (text) => ccb.page.post({ type: "send", text }),
     words,
     now: () => Date.now(),
-    reduceMotion: () => !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
     openChat: (id, messageId) => ccb.page.openChat(id, messageId),
+    focusComposer: () => ccb.composer.view.focus(),
+    chip: (card) => {
+      replyChip?.remove();
+      replyChip = null;
+      if (!card) return;
+      replyChip = ccb.composer.chips.add({
+        standing: true,
+        prefix: () => `@${card.id} `,
+        serialize: () => "",
+        render: () => {
+          const chip = document.createElement("span");
+          chip.className = "pt-chip";
+          const leave = document.createElement("button");
+          leave.type = "button";
+          leave.className = "pt-chip-x";
+          leave.title = words("chip.leave");
+          leave.setAttribute("aria-label", words("chip.leave"));
+          leave.append(closeIcon());
+          leave.addEventListener("click", () => ui.close(true));
+          const title = document.createElement("b");
+          title.textContent = card.title;
+          const label = document.createElement("span");
+          label.textContent = words("chip.reply");
+          chip.append(label, title, leave);
+          return chip;
+        },
+      });
+    },
   });
   // 「你不在時」: a sign that the user is here, at most once a minute (the program part decides what a gap of 30 minutes means).
   const signs = new AbortController();
