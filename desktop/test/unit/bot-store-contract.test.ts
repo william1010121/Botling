@@ -364,6 +364,26 @@ describe("DbBotStore", () => {
       await hosts.close();
     });
 
+    it("a row whose seq and record are cut from the stored text but whose record text is spaced is not rewritten while unchanged, and an edit writes one row", async () => {
+      const { db, lines, hosts, runs } = await persisted(4);
+      const spaced = chatKey(db, lines[1].id);
+      await db.submit((tx) => {
+        const stored = JSON.parse(String(tx.prepare("SELECT body FROM rows WHERE stream = 'chat:bot' AND key = ?").get(spaced)?.body)) as { seq: number; record: unknown };
+        // The head is the compact one chatBody writes, so the record's own text is taken as stored, spaces and all.
+        tx.prepare("UPDATE rows SET body = ? WHERE stream = 'chat:bot' AND key = ?").run(`{"seq":${stored.seq},"record":${JSON.stringify(stored.record, null, 2)}}`, spaced);
+      });
+      const store = hosts.open("bot", folder());
+      expect(store.loadMessages().records).toEqual(lines);
+      runs.length = 0;
+      store.saveMessages(lines);
+      await store.durable();
+      expect(runs).toEqual([]);
+      store.saveMessages(lines.map((l, i) => i === 1 ? { ...l, text: "edited" } : l) as ChatRecord[]);
+      await store.durable();
+      expect(runs).toEqual(["INSERT"]);
+      await hosts.close();
+    });
+
     it("a stored line that is not in the canonical form, or has an extra key, is not rewritten while it is unchanged, and an edit writes exactly one row", async () => {
       const { db, lines, hosts, runs } = await persisted(4);
       // Row 1: the same data with spaces in it. Row 2: an extra key beside seq and record (a hand-made row).

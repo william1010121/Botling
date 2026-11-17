@@ -262,6 +262,20 @@ describe("summary rows: botlingd's start builds each row once (holdUntilReconcil
   });
 });
 
+describe("summary rows: a running turn's text before the reconcile", () => {
+  it("while held, a turn's text marks no bot for a later write; after the reconcile it does", async () => {
+    const held = await setup({ hold: true, reconcile: false, views: { B1: view("B1") } });
+    emit(held, { type: "bot.updated", bot: view("B1") });
+    await held.settle();
+    emit(held, { type: "turn.delta", botId: "B1", turnId: "T1", messageId: "M1", text: " word" });
+    expect(held.summary.pending).toEqual([]);
+    await held.runtime.scope.submit((tx) => held.summary.reconcile(tx));
+    emit(held, { type: "turn.delta", botId: "B1", turnId: "T1", messageId: "M1", text: " more" });
+    expect(held.summary.pending).toEqual(["B1"]);
+    held.close();
+  });
+});
+
 describe("summary rows: tombstones", () => {
   it("bot.removed leaves a tombstone, catch-up carries it, and it is purged after 30 days (clock injected)", async () => {
     const s = await setup({ views: { B1: view("B1"), MAIN: view("MAIN", { role: "main", folder: "" }) } });

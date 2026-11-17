@@ -105,6 +105,7 @@ const CASES: Array<[string, Kind[], number]> = [
   ["thirty lines that all count", many(30, "bot"), 0],
   ["the newest eight are notices or empty: the three that count lie past the first six rows", [...many(12, "user"), ...many(4, "notice"), ...many(4, "empty")], 0],
   ["only two count inside the newest twenty", [...many(10, "user"), ...many(18, "notice"), "user", "bot"], 0],
+  ["the third that counts is the seventh newest row, right after the first read", [...many(13, "notice"), "user", "bot", "bot", ...many(4, "notice")], 0],
   ["one counts, at the twentieth row", [...many(10, "user"), "bot", ...many(19, "notice")], 0],
   ["none counts inside the newest twenty, though older ones do", [...many(10, "user"), ...many(20, "notice")], 0],
   ["seven open cards (five are shown)", many(25, "bot"), 7],
