@@ -19,7 +19,7 @@ describe("coordinator-only Claude monitors", () => {
     const t = transport();
     t.head.send("authorized work", "u1");
     expect(t.writes).toHaveLength(1);
-    expect(t.writes[0].request).toMatchObject({ subtype: "initialize", hooks: { PreToolUse: [{ matcher: "^Monitor$", hookCallbackIds: ["botling-monitor-owner"] }] } });
+    expect(t.writes[0].request).toMatchObject({ subtype: "initialize", hooks: { PreToolUse: [{ matcher: "^Monitor$", hookCallbackIds: ["botling-monitor-owner"] }, { matcher: "^(Bash|Monitor)$", hookCallbackIds: ["botling-background-cap"] }] } });
     t.receive({ type: "control_response", response: { subtype: "success", request_id: t.writes[0].request_id, response: {} } });
     expect(t.writes[1]).toMatchObject({ type: "user", uuid: "u1" });
   });
