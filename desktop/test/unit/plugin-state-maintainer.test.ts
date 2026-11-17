@@ -67,7 +67,7 @@ describe("MaintainerDesk: the lines Maintainer gets", () => {
 });
 
 describe("Plugins: an update tells the world, with the grant from the rows", () => {
-  function setup(grant: (name: string) => "none" | "read" | "request" | "write" | null, options: { builtIn?: boolean; noGrantRows?: boolean } = {}) {
+  function setup(grant: (name: string) => "none" | "read" | "request" | "write" | null, options: { builtIn?: boolean; noGrantRows?: boolean; updatedThrows?: boolean } = {}) {
     const dir = tempDir("plugin-state-plugins");
     const root = join(dir, options.builtIn ? "builtin" : "plugins");
     writePlugin(root, "design-duel", "1.0.0");
@@ -75,7 +75,7 @@ describe("Plugins: an update tells the world, with the grant from the rows", () 
     const updated: [string, string, boolean][] = [];
     const world = {
       bots: () => [], notice: (text: string) => { notices.push(text); }, changed: () => {}, broken: () => {}, log: () => {}, workspace: {}, workspaceWatch: () => {},
-      updated: (title: string, version: string, allowed: boolean) => { updated.push([title, version, allowed]); },
+      updated: (title: string, version: string, allowed: boolean) => { updated.push([title, version, allowed]); if (options.updatedThrows) throw new Error("no Maintainer"); },
     } as unknown as PluginWorld;
     const plugins = new Plugins({
       dataDir: dir, world, node: null, hostScript: "", sealer: null,
@@ -114,6 +114,15 @@ describe("Plugins: an update tells the world, with the grant from the rows", () 
     s.plugins.scan();
     s.plugins.scan();
     expect(s.updated).toHaveLength(1);
+  });
+
+  it("a hand-over to Maintainer that throws does not end the scan: the new version is taken and said once", () => {
+    const s = setup(() => "write", { updatedThrows: true });
+    s.bump("1.1.0");
+    s.plugins.scan();
+    expect(s.plugins.registry.plugins.map((plugin) => plugin.manifest.version)).toEqual(["1.1.0"]);
+    expect(s.updated).toHaveLength(1);
+    expect(s.notices).toEqual([`Plugin "Design Duel" updated: 1.0.0 → 1.1.0`]);
   });
 
   it("a core with no grant rows (pluginGrant unset) tells Maintainer nothing; the main bot's notice stays", () => {

@@ -118,7 +118,10 @@ export class Plugins {
       // Maintainer is told too, with the real grant (a plugin's approval belongs to the plugin, so it carries over a new version).
       // A core with no grant rows (`pluginGrant` unset) and a plain built-in (always allowed, not Maintainer's concern) say nothing.
       const grant = this.options.pluginGrant?.(plugin.manifest.name) ?? null;
-      if (grant !== null && (!plugin.builtIn || plugin.replacesBuiltIn)) world.updated?.(title(plugin.manifest), plugin.manifest.version, grant !== "none");
+      if (grant !== null && (!plugin.builtIn || plugin.replacesBuiltIn)) {
+        // A failed hand-over must not end the scan: the registry would not take the new version and say it again on every scan.
+        try { world.updated?.(title(plugin.manifest), plugin.manifest.version, grant !== "none"); } catch (error) { world.log(`Maintainer was not told of ${plugin.manifest.name}'s update: ${(error as Error).message}`); }
+      }
     };
     this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();
