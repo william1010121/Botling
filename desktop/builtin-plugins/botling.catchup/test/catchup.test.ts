@@ -47,6 +47,11 @@ describe("the messages that stay in view", () => {
     expect(ids(topCards(list))).toEqual([id(2), id(3), id(4)]);
   });
 
+  it("a line of yours with a card is not a reply: it is never picked", () => {
+    const list = [line(1, "bot"), line(2, "bot"), line(3, "bot"), line(4, "user", { displays: [{ name: "chart", data: "{}" }] })];
+    expect(ids(topCards(list))).toEqual([id(1), id(2), id(3)]);
+  });
+
   it("a notice or a relay is never picked as a plain reply, a notice with a card can be", () => {
     const list = [line(1, "bot"), line(2, "notice"), line(3, "relay"), line(4, "bot"), line(5, "bot"), line(6, "bot")];
     expect(ids(topCards(list))).toEqual([id(4), id(5), id(6)]);
