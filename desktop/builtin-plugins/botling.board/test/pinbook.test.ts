@@ -42,7 +42,7 @@ describe("pinning", () => {
 
   it("from the picker: the newest line that shows it with a command, else its component's Command", async () => {
     const { f, book } = setUp();
-    f.shownCards = [shown("gitlog", { data: `{"newest":1}` }, 1, "m2"), shown("gitlog", { data: `{"old":1}`, shownCommand: "git log -3" }, 0, "m1")];
+    f.shownCards = [shown("gitlog", { data: `{"newest":1}` }, 1, "m2"), shown("gitlog", { data: `{"old":1}`, command: "git log -3", shownCommand: "git log -3" }, 0, "m1")];
     expect(await book.add(BOT, "bb-1", { name: "gitlog" }, "shown", 15)).toEqual({ pinned: true });
     // A newer line of plain data is not what is pinned: the older line that carried a command is.
     expect(f.stored.get(BOT)![0]).toMatchObject({ name: "gitlog", command: "git log -3", data: `{"old":1}` });
