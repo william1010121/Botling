@@ -19,7 +19,13 @@
     ],
     "settings": {
       "botling.catchup.unread": true,
-      "botling.catchup.unreadThreshold": 3
+      "botling.catchup.interval": false,
+      "botling.catchup.customThresholds": false,
+      "botling.catchup.unreadThreshold": 3,
+      "botling.catchup.intervalThreshold": 3,
+      "botling.catchup.engine": "codex",
+      "botling.catchup.model": "gpt-6-luna",
+      "botling.catchup.prompt": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written."
     },
     "builtIn": true,
     "commands": []

@@ -22,8 +22,8 @@ import { Group, Row, Segmented, Toggle, why } from "./settings-controls";
 import { resolveSection, settingsNav, type SettingsSection } from "./settings-pages";
 import { useCoreSettings } from "./settings-slot";
 import { usePluginSettings } from "./settings-feed";
-import { ModelsWorkers, type CodexModelOption } from "./ModelsWorkers";
-import { CatchUpSettings } from "./catch-up-settings";
+import { ModelsWorkers } from "./ModelsWorkers";
+import { ChatSummaries, type CodexModelOption } from "./chat-summaries";
 export { BotSettings } from "./BotPanelSettings";
 export type { SettingsSection } from "./settings-pages";
 
@@ -104,10 +104,10 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "general" && <General settings={shown} change={change} onNavigate={go} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} bot={bot} />}
             {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} plugins={plugins} />}
-            {shown && current?.id === "models" && <ModelsWorkers client={client} settings={shown} change={change} bots={bots} modelBotId={modelBotId} codexModels={codexModels} onNavigate={go}
+            {shown && current?.id === "models" && <ModelsWorkers client={client} settings={shown} change={change} bots={bots} modelBotId={modelBotId} codexModels={codexModels} plugins={plugins} onProblem={setProblem} onNavigate={go}
               onOpenBot={onOpenBot ? (botId) => { onOpenBot(botId); onClose(); } : undefined} />}
             {shown && current?.id === "permissions" && <Permissions client={client} settings={shown} change={change} />}
-            {shown && current?.id === "chat" && <ChatAndReports client={client} settings={shown} change={change} plugins={plugins} onProblem={setProblem} />}
+            {shown && current?.id === "chat" && <ChatAndReports client={client} settings={shown} change={change} plugins={plugins} onProblem={setProblem} onNavigate={go} />}
             {current?.id === "setup" && <EngineSetup client={client} settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} bots={bots} lang={settings?.effectiveLanguage ?? null}
               onShowMain={onOpenBot && bots.find((one) => one.role === "main") ? () => { onOpenBot(bots.find((one) => one.role === "main")!.id); onClose(); } : undefined} />}
@@ -146,7 +146,8 @@ function General({ settings, change, onNavigate }: { settings: SettingsView; cha
       </Group>
       <Group title="Moved from here">
         <Row label="Chat avatar size"><button type="button" className="settings-link" onClick={() => onNavigate("appearance")}>Appearance</button></Row>
-        <Row label="Catch-up"><button type="button" className="settings-link" onClick={() => onNavigate("chat")}>Chat &amp; reports</button></Row>
+        <Row label="Chat summaries"><button type="button" className="settings-link" onClick={() => onNavigate("chat")}>Chat &amp; reports</button></Row>
+        <Row label="Summary model"><button type="button" className="settings-link" onClick={() => onNavigate("models")}>Models &amp; workers</button></Row>
       </Group>
     </>
   );
@@ -274,10 +275,10 @@ export function AntigravityPermissions({client,settings,change}: {client:Client;
   </Group>;
 }
 
-/** Settings → Chat & reports: catch-up (botling.catchup) and how reports are published. */
-function ChatAndReports({ client, settings, change, plugins, onProblem }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; plugins: PluginsView | null; onProblem: (problem: string | null) => void }) {
+/** Settings → Chat & reports: chat summaries (botling.catchup) and how reports are published. */
+function ChatAndReports({ client, settings, change, plugins, onProblem, onNavigate }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; plugins: PluginsView | null; onProblem: (problem: string | null) => void; onNavigate: (section: SettingsSection) => void }) {
   return <>
-    <CatchUpSettings client={client} plugins={plugins} onProblem={onProblem} />
+    <ChatSummaries client={client} plugins={plugins} onProblem={onProblem} onModel={() => onNavigate("models")} />
     <Group title="Reports and results" note="What a bot does with a report or a page it made.">
       <Row label="Publish as"><PublishAs settings={settings} change={change} /></Row>
     </Group>

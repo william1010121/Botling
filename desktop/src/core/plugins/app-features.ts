@@ -105,6 +105,8 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
   "botling.cards": [],
   "botling.catchup": [
     "api.chat.decorate", "api.chat.messages",
+    "api.engines.cli",
+    "api.settings.app",
     "ccb.decorations.register",
     "ccb.messages.media", "ccb.messages.render",
   ],

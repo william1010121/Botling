@@ -58,7 +58,7 @@
     {
      "id": "models",
      "title": "Models & workers",
-     "terms": "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast component editor spec writers"
+     "terms": "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast summaries summary model component editor spec writers"
     },
     {
      "id": "permissions",
@@ -68,7 +68,7 @@
     {
      "id": "chat",
      "title": "Chat & reports",
-     "terms": "chat catch-up unread fold away threshold reports publish artifact local html results"
+     "terms": "chat summaries catch-up unread interval threshold prompt reports publish artifact local html results"
     }
    ]
   },
@@ -184,7 +184,7 @@
     {
      "id": "models",
      "title": "Models & workers",
-     "terms": "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast component editor spec writers"
+     "terms": "engines models head workers subagents effort thinking reasoning claude codex antigravity haiku sonnet opus default new bots primary apply all bots own settings prompt cache hour limit at once context window compact config.toml fast summaries summary model component editor spec writers"
     },
     {
      "id": "permissions",
@@ -194,7 +194,7 @@
     {
      "id": "chat",
      "title": "Chat & reports",
-     "terms": "chat catch-up unread fold away threshold reports publish artifact local html results"
+     "terms": "chat summaries catch-up unread interval threshold prompt reports publish artifact local html results"
     }
    ]
   },
