@@ -51,9 +51,9 @@ export function installShotWrapper(command: readonly string[], dirs: readonly st
     const file = join(dir, SHOT_WRAPPER);
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      // A folder someone else owns, or others may write to, could swap the script for theirs: not a place for it.
+      // A folder someone else owns, or anyone may write to, could swap the script for theirs: not a place for it.
       const folder = statSync(dir);
-      if (!folder.isDirectory() || (folder.mode & 0o022) !== 0 || (typeof process.getuid === "function" && folder.uid !== process.getuid())) continue;
+      if (!folder.isDirectory() || (folder.mode & 0o002) !== 0 || (typeof process.getuid === "function" && folder.uid !== process.getuid())) continue;
       let same = false;
       try {
         const stat = lstatSync(file);
