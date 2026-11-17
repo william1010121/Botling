@@ -42,9 +42,9 @@
     },
     {
       "name": "botling.catchup",
-      "title": "Catch-up",
+      "title": "Chat summaries",
       "version": "1.0.0",
-      "description": "Coming back to a chat with many unread replies keeps the few that matter in view (a question waiting for you, errors, cards, the newest replies) and folds the rest behind a small header. Nothing is summarized and no model is called. Settings → Chat & reports.",
+      "description": "Coming back to a chat with many unread replies folds them into one card with a short summary; stretches between your messages can be summarized too. Each point links back to the messages it comes from. Settings → General → Chat summaries.",
       "enabled": true,
       "failure": null,
       "hostState": "starting",
@@ -61,13 +61,35 @@
         {
           "key": "botling.catchup.unread",
           "type": "boolean",
-          "title": "Fold unread replies when you come back",
+          "title": "Summarize unread messages",
           "options": [],
           "secret": false,
           "value": true,
           "set": true,
           "hidden": true,
           "default": true
+        },
+        {
+          "key": "botling.catchup.interval",
+          "type": "boolean",
+          "title": "Summarize between your messages",
+          "options": [],
+          "secret": false,
+          "value": false,
+          "set": true,
+          "hidden": true,
+          "default": false
+        },
+        {
+          "key": "botling.catchup.customThresholds",
+          "type": "boolean",
+          "title": "Adjust thresholds individually",
+          "options": [],
+          "secret": false,
+          "value": false,
+          "set": true,
+          "hidden": true,
+          "default": false
         },
         {
           "key": "botling.catchup.unreadThreshold",
@@ -79,6 +101,54 @@
           "set": true,
           "hidden": true,
           "default": 3
+        },
+        {
+          "key": "botling.catchup.intervalThreshold",
+          "type": "number",
+          "title": "Interval threshold",
+          "options": [],
+          "secret": false,
+          "value": 3,
+          "set": true,
+          "hidden": true,
+          "default": 3
+        },
+        {
+          "key": "botling.catchup.engine",
+          "type": "enum",
+          "title": "Summary model engine",
+          "options": [
+            "codex",
+            "claude",
+            "agy"
+          ],
+          "secret": false,
+          "value": "codex",
+          "set": true,
+          "hidden": true,
+          "default": "codex"
+        },
+        {
+          "key": "botling.catchup.model",
+          "type": "string",
+          "title": "Summary model",
+          "options": [],
+          "secret": false,
+          "value": "gpt-6-luna",
+          "set": true,
+          "hidden": true,
+          "default": "gpt-6-luna"
+        },
+        {
+          "key": "botling.catchup.prompt",
+          "type": "string",
+          "title": "Summary prompt",
+          "options": [],
+          "secret": false,
+          "value": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.",
+          "set": true,
+          "hidden": true,
+          "default": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written."
         }
       ],
       "commands": [],

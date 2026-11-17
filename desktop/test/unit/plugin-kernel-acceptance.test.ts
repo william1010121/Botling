@@ -95,14 +95,14 @@ it("the plugin set is the built-ins plus the two fixtures, with their real contr
 
 /** The step-1 goldens' sha256: first recorded on the unchanged code (commit de71d3a0) before any kernel change, and updated whenever a golden is re-recorded on purpose (see test/kernel-goldens.ts). */
 const GOLDENS: Record<string, string> = {
-  "contributions-after-disable.json": "ef9a018c859b5a366de3065b219a66f7c076a4524d40f81d2bf33f580b05741b",
-  "contributions-with-keys.json": "e99259a3a5e2ed44bc9ff8fd1c7382b2c8c1895c909aec07494568f3257319ef",
-  "contributions.json": "1a4d3fcba41a0cbd2c62233626c741635ee3920d39c0259f45e51f3dfb015a2c",
+  "contributions-after-disable.json": "fea6218eab308217ead8aaaa717c0fe833a794d25104786c1d97fd845d563ded",
+  "contributions-with-keys.json": "a7733dfba95aee4c5fae4d5d2cc8e48c99a07b1fb41c9936eda33b1868de4f9a",
+  "contributions.json": "1300c822b43c153cbe4a55c8288fa21c531bc5366f3312b86d4da8b458cbe312",
   "frame-broker.json": "f67f7ec2d79045d56ed018b5f03b663da140217a2982942daa3f5afb0656e37d",
   "host-session.json": "8ac71e51dbc22cfbad46f5bc39ee8fa224488944a82e40f57f0a4901470ff02b",
-  "plugins-list.json": "977a4169e0097b9fe3eaaf7a350e3a5592803e4268c8d5fd82391ddca6f15fd4",
+  "plugins-list.json": "53cb41fa05331d839065bbba72bbbb6315686600fad239c8273d917bf5a422df",
   "plugins-panel.json": "39e47e75107595072f392d137dc610f36219ed36ff602848c28f48464a0dfa66",
-  "plugins-web.json": "8df13a9d018d3d41be608e1dfa9d70ee328f0074802487ad673f3fcc4e155831",
+  "plugins-web.json": "36b0616c1168a223e0aced38f11ab51d87d37d861bdff33bdcc3a5fa8dce18f3",
   "registry-plugins.json": "c10ae4efe15b4a6c89bf9d1bcef7894e1589c8fdf6003bb98f219daaadb0aa84",
   "view-surfaces-after-disable.json": "38bf50ab0eb92ddfd3dd36a7b1fdaa54b37346de10f8d9924080ad746701a8d7",
   "view-surfaces.json": "ffb4909260f33b17770ef8380c839961e1f4971e4800b8a8b6d21f47cc94a695",

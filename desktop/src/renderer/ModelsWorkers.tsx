@@ -1,18 +1,18 @@
 // Settings → Models & workers: the one place for which model does what. Pick an engine (Claude | Codex | Antigravity)
 // and see only its defaults: a Bot head × Workers table of model and effort, with a short model guide; then what new
 // bots start with, one folded line for the bots that use their own settings (changed in each bot's panel), and the
-// special jobs (the component editor, who may change spec/). The defaults reach bots as before: new bots
+// special jobs (summaries, the component editor, who may change spec/). The defaults reach bots as before: new bots
 // start with them, and the workers' ones go to every bot when changed (server.ts).
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import type { BotSettingsView, BotView, SettingsChange, SettingsView } from "../contract";
+import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView } from "../contract";
 import type { Client } from "./client";
 import { useModelDiscovery } from "./ModelPicker";
 import { workerLimitWords } from "./worker-limit-text";
 import { CLAUDE_MODELS, claudeCustom, EFFORTS, EffortControl, Group, ModelSelect, Row, SelectSetting, Toggle, why } from "./settings-controls";
 import { choiceLabel, defaultsChange, ENGINE_NAMES, ownChoices, tokensLabel, type EngineId } from "./bot-defaults";
+import { SummaryModelRow, type CodexModelOption } from "./chat-summaries";
 import type { SettingsSection } from "./settings-pages";
 
-export type CodexModelOption = { id: string; name: string; isDefault: boolean };
 type Change = (next: SettingsChange) => Promise<boolean>;
 const WORKER_LIMITS = Array.from({ length: 16 }, (_, i) => i + 1);
 
@@ -39,9 +39,9 @@ const WHEN: Record<EngineId, string> = {
 };
 const effortName = (id: string | null | undefined) => EFFORTS.find((effort) => effort.id === id)?.label ?? id ?? null;
 
-export function ModelsWorkers({ client, settings, change, bots, modelBotId, codexModels, onNavigate, onOpenBot }: {
+export function ModelsWorkers({ client, settings, change, bots, modelBotId, codexModels, plugins, onProblem, onNavigate, onOpenBot }: {
   client: Client; settings: SettingsView; change: Change; bots: BotView[]; modelBotId: string | null; codexModels: CodexModelOption[];
-  onNavigate: (section: SettingsSection) => void; onOpenBot?: (botId: string) => void;
+  plugins: PluginsView | null; onProblem: (problem: string | null) => void; onNavigate: (section: SettingsSection) => void; onOpenBot?: (botId: string) => void;
 }) {
   const defaults = settings.engineDefaults;
   const [engine, setEngine] = useState<EngineId>(defaults.engines[0] ?? "claude");
@@ -79,6 +79,7 @@ export function ModelsWorkers({ client, settings, change, bots, modelBotId, code
       <p className="settings-note">Effort: higher thinks longer — better on hard problems, slower, and uses more of your limits. Only the levels this engine supports are shown.</p>
       <NewBots client={client} settings={settings} change={change} bots={bots} onOpenBot={onOpenBot} />
       <Group title="Special jobs">
+        <SummaryModelRow client={client} plugins={plugins} codexModels={codexModels} modelBotId={modelBotId} onProblem={onProblem} onOptions={() => onNavigate("chat")} />
         <Row label="Component editor" hint="The maintainer’s plugin editor. Applies when the app next starts.">
           <SelectSetting label="Component editor's model" options={CLAUDE_MODELS} custom={claudeCustom} value={settings.componentEditorModel} onChange={(value) => { if (value) void change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
         </Row>

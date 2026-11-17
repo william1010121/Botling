@@ -5,6 +5,7 @@
 //    is read into that turn or answered in a turn of its own, and what command_lifecycle says.
 // 2. `codex app-server` (no model call): a monitored command through `command/exec` with the exact
 //    parameters the Codex head sends (sandbox said explicitly, network off, output cap).
+// 3. Catch-up's isolated `codex exec` summary of three messages, with source cites.
 // Codex runs with a throwaway CODEX_HOME holding only a copy of auth.json (deleted afterwards).
 import { afterAll, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
@@ -15,6 +16,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { ClaudeHead } from "../../src/core/agent/head";
 import type { StreamItem } from "../../src/core/agent/stream";
+import { codexSummarizer, summaryPrompt } from "../../builtin-plugins/botling.catchup/src/catchup";
 import type { ChatRecord } from "../../src/core/store/records";
 import { tempDir, until } from "../helpers";
 
@@ -85,4 +87,20 @@ describe.skipIf(!live)("Phase 3a, real CLIs", () => {
     expect(answer.result).toMatchObject({ exitCode: 3 });
     expect(answer.result.stdout).toContain("monitored");
   }, 120_000);
+
+  it("Catch-up: the isolated read-only codex exec writes 1–5 bullets citing the messages", async () => {
+    const at = (offset: number) => (Date.now() - Date.UTC(2001, 0, 1)) / 1000 + offset;
+    const messages: ChatRecord[] = [
+      { id: "11111111-0000-4000-8000-000000000001", role: "bot", text: "The build passed: 214 tests, 0 failures.", date: at(0), engine: "claude" },
+      { id: "11111111-0000-4000-8000-000000000002", role: "bot", text: "Deploy to staging is still running (step 3 of 5).", date: at(60), engine: "codex" },
+      { id: "11111111-0000-4000-8000-000000000003", role: "bot", text: "Should I merge PR #42 now or wait for review?", date: at(120), engine: "claude", choices: [{ label: "Merge now", recommended: true }, { label: "Wait", recommended: false }] },
+    ];
+    const prompt = summaryPrompt(messages, null, (m) => `Garden · ${m.engine === "codex" ? "Codex" : "Claude"}`);
+    const summarize = codexSummarizer({ file: "codex", env: { CODEX_HOME: home() } }, 120_000);
+    const bullets = await summarize(prompt, process.env.BOTLING_CATCHUP_MODEL ?? "gpt-6-luna", "en");
+    report("catch-up bullets", bullets);
+    expect(bullets.length).toBeGreaterThanOrEqual(1);
+    expect(bullets.length).toBeLessThanOrEqual(5);
+    expect(bullets.join("\n")).toMatch(/\[\[source:11111111-0000-4000-8000-00000000000[123]/);
+  }, 180_000);
 });

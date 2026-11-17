@@ -10,7 +10,7 @@ const make = (n: number, fold: string[], botID = "flick"): ChatState => withSumm
   botID, botName: "Garden",
   messages: Array.from({ length: n }, (_, i) => line(`m${i}`, i % 4 === 0 ? "user" : "bot")),
   working: false, avatar: "face", placeholder: "", replyingTo: null, pendingFiles: [], components: {},
-  catchUp: { key: "k", kind: "unread", ids: fold, important: 3 },
+  catchUp: { key: "k", kind: "unread", ids: fold, count: fold.length, heads: null, state: "ready", bullets: ["a"], error: null, model: "m", since: null, until: null, latest: null, manual: false, automatic: false, speakerCounts: null, requestedBy: null } as never,
 });
 const order = () => [...document.querySelectorAll<HTMLElement>("#messages > *")].map((e) => e.dataset.id ?? (e.classList.contains("decoration-extra") ? "DECO" : e.className));
 
@@ -30,7 +30,7 @@ describe("streaming updates", () => {
   });
 });
 
-describe("a fold of old messages", () => {
+describe("a summary of old messages", () => {
   it("is not drawn while those messages are not mounted, and never at the end of the list", () => {
     window.ccb.setState(make(160, ["m3", "m4", "m5"], "old-bot"));
     expect(document.querySelector("#messages > .row")?.getAttribute("data-id")).toBe("m110");

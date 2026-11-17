@@ -6,6 +6,7 @@ import { ClaudeHead, type HeadExit } from "../../src/core/agent/head";
 import { CodexHead, CodexThreads } from "../../src/core/agent/codex";
 import { AgentTurn, type TurnOutcome } from "../../src/core/agent/runner";
 import { askModels } from "../../src/core/agent/codex-models";
+import { codexSummarizer } from "../../builtin-plugins/botling.catchup/src/catchup";
 import { fakeCli, fakeCodex, tempDir, until } from "../helpers";
 
 const heads: (ClaudeHead | CodexHead)[] = [];
@@ -103,5 +104,11 @@ describe.skipIf(process.platform === "win32")("CLI launch from Finder's minimal 
     install(home, "codex");
     const models = await askModels({ file: "codex", env }, 3000);
     expect(models.length).toBeGreaterThan(0);
+  });
+
+  it("starts Codex's summary subprocess under the same minimal PATH", async () => {
+    const { home, env } = guiHome();
+    install(home, "codex");
+    expect(await codexSummarizer({ file: "codex", env }, 3000)("hello", "test-model", "en")).toEqual(["Nothing to say."]);
   });
 });
