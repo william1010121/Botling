@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition } from "../../src/core/agent/claude-workers";
+import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition, type RemoteWorkerHost } from "../../src/core/agent/claude-workers";
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
 import { API_RETRY_NOTE } from "../../src/core/api-retry";
