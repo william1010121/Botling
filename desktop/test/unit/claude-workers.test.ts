@@ -682,14 +682,16 @@ describe("a held run and the tree checks of earlier processes (spec/models/worke
 describe("workerExtraDirs: a worktree folder outside the project stays a working folder (so its Bash cd sticks)", () => {
   it("adds an existing folder from settings.json to the worker's --add-dir, keeps the head's own, and skips a missing one", async () => {
     const work = mkdtempSync(join(tmpdir(), "botling-work-dir-"));
-    const missing = join(work, "not-mounted");
-    const h = harness(undefined, { base: { command: "claude", cwd: "/elsewhere", sessionId: "coordinator", resume: true, allowedTools: ["Read"], addDirs: ["/bot/inbox"], model: "opus", effort: "high" }, extraDirs: () => [work, missing, work] });
+    const missing = join(work, "not-mounted"), file = join(work, "a-file");
+    writeFileSync(file, "x");
+    const h = harness(undefined, { base: { command: "claude", cwd: "/elsewhere", sessionId: "coordinator", resume: true, allowedTools: ["Read"], addDirs: ["/bot/inbox"], model: "opus", effort: "high" }, extraDirs: () => [work, missing, file, work] });
     await h.workers.tool("app_handoff", { name: "Build", instructions: "go" });
     const config = h.heads[0]!.config;
     expect(config.addDirs).toEqual(["/bot/inbox", work]);
     const args = headArguments(config);
     expect(args.slice(args.indexOf("--add-dir"))).toEqual(expect.arrayContaining(["--add-dir", work]));
     expect(args).not.toContain(missing);
+    expect(args).not.toContain(file);
   });
 
   it("reads the folders again for each new process, so a settings.json change reaches the next worker", async () => {
@@ -727,6 +729,7 @@ describe("workerExtraDirs: a worktree folder outside the project stays a working
     expect(workerExtraDirs({})).toEqual([]);
     expect(workerExtraDirs({ workerExtraDirs: "/x" } as any)).toEqual([]);
     expect(workerExtraDirs({ workerExtraDirs: ["/Volumes/My-SSD/botling-work/", "relative/dir", 3, "", "/Volumes/My-SSD/botling-work", "/a\nb"] } as any)).toEqual(["/Volumes/My-SSD/botling-work"]);
+    expect(workerExtraDirs({ workerExtraDirs: Array.from({ length: 25 }, (_, i) => `/d${i}`) } as any)).toHaveLength(20);
     expect(launchSettings({ workerExtraDirs: ["/w"] } as any).workerExtraDirs).toEqual(["/w"]);
     expect(launchSettings({}).workerExtraDirs).toEqual([]);
   });
