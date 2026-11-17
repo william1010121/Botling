@@ -112,8 +112,8 @@ linked to and the ones you dragged in; drag a row onto a web page in the Browser
 ### 3. One click turns a reply into a component
 
 Press the cube button beside any reply, add a suggestion if you like, and the bot gathers the data
-behind that reply again and answers once more as a visual report (a chart or report block, a page
-only when it is long). If no component fits, it asks the Maintainer for one. A bot can also add a
+behind that reply again and answers once more as a visual report (a report block, an inline chart
+or a picture of a chart, a page only when it is long). If no component fits, it can offer one. A bot can also add a
 suggestion chip when it sees something you will ask for again: press it and the Maintainer builds
 the first version, reusing a library component when one already does the job.
 
