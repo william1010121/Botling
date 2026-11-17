@@ -46,7 +46,9 @@ export const inlineReportRule = (text: string): string => text.replace(REPORT_RU
 
 /** The results rule's list of what goes to a page (prompts.ts), and the same list without comparisons for a bot with the inline guidance. */
 export const RESULTS_LIST = "Results meant for the user (reports, comparisons, screenshots, previews)";
-export const RESULTS_LIST_INLINE = "Results meant for the user (reports, screenshots, previews)";
+export const RESULTS_LIST_INLINE = "Results meant for the user go inline in the chat by default (inline blocks, below); screenshots, previews, really long content and pages the user asks for";
+/** Added to the end of the Claude worker handoff line for a bot with the inline guidance (not the main bot): what a worker hands back (2026-11-18, the user: "其他時候都應該使用行內組件"). */
+export const INLINE_HANDOFF_SENTENCE = "A worker hands back ready-to-paste inline component JSON (inline-chart, inline-report-block), plus a read-only script in .bot/card-scripts/<name>/ that prints it when numbers need gathering; ask for a page only if the user asked or the content is really long.";
 
 /** What the components rule says of Maintainer, and of <plugin>, for a bot with the inline guidance: the inline blocks are the bot's own. */
 export const INLINE_COMPONENTS_NOTE = "  The exception is a built-in component (the inline blocks, below): every bot has them, and no request to Maintainer is needed to show one.";
