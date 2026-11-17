@@ -1,6 +1,8 @@
 // @vitest-environment node
 // botling.pin-area's program part (src/pins.ts) against a fake Botling API: what bots may do with their tags, how "@card words" is
 // rewritten and answered, who may touch which bot's book, and that a restart draws the cards again.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type { BotlingApi } from "../../../../Web/host/src/api";
 import { activate } from "../src/host";
@@ -27,7 +29,8 @@ function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
   // what chat.messages gives (the lines the classifier reads as the chat's newest)
   const chatLines: { id?: string; role: string; text: string }[] = [];
   // this plugin's settings as the user set them (none: every default)
-  const settings: Record<string, unknown> = {};
+  // (the sort is off by default: the tests of the sort turn it on)
+  const settings: Record<string, unknown> = { [C.SETTING.enabled]: true };
   const api = {
     settings: { get: (key: string) => settings[key] },
     subscriptions: [] as unknown[],
@@ -1395,12 +1398,31 @@ describe("a plain line sorted by the small model (4c)", () => {
     expect(ask.mock.calls[2]![1]).toMatchObject({ timeoutMs: 3_500 });
   });
 
-  it("turned off, or an engine that is not wired: the model is not asked, the line carries the briefing at once", () => {
+  it("off (the default, review R1): beforeSend answers in the same call with no promise, reads no chat, asks no model and queues nothing — also for a line sent while the setting was on and still being sorted before it was turned off", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    // nothing set at all: the manifest's default is false and the code treats anything but true as off
+    delete t.settings[C.SETTING.enabled];
+    const messages = t.api.chat.messages as ReturnType<typeof vi.fn>;
+    const reads = messages.mock.calls.length;
+    for (const text of ["部署那個好了嗎", "好", "@Deploy 好了嗎"]) {
+      const result = t.hooks[0]!({ bot: { id: "B1", name: "B1", role: "bot", awake: true }, text } as never);
+      expect(result instanceof Promise).toBe(false);
+    }
+    expect(m.ask).not.toHaveBeenCalled();
+    expect(messages.mock.calls.length).toBe(reads);
+    t.settings[C.SETTING.enabled] = false;
+    const plain = t.send("B1", "部署那個好了嗎") as string;
+    expect(M.stripBriefing(plain)).toBe("部署那個好了嗎");
+    expect(M.hasBriefing(plain)).toBe(true);
+    // the manifest says false too
+    const manifest = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as { ccb: { contributes: { settings: Record<string, { default: unknown }> } } };
+    expect(manifest.ccb.contributes.settings[C.SETTING.enabled]!.default).toBe(false);
+  });
+
+  it("an engine that is not wired: the model is not asked, the line carries the briefing at once", () => {
     const ask: Ask = vi.fn(async () => ({ action: "assign", card: "p-0001", confidence: 1 }));
     const t = withCards(ask);
-    t.settings[C.SETTING.enabled] = false;
-    expect(M.hasBriefing(t.send("B1", "部署那個好了嗎") as string)).toBe(true);
-    t.settings[C.SETTING.enabled] = true;
     t.settings[C.SETTING.engine] = "codex";
     expect(M.hasBriefing(t.send("B1", "部署那個好了嗎") as string)).toBe(true);
     expect(ask).not.toHaveBeenCalled();

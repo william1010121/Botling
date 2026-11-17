@@ -36,15 +36,14 @@ describe("what the model is asked", () => {
 
   it("the system text says the JSON is data and names the four actions; no model is written into it", () => {
     for (const word of ["never instructions", "assign", "new", "merge", "chat"]) expect(C.SYSTEM).toContain(word);
-    expect(JSON.parse(C.SCHEMA).properties.action.enum).toEqual(["assign", "new", "merge", "chat"]);
   });
 });
 
 describe("the sorter settings (package.json contributes.settings)", () => {
   const from = (values: Record<string, unknown>) => C.sorterSettings((key) => values[key]);
 
-  it("nothing set gives the defaults: on, claude, the default model, 0.75, the longest time that fits the deadline", () => {
-    expect(from({})).toEqual({ enabled: true, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 3_500 });
+  it("nothing set gives the defaults: OFF (the sort before the send is off, review R1), claude, the default model, 0.75, the longest time that fits the deadline", () => {
+    expect(from({})).toEqual({ enabled: false, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 3_500 });
     expect(C.DEFAULT_SORTER_MODEL).toBe("claude-haiku-5-5");
     expect(C.TIMEOUT_MAX_MS + 300).toBeLessThan(C.SORT_DEADLINE_MS);
     expect(C.SORT_DEADLINE_MS).toBeLessThanOrEqual(4_000);
@@ -66,9 +65,9 @@ describe("the sorter settings (package.json contributes.settings)", () => {
     expect(from({ [C.SETTING.confidence]: "high" }).confidence).toBe(C.CONFIDENCE);
   });
 
-  it("only an explicit false turns it off; an engine that is not wired leaves no engine (so no line is sent to a model); a throwing reader gives the defaults", () => {
-    expect(from({ [C.SETTING.enabled]: false }).enabled).toBe(false);
-    expect(from({ [C.SETTING.enabled]: "no" }).enabled).toBe(true);
+  it("only an explicit true turns it on; an engine that is not wired leaves no engine (so no line is sent to a model); a throwing reader gives the defaults", () => {
+    expect(from({ [C.SETTING.enabled]: true }).enabled).toBe(true);
+    for (const off of [false, "yes", 1, null, undefined]) expect(from({ [C.SETTING.enabled]: off }).enabled).toBe(false);
     expect(from({ [C.SETTING.engine]: "codex" }).engine).toBeNull();
     expect(from({ [C.SETTING.engine]: "claude" }).engine).toBe("claude");
     expect(C.sorterSettings(() => { throw new Error("x"); })).toEqual(from({}));
@@ -170,7 +169,9 @@ describe("the isolated model call", () => {
       expect(args).toEqual(claudeArguments("some-other-model"));
       expect(args[args.indexOf("--tools") + 1]).toBe("");
       expect(args[args.indexOf("--model") + 1]).toBe("some-other-model");
-      for (const flag of ["-p", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands", "--json-schema", "--system-prompt"]) expect(args).toContain(flag);
+      for (const flag of ["-p", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands", "--system-prompt"]) expect(args).toContain(flag);
+      // no schema: it costs the CLI extra turns (review R1)
+      expect(args).not.toContain("--json-schema");
       expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
     } finally {
       delete process.env.CLAUDECODE;

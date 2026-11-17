@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SCHEMA, SYSTEM, type SorterEngine } from "./classify";
+import { SYSTEM, type SorterEngine } from "./classify";
 
 /** The CLI as `api.engines.cli` gives it. */
 export interface Cli { file: string; args: string[]; env: Record<string, string> }
@@ -14,10 +14,13 @@ export interface SorterCall { engine: SorterEngine; model: string; timeoutMs: nu
 /** One question to the sorter model; resolves to what it answered (an object or its text), rejects on any failure. */
 export type Ask = (prompt: string, call: SorterCall) => Promise<unknown>;
 
-/** `claude -p` for one isolated question: no tools (`--tools ""`), no MCP, no slash commands, no settings, nothing kept; the answer held to the schema. */
+/**
+ * `claude -p` for one isolated question: no tools (`--tools ""`), no MCP, no slash commands, no settings, nothing kept. No `--json-schema`: it makes the CLI take
+ * extra turns (measured 2 turns with it, 1 without); the system text asks for one JSON object and `parseVerdict` reads the result text strictly.
+ */
 export function claudeArguments(model: string): string[] {
   return ["-p", "--output-format", "json", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-    "--disable-slash-commands", "--setting-sources", "", "--system-prompt", SYSTEM, "--json-schema", SCHEMA];
+    "--disable-slash-commands", "--setting-sources", "", "--system-prompt", SYSTEM];
 }
 
 /** What claude's `--output-format json` result holds: the structured answer, else its text. Throws when the call failed or said nothing. */

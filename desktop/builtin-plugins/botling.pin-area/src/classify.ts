@@ -23,7 +23,7 @@ export const MIN_BUDGET_MS = 600;
 
 /** The engines a sorter model can come from. Only claude is wired for now (a Codex one would follow catchup's `codexSummarizer`). */
 export type SorterEngine = "claude";
-/** This plugin's settings (package.json `contributes.settings`); read each time a line is sorted, so a change takes effect at once. */
+/** This plugin's settings (package.json `contributes.settings`); read each time a line is sent, so a change takes effect at once. */
 export const SETTING = {
   enabled: "botling.pin-area.sorter.enabled",
   engine: "botling.pin-area.sorter.engine",
@@ -35,7 +35,7 @@ export interface SorterSettings { enabled: boolean; engine: SorterEngine | null;
 /** A model name as it is passed to the CLI: letters, digits and . _ : - [ ], not starting with a dash (it must not read as a flag). */
 const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,99}$/;
 /**
- * The sorter settings, each read back to a value that is safe to use: off only when `enabled` is false; an engine that is not wired is `null` (the lines
+ * The sorter settings, each read back to a value that is safe to use: **off unless `enabled` is exactly true** (the manifest's default is false: the sort before the send is off, see DESIGN 4c); an engine that is not wired is `null` (the lines
  * stay in the chat); a model name that is not a plain name, or a number that is not a number, falls back to its default; numbers are held to their range.
  */
 export function sorterSettings(get: (key: string) => unknown): SorterSettings {
@@ -46,7 +46,7 @@ export function sorterSettings(get: (key: string) => unknown): SorterSettings {
   const timeout = read(SETTING.timeoutMs);
   const clamp = (value: unknown, min: number, max: number, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback);
   return {
-    enabled: read(SETTING.enabled) !== false,
+    enabled: read(SETTING.enabled) === true,
     engine: engine === undefined || engine === null || engine === "" || engine === "claude" ? "claude" : null,
     model: typeof model === "string" && MODEL_NAME.test(model.trim()) ? model.trim() : DEFAULT_SORTER_MODEL,
     confidence: clamp(confidence, CONFIDENCE_MIN, CONFIDENCE_MAX, CONFIDENCE),
@@ -77,18 +77,6 @@ export const SYSTEM = [
   "chat: anything else (general talk, small questions, thanks, a line that belongs to no card, or one you cannot place). When unsure, answer chat with low confidence.",
   "confidence is how sure you are of the action you chose. \"corrected\" lists lines the user moved by hand (wasIn -> belongsIn, \"chat\" meaning no card): sort similar lines the way the user did.",
 ].join("\n");
-
-/** The schema the CLI holds the answer to (`--json-schema`). */
-export const SCHEMA = JSON.stringify({
-  type: "object",
-  properties: {
-    action: { type: "string", enum: ["assign", "new", "merge", "chat"] },
-    card: { type: "string" },
-    card2: { type: "string" },
-    confidence: { type: "number" },
-  },
-  required: ["action", "confidence"],
-});
 
 /**
  * What the model is asked: the new line, the chat's newest lines and the cards (id, title, state, a short summary), as one JSON document, so no

@@ -161,18 +161,24 @@ Nothing here changes a card's words or state by itself: the program only closes 
 
 ### 4c. The user's plain lines are sorted by a small model, not by the head bot
 
+**Status (review R1, the user's decision 「先合併自動綁卡和自動收卡，分類先關掉，改成『先送出、事後再搬進卡片』重做」): the sort before the send is OFF by default and is being redone as classify AFTER send.**
+Measured with the real small model: 3.5–5.5 s per call, longer than the 4 s the send can give it, so every line waited ~4 s and was then sent as it was. `botling.pin-area.sorter.enabled` defaults to **false** in the manifest,
+and the code treats anything but exactly `true` as off. Off, `beforeSend` answers in the same call (no promise, no queue, no chat read, no model call, no waiting). Everything below (the call, the settings, the deadline, the order)
+stays in the code and is what the redo builds on (4c after-send: the line is sent first, the model sorts it afterwards and the app moves it into the card, with the same one-tap undo). The call no longer passes `--json-schema`
+(measured: it makes the CLI take 2–3 turns instead of 1); the system text asks for one JSON object and `parseVerdict` reads the result text strictly (a fenced or wrongly shaped answer is none).
+
 The user's decision: the un-@ lines of a chat that has cards are sorted by a call of a small model that takes over directly (no shadow mode). Which model is a **setting**, not code (review S5). The head bot is no longer asked to route:
 the `move="yes"` instruction is gone from the prompt section (`package.json`) and from the briefing's tail. `<pin-say>` stays (the answer inside a card). The `move="yes"` *handler*
 (`takeAuto`, `keepAnswer`) is still in the host: a bot that says it anyway (an old session) is honoured, nothing asks for it.
 
 **How the app calls a model without tools (nothing new in the core).** `api.engines.cli("claude")` gives the CLI as Botling starts it (the real `claude`, found where the bots' is); `sorter-call.ts` (`askModel`, the model passed in)
 runs it as the chat summaries do (botling.catchup `claudeSummarizer`): `claude -p --output-format json --model <the setting> --tools "" --strict-mcp-config --no-session-persistence
---disable-slash-commands --setting-sources "" --system-prompt … --json-schema …`, in a fresh temporary folder, the question on stdin, a process group ended on the call's timeout, the answer the
+--disable-slash-commands --setting-sources "" --system-prompt …`, in a fresh temporary folder, the question on stdin, a process group ended on the call's timeout, the answer the
 `structured_output` (else the result text). No permission (a shipped plugin's own child process, as catchup's), no API key, no SDK. A Botling with no such CLI (`engines` missing or `cli()` null) sorts nothing:
 every plain line stays in the chat with the briefing.
 
-**Settings** (`package.json` `contributes.settings`, read with `api.settings.get` on every line, `classify.ts` `sorterSettings`; precedent botling.catchup): `botling.pin-area.sorter.enabled` (default true; only an
-explicit false turns the sort off), `.engine` (only `claude` is wired; any other value means no engine, so nothing is sorted and nothing is sent to a model), `.model` (default `claude-haiku-5-5`; a plain model name
+**Settings** (`package.json` `contributes.settings`, read with `api.settings.get` on every line, `classify.ts` `sorterSettings`; precedent botling.catchup): `botling.pin-area.sorter.enabled` (default **false**; only an
+explicit true turns the sort on), `.engine` (only `claude` is wired; any other value means no engine, so nothing is sorted and nothing is sent to a model), `.model` (default `claude-haiku-5-5`; a plain model name
 as the CLI takes it, `[A-Za-z0-9][A-Za-z0-9._:\[\]-]*`, so a value can never read as a flag; anything else is the default; no list of known models, so a new model needs no code change), `.confidence` (0.75, held to 0.5–0.99)
 and `.timeoutMs` (3500, held to 500–3500). Every value is read back to a safe one (a throwing reader or a wrong type is the default). The `isClaudeModel` check of the `bot/claude-models-open` branch is not depended on.
 
