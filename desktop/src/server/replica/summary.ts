@@ -62,6 +62,12 @@ export interface SummaryRowsOptions {
   log?: (line: string) => void;
   /** A row was committed (key, rev): step 7 pushes it to peers; tests count writes. */
   onWritten?: (key: string, rev: number) => void;
+  /**
+   * botlingd's start: the events the core said while it was made are stored before `reconcile` writes a row for every bot
+   * from the same read models, so until `reconcile` runs an event only keeps the bot's view and builds no row (every row
+   * would be built twice). Off: an event writes its bot's row at once (tests, and any other use).
+   */
+  holdUntilReconcile?: boolean;
 }
 
 interface Written {
@@ -110,31 +116,28 @@ function cardTitle(message: MessageView, max: number): string {
 
 /** A bot's summary row from its view and the read models (`tx` or a reader). */
 export function buildSummary(db: Db, botId: string, view: BotView, options: { live?: LiveText | null; colors?: Record<string, { avatar: string; color: string }> } = {}): SummaryRow {
+  // What the database holds is read once; only the cuts to the row's limits are tried again (they change nothing read).
+  const openCards = db.prepare("SELECT cardId, rev, body FROM cards WHERE botId = ? AND state = 'open' ORDER BY rev LIMIT ?").all(botId, SUMMARY_WAITING_LIMIT * 2)
+    .filter((row) => ContractId.safeParse(String(row.cardId)).success)
+    .slice(0, SUMMARY_WAITING_LIMIT)
+    .map((row) => ({ cardId: String(row.cardId), cardRev: Number(row.rev), message: JSON.parse(String(row.body)) as MessageView }));
+  const bot = db.prepare("SELECT model, liveTurnId, liveAt FROM bots WHERE botId = ?").get(botId);
+  const recent = recentLines(db, botId);
+  const liveTurnId = bot?.liveTurnId == null ? null : String(bot.liveTurnId);
+  const running = liveTurnId ? options.live?.running(botId) ?? null : null;
+  const newest = recent[0] ? Date.parse(recent[0].time) : NaN;
+  let turn: SummaryRow["turn"];
+  if (liveTurnId && ContractId.safeParse(liveTurnId).success) {
+    const effect = db.prepare("SELECT startedAt FROM effects WHERE botId = ? AND turnId = ? AND kind = 'turn'").get(botId, liveTurnId);
+    const startedAt = Number(effect?.startedAt ?? bot?.liveAt ?? 0);
+    turn = { turnId: liveTurnId, startedAt: Number.isFinite(startedAt) && startedAt >= 0 ? startedAt : 0 };
+  }
   const build = (titleChars: number, lineChars: number): SummaryRow => {
-    const waiting = db.prepare("SELECT cardId, rev, body FROM cards WHERE botId = ? AND state = 'open' ORDER BY rev LIMIT ?").all(botId, SUMMARY_WAITING_LIMIT * 2)
-      .filter((row) => ContractId.safeParse(String(row.cardId)).success)
-      .slice(0, SUMMARY_WAITING_LIMIT)
-      .map((row) => {
-        const message = JSON.parse(String(row.body)) as MessageView;
-        return { cardId: String(row.cardId), cardRev: Number(row.rev), kind: cardKind(message), title: cardTitle(message, titleChars) };
-      });
-    const bot = db.prepare("SELECT model, liveTurnId, liveAt FROM bots WHERE botId = ?").get(botId);
-    const recent = db.prepare("SELECT body FROM messages WHERE botId = ? ORDER BY seq DESC LIMIT 20").all(botId)
-      .map((row) => JSON.parse(String(row.body)) as MessageView)
-      .filter((message) => (message.role === "user" || message.role === "bot") && message.text.trim());
+    const waiting = openCards.map(({ cardId, cardRev, message }) => ({ cardId, cardRev, kind: cardKind(message), title: cardTitle(message, titleChars) }));
     const lines = recent.slice(0, SUMMARY_LINES_LIMIT).reverse().map((message) => shortLine(message.text, lineChars));
-    const liveTurnId = bot?.liveTurnId == null ? null : String(bot.liveTurnId);
-    const running = liveTurnId ? options.live?.running(botId) ?? null : null;
     if (running && running.turnId === liveTurnId && running.turnText.trim()) {
       lines.push(shortLine(running.turnText, lineChars, "end"));
       while (lines.length > SUMMARY_LINES_LIMIT) lines.shift();
-    }
-    const newest = recent[0] ? Date.parse(recent[0].time) : NaN;
-    let turn: SummaryRow["turn"];
-    if (liveTurnId && ContractId.safeParse(liveTurnId).success) {
-      const effect = db.prepare("SELECT startedAt FROM effects WHERE botId = ? AND turnId = ? AND kind = 'turn'").get(botId, liveTurnId);
-      const startedAt = Number(effect?.startedAt ?? bot?.liveAt ?? 0);
-      turn = { turnId: liveTurnId, startedAt: Number.isFinite(startedAt) && startedAt >= 0 ? startedAt : 0 };
     }
     const status: SummaryStatus = view.problem || view.connection === "disconnected" ? "error"
       : waiting.length || view.approvals > 0 ? "waiting"
@@ -166,6 +169,33 @@ export function buildSummary(db: Db, botId: string, view: BotView, options: { li
   return build(10, 20);
 }
 
+/** How many of a bot's newest lines the summary looks at (the row shows the last three of them that say something). */
+const SUMMARY_LOOK_BACK = 20;
+/** Lines read and parsed first; more only when these hold fewer than the row needs. */
+const SUMMARY_FIRST_READ = 6;
+
+/**
+ * The newest lines (newest first) that a user or the bot said, with text, from the last `SUMMARY_LOOK_BACK` lines of the
+ * read model: only as many as the row shows (`SUMMARY_LINES_LIMIT`), read from the newest end and parsed one by one, so
+ * the answer is the same as parsing all twenty and keeping the first three that count.
+ */
+function recentLines(db: Db, botId: string): MessageView[] {
+  const wanted: MessageView[] = [];
+  const select = db.prepare("SELECT body FROM messages WHERE botId = ? ORDER BY seq DESC LIMIT ? OFFSET ?");
+  for (let offset = 0; offset < SUMMARY_LOOK_BACK && wanted.length < SUMMARY_LINES_LIMIT;) {
+    const size = offset === 0 ? SUMMARY_FIRST_READ : SUMMARY_LOOK_BACK - offset;
+    const rows = select.all(botId, size, offset);
+    for (const row of rows) {
+      const message = JSON.parse(String(row.body)) as MessageView;
+      if ((message.role === "user" || message.role === "bot") && message.text.trim()) wanted.push(message);
+      if (wanted.length >= SUMMARY_LINES_LIMIT) break;
+    }
+    if (rows.length < size) break;
+    offset += size;
+  }
+  return wanted;
+}
+
 /** The settings row: the view without secrets, the largest keys dropped if it would not fit. */
 export function settingsRow(settings: unknown): Record<string, unknown> {
   const clean = { ...((withoutSecrets(settings) ?? {}) as Record<string, unknown>) };
@@ -189,11 +219,14 @@ export class SummaryRows {
   private settings: Record<string, unknown> | null = null;
   private purgeTimer: unknown = null;
   private closed = false;
+  /** `holdUntilReconcile`: no row is built by an event until `reconcile` has run. */
+  private holding: boolean;
 
   constructor(private readonly options: SummaryRowsOptions) {
     this.now = options.now ?? Date.now;
     this.timers = options.timers ?? realTimers;
     this.interval = options.intervalMs ?? SUMMARY_WRITE_INTERVAL_MS;
+    this.holding = options.holdUntilReconcile === true;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -201,7 +234,7 @@ export class SummaryRows {
 
   /** Every event the engine emits, before it is stored (turn text included): a running turn's text marks its bot. */
   seen(event: ContractEvent): void {
-    if (this.closed) return;
+    if (this.closed || this.holding) return;
     if (event.type === "turn.delta" || event.type === "turn.steps") this.later(event.botId);
   }
 
@@ -222,6 +255,7 @@ export class SummaryRows {
     if (!SUMMARY_EVENTS.has(event.type)) return;
     const botId = event.type === "bot.updated" ? event.bot.id : (event as { botId: string }).botId;
     if (event.type === "bot.updated") this.views.set(botId, event.bot);
+    if (this.holding) return;
     this.mark(tx, botId);
   }
 
@@ -236,6 +270,8 @@ export class SummaryRows {
     // Startup timing (steps of 100 ms or more; the slowest bots of the two repeated steps).
     const marks = new PhaseMarks(this.options.log, "summary reconcile", undefined, 100);
     const tally = new PhaseTally();
+    // From here every event builds its own row again; the loop below writes the rows of all bots, from the same tables.
+    this.holding = false;
     const stream = ownTableStream(tx);
     const bots = new Set(this.options.engine.bots());
     // Only a bot with no view from the engine needs its last `bot.updated` from the log, and settings only when none are

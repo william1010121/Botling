@@ -242,7 +242,7 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
     pluginsDigest,
   });
   const summary = new SummaryRows({
-    scope: runtime.scope, engine, live, log, onWritten: () => feeds.notify(feeds.ownStream),
+    scope: runtime.scope, engine, live, log, onWritten: () => feeds.notify(feeds.ownStream), holdUntilReconcile: true,
     machine: () => machineRow(pluginsDigestOf(readInstalledPlugins().filter((plugin) => plugin.name.length <= 64))),
   });
   later.summary = summary;

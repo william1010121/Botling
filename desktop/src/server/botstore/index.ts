@@ -43,9 +43,22 @@ export interface BotStoreBackend {
 }
 
 interface Versioned { rev: number; body: string }
-/** A chat line's row: `body` is the 2.x line's JSON (the stored body wraps it with its seq). */
-interface MessageRow extends Versioned { seq: number }
+/**
+ * A chat line's row. `body` is the 2.x line's JSON text (the stored body wraps it with its seq). A row read from server.db
+ * keeps the text as stored (cut out of the stored body, never re-made) and the parsed line until `loadMessages` takes it
+ * (the one parse of its life); `fixed` says `body` is exactly what `JSON.stringify` makes of the line, which a saved row's is.
+ */
+interface MessageRow extends Versioned { seq: number; fixed: boolean; parsed?: unknown }
 const chatBody = (row: MessageRow) => `{"seq":${row.seq},"record":${row.body}}`;
+
+/** Is the line's `JSON.stringify` (`body`) what this row holds? A row read as stored is normalized once, only when its text differs. */
+function sameLine(old: MessageRow, body: string): boolean {
+  if (old.body === body) return true;
+  if (old.fixed) return false;
+  old.body = JSON.stringify(JSON.parse(old.body));
+  old.fixed = true;
+  return old.body === body;
+}
 
 const SUBAGENTS_ORDER = "subagents.order";
 const HEAD = "head.json";
@@ -190,8 +203,15 @@ export class DbBotStore implements BotStore {
       const rows = new Map<string, MessageRow>();
       let maxSeq = 0;
       for (const row of this.host.read().prepare(SQL.rows).all(chatStream(this.botId))) {
-        const stored = parse(`server.db chat line ${String(row.key)} of ${this.botId}`, String(row.body)) as { seq: number; record: unknown };
-        rows.set(String(row.key), { rev: Number(row.rev), seq: stored.seq, body: JSON.stringify(stored.record) });
+        const text = String(row.body);
+        const stored = parse(`server.db chat line ${String(row.key)} of ${this.botId}`, text) as { seq: number; record: unknown };
+        // The line's own text is what chatBody wrote after the seq; anything else in the row is made again from the line.
+        const head = `{"seq":${stored.seq},"record":`;
+        const cut = text.startsWith(head) && text.endsWith("}") && Object.keys(stored).length === 2;
+        rows.set(String(row.key), {
+          rev: Number(row.rev), seq: stored.seq, parsed: stored.record,
+          body: cut ? text.slice(head.length, -1) : JSON.stringify(stored.record), fixed: !cut,
+        });
         maxSeq = Math.max(maxSeq, stored.seq);
       }
       state.maxSeq = maxSeq;
@@ -202,7 +222,13 @@ export class DbBotStore implements BotStore {
 
   loadMessages(): { records: ChatRecord[]; dropped: number } {
     const rows = [...this.messageRows().values()].sort((a, b) => a.seq - b.seq);
-    const values = rows.map((row) => JSON.parse(row.body) as unknown);
+    // The line parsed when the rows were read goes out once; asked again, it is parsed from its text (callers change what they get).
+    const values = rows.map((row) => {
+      if (row.parsed === undefined) return JSON.parse(row.body) as unknown;
+      const line = row.parsed;
+      row.parsed = undefined;
+      return line;
+    });
     const records = values.filter(isChatRecord);
     return { records, dropped: values.length - records.length };
   }
@@ -225,8 +251,8 @@ export class DbBotStore implements BotStore {
       const old = current.get(key);
       const seq = old && old.seq > last ? old.seq : ++maxSeq;
       last = seq;
-      if (old && old.seq === seq && old.body === body) { next.set(key, old); continue; }
-      const row = { rev: (old?.rev ?? 0) + 1, seq, body };
+      if (old && old.seq === seq && sameLine(old, body)) { next.set(key, old); continue; }
+      const row: MessageRow = { rev: (old?.rev ?? 0) + 1, seq, body, fixed: true };
       next.set(key, row);
       puts.push([key, row]);
     }

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BotView, Event as ContractEvent } from "../../src/contract";
 import { decodeWireFrame, encodeWireFrame } from "../../src/protocol/frame";
+import { canonicalJson } from "../../src/protocol";
 import { Rows, SECRET_KEY, SettingsRow, SummaryRow, TableRow, TOMBSTONE_KEEP_MS } from "../../src/protocol/table-rows";
 import { effectCheckpointSink } from "../../src/server/effects";
 import { IntentRuntime } from "../../src/server/intents";
@@ -72,7 +73,7 @@ interface Setup {
   close(): void;
 }
 
-async function setup(options: { bots?: string[]; shared?: { db: Db; writer: Writer }; clock?: FakeClock; views?: Record<string, BotView> } = {}): Promise<Setup> {
+async function setup(options: { bots?: string[]; shared?: { db: Db; writer: Writer }; clock?: FakeClock; views?: Record<string, BotView>; hold?: boolean; reconcile?: boolean } = {}): Promise<Setup> {
   const { db, writer } = options.shared ?? memoryStore();
   const clock = options.clock ?? new FakeClock();
   const engine = new ViewEngine({ bots: options.bots ?? ["MAIN", "B1"], hold: true });
@@ -89,10 +90,11 @@ async function setup(options: { bots?: string[]; shared?: { db: Db; writer: Writ
     scope: runtime.scope, engine, live, now: clock.now, timers: clock, log: (line) => logs.push(line),
     machine: () => ({ name: "server A", os: "test", versions: { botlingd: "3.0.0-test" }, addresses: [], pluginsDigest: null }),
     onWritten: (key, rev) => writes.push({ key, rev, at: clock.t }),
+    ...(options.hold ? { holdUntilReconcile: true } : {}),
   });
   await runtime.start();
   const s = summary;
-  await runtime.scope.submit((tx) => s.reconcile(tx));
+  if (options.reconcile !== false) await runtime.scope.submit((tx) => s.reconcile(tx));
   const stream = ownTableStream(db);
   const settle = async () => {
     for (let round = 0; round < 4; round += 1) {
@@ -219,6 +221,44 @@ describe("summary rows: §8.2 limits", () => {
     expect(JSON.stringify(row)).not.toContain("/a/very/private");
     expect(row.status).toBe("waiting");
     s.close();
+  });
+});
+
+describe("summary rows: botlingd's start builds each row once (holdUntilReconcile)", () => {
+  const messagesReads = (db: Db) => {
+    const reads = { n: 0 };
+    const prepare = db.prepare.bind(db);
+    vi.spyOn(db, "prepare").mockImplementation(((sql: string) => { if (sql.includes("FROM messages WHERE botId")) reads.n += 1; return prepare(sql); }) as never);
+    return reads;
+  };
+
+  it("events stored before the reconcile build no row; the reconcile writes the same row an event would have", async () => {
+    const held = await setup({ hold: true, reconcile: false, views: { B1: view("B1") } });
+    const reads = messagesReads(held.db);
+    held.engine.addLine("B1", { role: "user", text: "first words" });
+    held.engine.addCard("B1");
+    emit(held, { type: "bot.updated", bot: view("B1", { unread: 3 }) });
+    await held.settle();
+    expect(held.row("B1")).toBeNull();
+    expect(reads.n).toBe(0);
+    await held.runtime.scope.submit((tx) => held.summary.reconcile(tx));
+    expect(reads.n).toBeGreaterThan(0);
+    const afterReconcile = held.row("B1")!;
+    expect(afterReconcile.lines).toEqual(["first words", "Which one?"]);
+    expect(afterReconcile.status).toBe("waiting");
+    expect(afterReconcile.unread).toBe(3);
+    // The same events after the reconcile rebuild the very same row (an unchanged bot.updated writes nothing new).
+    emit(held, { type: "bot.updated", bot: view("B1", { unread: 3 }) });
+    await held.settle();
+    await held.summary.flush();
+    expect(canonicalJson(held.row("B1"))).toBe(canonicalJson(afterReconcile));
+    // After the reconcile an event builds its row again.
+    held.engine.addLine("B1", { role: "bot", text: "later words" });
+    await held.settle();
+    await held.summary.flush();
+    expect(held.row("B1")!.lines.at(-1)).toBe("later words");
+    vi.restoreAllMocks();
+    held.close();
   });
 });
 

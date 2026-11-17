@@ -3,7 +3,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOT_STORES, useBotStores } from "../bot-store-impls";
 import { HISTORY_LIMIT, type ChatRecord } from "../../src/core/store/records";
 import { SubagentStore } from "../../src/core/store/subagent-store";
@@ -288,5 +288,86 @@ describe("DbBotStore", () => {
     const lines = files.readSteps("w").steps.length;
     expect(lines).toBe(60);
     await hosts.close();
+  });
+
+  describe("chat rows are parsed once", () => {
+    const chatKey = (db: Db, id: string) => String(db.prepare("SELECT key FROM rows WHERE stream = 'chat:bot' AND key LIKE ?").get(`%${id}`)?.key);
+
+    /** The lines persisted by one host, then a fresh host (its cache empty) that will read them. */
+    async function persisted(count: number) {
+      const db = await server(), { backend, runs } = counting(db);
+      const first = new DbBotStores(backend);
+      const lines = Array.from({ length: count }, (_, i) => line(i));
+      const writer = first.open("bot", folder());
+      writer.saveMessages(lines);
+      await writer.durable();
+      await first.close();
+      return { db, backend, runs, lines, hosts: new DbBotStores(backend) };
+    }
+    const countsOfLines = () => {
+      const parse = vi.spyOn(JSON, "parse"), stringify = vi.spyOn(JSON, "stringify");
+      return {
+        chatParses: () => parse.mock.calls.filter(([text]) => typeof text === "string" && text.startsWith('{"seq":')).length,
+        recordStringifies: () => stringify.mock.calls.filter(([value]) => value !== null && typeof value === "object" && "role" in (value as object)).length,
+      };
+    };
+
+    it("a fresh load parses each stored row once and stringifies none; the records are the saved ones", async () => {
+      const { lines, hosts } = await persisted(40);
+      const counts = countsOfLines();
+      try {
+        const store = hosts.open("bot", folder());
+        const loaded = store.loadMessages();
+        expect(loaded.records).toEqual(lines);
+        expect(counts.chatParses()).toBe(40);
+        expect(counts.recordStringifies()).toBe(0);
+        // Loading again hands out copies of the same lines.
+        const again = store.loadMessages();
+        expect(again.records).toEqual(lines);
+        expect(counts.chatParses()).toBeLessThanOrEqual(80);
+      } finally { vi.restoreAllMocks(); }
+      await hosts.close();
+    });
+
+    it("a record the caller changed does not change what the store holds; saving the original lines writes nothing", async () => {
+      const { lines, hosts, runs } = await persisted(5);
+      const store = hosts.open("bot", folder());
+      const first = store.loadMessages().records;
+      (first[2] as { text: string }).text = "scribbled";
+      first.pop();
+      expect(store.loadMessages().records).toEqual(lines);
+      runs.length = 0;
+      store.saveMessages(lines);
+      await store.durable();
+      expect(runs).toEqual([]);
+      // The edit the caller made is one write.
+      store.saveMessages(first);
+      await store.durable();
+      expect(runs.sort()).toEqual(["DELETE", "INSERT"]);
+      await hosts.close();
+    });
+
+    it("a stored line that is not in the canonical form, or has an extra key, is not rewritten while it is unchanged, and an edit writes exactly one row", async () => {
+      const { db, lines, hosts, runs } = await persisted(4);
+      // Row 1: the same data with spaces in it. Row 2: an extra key beside seq and record (a hand-made row).
+      const spaced = chatKey(db, lines[1].id), extra = chatKey(db, lines[2].id);
+      await db.submit((tx) => {
+        const pick = (key: string) => JSON.parse(String(tx.prepare("SELECT body FROM rows WHERE stream = 'chat:bot' AND key = ?").get(key)?.body)) as { seq: number; record: unknown };
+        const a = pick(spaced), b = pick(extra);
+        tx.prepare("UPDATE rows SET body = ? WHERE stream = 'chat:bot' AND key = ?").run(JSON.stringify(a, null, 2), spaced);
+        tx.prepare("UPDATE rows SET body = ? WHERE stream = 'chat:bot' AND key = ?").run(JSON.stringify({ ...b, note: "x" }), extra);
+      });
+      const store = hosts.open("bot", folder());
+      expect(store.loadMessages().records).toEqual(lines);
+      runs.length = 0;
+      store.saveMessages(lines);
+      await store.durable();
+      expect(runs).toEqual([]);
+      const edited = lines.map((l, i) => i === 1 ? { ...l, text: "edited" } : l) as ChatRecord[];
+      store.saveMessages(edited);
+      await store.durable();
+      expect(runs).toEqual(["INSERT"]);
+      await hosts.close();
+    });
   });
 });
