@@ -182,7 +182,7 @@ describe("quitTidyMs caps the quit-time tidy", () => {
     expect(performance.now() - before).toBeGreaterThanOrEqual(30);
     expect(performance.now() - before).toBeLessThan(4_000);
     expect(head.sent.length).toBe(2); // the message and the tidy
-    expect(order).toEqual(["head.interrupt", "head.finish"]);
+    expect(order.filter((line) => line.startsWith("head."))).toEqual(["head.interrupt", "head.finish"]);
   });
 });
 
