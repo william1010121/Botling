@@ -243,11 +243,11 @@ export interface ShownCard {
   /** The bot that wrote the line (upper case id), if it was not the chat's own. */
   author: string | null;
 }
-/** The component library as a chat's bot has it. `offered`: what the bot may use; `entries`: each component's Command, Detail command, refresh interval (seconds) and the sizes about.md hints at. */
+/** The component library as a chat's bot has it. `offered`: what the bot may use; `pinOnly`: the components only the pin picker offers (the bot does not see them); `entries`: each component's Command, Detail command, refresh interval (seconds) and the sizes about.md hints at. */
 export interface CardLibrary {
   /** The bot's own id ("main" is the main bot's real one). */
   botId: string;
-  names: string[]; offered: string[];
+  names: string[]; offered: string[]; pinOnly: string[];
   entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>;
   /** The bot cannot change anything (its folder is gone). */
   readOnly: boolean;

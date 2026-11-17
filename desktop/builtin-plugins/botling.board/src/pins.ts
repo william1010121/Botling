@@ -38,9 +38,13 @@ export function prime(state: BoardState): void {
   setChat(current.enabled ? state.botID : null, current.pins);
 }
 
-/** Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned). */
-export function barFor(name: string): { offered: boolean; pinned: boolean } {
-  return { offered: current.enabled && !!current.components[name], pinned: current.pins.some((pin) => pin.name === name) };
+/**
+ * Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned).
+ * Only a card with a Command can be pinned; one that is pinned already (a snapshot pin from before) keeps its bar, to open or undo it.
+ */
+export function barFor(name: string, command?: string | null): { offered: boolean; pinned: boolean } {
+  const pinned = current.pins.some((pin) => pin.name === name);
+  return { offered: current.enabled && !!current.components[name] && (!!command || pinned), pinned };
 }
 
 export const icons = {
@@ -135,16 +139,19 @@ export type PinAdd = Extract<PinAction, { type: "pin" }>;
  * The pin button of a component made from a reply (drawn under it), or a Pinned badge once this
  * bot has it. A bot-filled one whose about.md suggests a Board command is then made live.
  */
-export function specPinButton(spec: SpecChipView): HTMLElement {
+export function specPinButton(spec: SpecChipView): HTMLElement | null {
   const name = spec.component ?? spec.name;
   if (current.pins.some((p) => p.name === name)) {
     return button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: name }));
     });
   }
+  // Without a Command there is nothing to pin (no snapshot pins).
+  const command = spec.display?.command;
+  if (!command) return null;
   const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => openPinDialog(pin, {
     name,
-    command: spec.display?.command ?? null,
+    command,
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), spec: spec.id, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   }));
   return pin;

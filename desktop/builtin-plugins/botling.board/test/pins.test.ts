@@ -101,16 +101,17 @@ describe("pinning from the chat", () => {
     expect(sent[1]).toEqual({ type: "unpin", id: action.id });
   });
 
-  it("a component without a command pins as it was drawn, without asking how to refresh", () => {
+  it("a component without a command has no pin bar at all (there are no snapshot pins); one pinned already keeps its badge", () => {
     setUp().update(state());
     const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
-    document.body.append(row);
-    click(row.querySelector("[aria-label='Pin to this bot']"));
-    const dialog = document.querySelector(".pin-dialog")!;
-    expect(dialog.querySelector("input[value='interval']")).toBeNull();
-    expect(dialog.textContent).toContain("as it is drawn now");
-    click(dialog.querySelector(".primary"));
-    expect(sent[0]).toMatchObject({ type: "pin", messageID: "m1", index: 0, refresh: "manual" });
+    expect(row.querySelector(".pin-bar")).toBeNull();
+    expect(row.querySelector("[aria-label='Pin to this bot']")).toBeNull();
+    // The same component drawn with a command (or its Command line) is pinnable.
+    const withCommand = messageElement(message([{ name: "天氣卡片", data: "{}", command: "curl wttr.in", folder: "/p", status: "done" }]), components);
+    expect(withCommand.querySelector(".pin-bar [aria-label='Pin to this bot']")).not.toBeNull();
+    // A snapshot pin from before stays reachable from the reply: the badge opens it.
+    setUp().update(state({ pins: [pin({ id: "P9", name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
+    expect(messageElement(message([{ name: "天氣卡片", data: "{}" }]), components).querySelector(".pin-bar .pin-badge")).not.toBeNull();
   });
 });
 
@@ -264,13 +265,13 @@ describe("the chips above the input box", () => {
     expect(sent.at(-1)).toEqual({ type: "unpin", id: "P2" });
   });
 
-  it("the + chip opens the picker of this bot's components", () => {
+  it("the + chip opens the picker: every row has a Command, and picking one asks how to refresh (no snapshot rows)", () => {
     const area = setUp();
     area.update(state({
       pins: [pin()],
       pinChoices: [
         { name: "提交紀錄", command: "git log", uses: 31, pinned: true },
-        { name: "天氣卡片", command: null, uses: 7, pinned: false },
+        { name: "天氣卡片", command: "curl wttr.in", uses: 0, pinned: false },
       ],
     }));
     click(document.querySelector(".pin-chip.add"));
@@ -278,10 +279,16 @@ describe("the chips above the input box", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain("Command");
     expect(rows[0].disabled).toBe(true);
-    expect(rows[1].textContent).toContain("Snapshot");
+    expect([...rows].some((row) => row.textContent?.includes("Snapshot"))).toBe(false);
+    expect(rows[1].textContent).not.toContain("not used");
     rows[1].click();
-    expect(sent[0]).toMatchObject({ type: "pin", name: "天氣卡片", refresh: "manual" });
     expect(document.querySelector(".pin-picker")).toBeNull();
+    // It asks how to refresh with the command shown; nothing is sent until the user says so.
+    expect(sent).toEqual([]);
+    expect(document.querySelector(".pin-dialog-command")?.textContent).toBe("curl wttr.in");
+    click(document.querySelector(".pin-dialog .primary"));
+    expect(sent[0]).toMatchObject({ type: "pin", name: "天氣卡片" });
+    expect(sent[0]).not.toHaveProperty("messageID");
   });
 });
 
@@ -362,25 +369,28 @@ describe("chips as small status icons", () => {
 });
 
 describe("a bot-filled component made live when pinned", () => {
-  it("the component made from a reply can be pinned, and says so once pinned", () => {
+  it("the component made from a reply can be pinned only when it has a command, and says so once pinned", () => {
     setUp().update(state());
-    const built = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, open: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
+    const filled = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, open: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
+    const live = { ...filled, display: { ...filled.display, command: "curl wttr.in", folder: "/p", status: "done" as const } };
     // The head of the component the studio draws under its reply (botling.component-studio) asks the studio seam's spec buttons for theirs.
-    const headOf = () => {
+    const headOf = (built: typeof filled) => {
       const head = document.createElement("div");
-      for (const { make } of studioSeam.specButtons) { const added = make(built); if (added) head.append(added); }
+      for (const { make } of studioSeam.specButtons) { const added = make(built as never); if (added) head.append(added); }
       document.body.append(head);
       return head;
     };
-    const row = headOf();
+    // Data only, no command: nothing to pin (no snapshot pins).
+    expect(headOf(filled).querySelector("[aria-label='Pin to this bot']")).toBeNull();
+    const row = headOf(live as never);
     click(row.querySelector("[aria-label='Pin to this bot']"));
     const dialog = document.querySelector(".pin-dialog")!;
     click(dialog.querySelector(".primary"));
-    expect(sent[0]).toMatchObject({ type: "pin", spec: "S1", refresh: "manual" });
+    expect(sent[0]).toMatchObject({ type: "pin", spec: "S1" });
     expect((sent[0] as { messageID?: string }).messageID).toBeUndefined();
-    // Pinned: a badge instead.
+    // Pinned: a badge instead, with or without a command (a pin from before stays reachable).
     setUp().update(state({ pins: [pin({ name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
-    expect(headOf().querySelector(".pin-badge")?.textContent).toContain("Pinned");
+    expect(headOf(filled).querySelector(".pin-badge")?.textContent).toContain("Pinned");
   });
 
   it("a pin waiting for its command says it is being made live", () => {
@@ -594,7 +604,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       for (const [developer, making] of [[false, false], [true, false], [false, true], [true, true]]) {
         feedback.enabled = developer;
         messageMenu.items = making ? [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true }] : [];
-        const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}" }]), text: "" }, components);
+        const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}", command: "curl wttr.in", folder: "/p", status: "done" }]), text: "" }, components);
         document.getElementById("scroller")!.append(row);
         expect(row.classList.contains("wide")).toBe(true);
 
@@ -621,7 +631,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
 
       // Report is still there, in the card's ⋯ menu, and opens the report box.
       feedback.enabled = true;
-      const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
+      const row = messageElement(message([{ name: "天氣卡片", data: "{}", command: "curl wttr.in", folder: "/p", status: "done" }]), components);
       document.getElementById("scroller")!.append(row);
       click(row.querySelector(".pin-bar [aria-label='More']"));
       const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report a problem…");

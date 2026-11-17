@@ -133,7 +133,7 @@ export interface PluginWorld {
   cardApprove?(botId: string, command: string, component: string, folder: string, detail: string | null): boolean;
   /** What built-in plugins that keep cards of their own ask of a chat's components and their commands (`cards.*`); null: no such bot (or no component context). */
   cards?: {
-    library(botId: string): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null;
+    library(botId: string): { botId: string; names: string[]; offered: string[]; pinOnly: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null;
     shown(botId: string): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] | null;
     states(botId: string, cards: { card: string; command: string | null; name: string; data?: string }[]): unknown[] | null;
     run(botId: string, card: string, command: string, force: boolean): boolean | null;

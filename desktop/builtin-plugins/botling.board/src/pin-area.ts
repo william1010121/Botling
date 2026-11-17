@@ -3,7 +3,7 @@ import {
 } from "./kit";
 import type { ComponentInfo, PinRefresh, PinSize } from "../../../../Web/src/types";
 import type { BoardState, ChipStatus, PinView } from "./types";
-import { button, closePopups, icons, liveNote, newID, openPinDialog, pinMenu, pinsState, prime, showToast, type PinAdd } from "./pins";
+import { button, closePopups, icons, liveNote, newID, openPinDialog, pinMenu, pinsState, prime, type PinAdd } from "./pins";
 
 // The picker, the pinned component, a pin's header and `PinArea`, moved out of pins.ts unchanged (M7-S97).
 // pins.ts re-exports every name from here, so no importer changes. The two files import each other (pins.ts: `whenWords`
@@ -53,23 +53,17 @@ function openPicker(): void {
     name.className = "pin-picker-name";
     name.textContent = choice.name;
     const tag = document.createElement("span");
-    tag.className = "pin-tag" + (choice.command ? " command" : "");
-    tag.textContent = choice.command ? t("pins.command") : t("pins.snapshot");
+    tag.className = "pin-tag command";
+    tag.textContent = t("pins.command");
     const detail = document.createElement("span");
     detail.className = "pin-picker-detail";
-    detail.textContent = [choice.pinned ? t("pins.pinnedTag") : "", choice.uses ? t("pins.uses", { n: choice.uses }) : t("pins.notUsed")].filter(Boolean).join(" · ");
+    detail.textContent = [choice.pinned ? t("pins.pinnedTag") : "", choice.uses ? t("pins.uses", { n: choice.uses }) : ""].filter(Boolean).join(" · ");
     row.append(name, tag, detail);
-    if (choice.command) row.title = choice.command;
+    row.title = choice.command;
     row.addEventListener("click", () => {
       backdrop.remove();
       const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAdd => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
-      if (choice.command) {
-        openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add") ?? document.body, { name: choice.name, command: choice.command, pin });
-      } else {
-        const action = pin("manual", 15);
-        post(action);
-        showToast(t("pins.pinnedToast", { name: choice.name, bot: current.botName }), () => post({ type: "unpin", id: action.id }));
-      }
+      openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add") ?? document.body, { name: choice.name, command: choice.command, pin });
     });
     list.append(row);
   }

@@ -161,7 +161,7 @@ async function setup(): Promise<Env> {
       fetch: async (storageDir, ref) => { calls.push(["content.fetch", ref]); return join(storageDir, "fetched.bin"); },
     },
     cards: {
-      library: (botId) => (botId === "main" ? { botId, names: ["a"], offered: [], entries: {}, readOnly: false, folder: "/home/main" } : null),
+      library: (botId) => (botId === "main" ? { botId, names: ["a"], offered: [], pinOnly: [], entries: {}, readOnly: false, folder: "/home/main" } : null),
       shown: (botId) => (botId === "main" ? [] : null),
       states: (botId, cards) => (botId === "main" ? cards.map((card) => ({ card: card.card })) : null),
       run: (botId, card, command, force) => { calls.push(["cards.run", card, command, force]); return botId === "main" ? true : null; },
@@ -501,7 +501,7 @@ const ROWS: Row[] = [
 
   // cards of the chat (shipped plugins with "cards")
   { method: "cards.library",
-    ok: { params: { plugin: A, bot: "main" }, reply: { botId: "main", names: ["a"], offered: [], entries: {}, readOnly: false, folder: "/home/main" } },
+    ok: { params: { plugin: A, bot: "main" }, reply: { botId: "main", names: ["a"], offered: [], pinOnly: [], entries: {}, readOnly: false, folder: "/home/main" } },
     refuse: { params: { plugin: F, bot: "main" }, error: "Only a plugin shipped with Botling may use a chat's cards." } },
   { method: "cards.shown",
     ok: { params: { plugin: A, bot: "main" }, reply: [] },

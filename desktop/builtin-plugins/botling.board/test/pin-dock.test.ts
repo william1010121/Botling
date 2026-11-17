@@ -14,7 +14,7 @@ const pins: PinView[] = ["CPU 24%", "426/494 GB", "Memory 80%", "Today: Claudeâ€
 const state = (items = pins): BoardState => ({
   botID: "status-strip", botName: "botling", messages: [], working: false, avatar: "", placeholder: "",
   replyingTo: null, pendingFiles: [], components: {}, pins: items,
-  pinChoices: [{ name: "New status", uses: 1, command: null, pinned: false }],
+  pinChoices: [{ name: "New status", uses: 1, command: "uptime", pinned: false }],
 });
 let area: PinArea;
 beforeEach(() => {

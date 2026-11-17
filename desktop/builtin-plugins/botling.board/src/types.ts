@@ -60,10 +60,10 @@ export interface FloatingPinView {
   blocked?: string | null;
 }
 
-/** A component the pin picker offers: one this bot drew, or one with a Command. */
+/** A component the pin picker offers: only those with a Command (there are no snapshot pins): drawn by this bot, its own, or pin-only. */
 export interface PinChoiceView {
   name: string;
-  command?: string | null;
+  command: string;
   uses: number;
   pinned: boolean;
 }

@@ -27,7 +27,7 @@ export function installBoard({ bars = true }: { bars?: boolean } = {}): void {
   useKit(pageKit({ pinArea: document.createElement("div"), topArea: document.createElement("div"), overlay: document.body },
     { onState: () => () => {}, onWindowVisible: () => () => {}, call, requestApproval: () => Promise.resolve(false) }));
   if (!bars) return;
-  bar = { plugin: "botling.board", make: (display, messageID, index) => (barFor(display.name).offered ? pinBar(display, messageID, index) : null) };
+  bar = { plugin: "botling.board", make: (display, messageID, index) => (barFor(display.name, display.command).offered ? pinBar(display, messageID, index) : null) };
   button = { plugin: "botling.board", make: (spec) => specPinButton(spec) };
   extensions.cardBars.push(bar);
   studioSeam.specButtons.push(button);

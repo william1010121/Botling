@@ -84,8 +84,8 @@ export class BotCards {
     if (!context || this.componentList !== null || this.readOnly) return;
     const used = new Set<string>(BUILT_INS);
     for (const record of this.records) for (const display of (record.displays ?? []) as Display[]) used.add(display.name);
-    // As 1.x: the built-ins and what it has drawn; Maintainer gives it more (<component> requests).
-    this.componentList = context.library.names.filter((name) => used.has(name));
+    // As 1.x: the built-ins and what it has drawn; Maintainer gives it more (<component> requests). A pin-only component is not a bot's.
+    this.componentList = context.library.names.filter((name) => used.has(name) && !context.library.pinOnly(name));
     this.store.saveSetting("components", this.componentList);
   }
 
@@ -95,7 +95,7 @@ export class BotCards {
     if (!context || !list) return;
     const next = [...list];
     for (const name of new Set(names)) {
-      if (!context.library.names.includes(name)) continue;
+      if (!context.library.names.includes(name) || context.library.pinOnly(name)) continue;
       const own = context.library.names.filter((candidate) => next.includes(candidate));
       if (own.includes(name) || own.length >= COMPONENT_LIMIT) continue;
       next.push(name);
@@ -378,13 +378,15 @@ export class BotCards {
   }
 
   /** The component library as a card-keeping plugin sees it, with the folder commands run in. null: no component context. */
-  cardLibrary(): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null {
+  cardLibrary(): { botId: string; names: string[]; offered: string[]; pinOnly: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null {
     if (this.options.primary) return this.options.primary.cards.cardLibrary();
     const context = this.context;
     if (!context) return null;
     const library = context.library;
     const entries = Object.fromEntries(library.names.map((name) => [name, { command: library.command(name), detail: library.detailCommand(name), every: library.refreshInterval(name), sizes: library.sizes(name) }]));
-    return { botId: this.id, names: [...library.names], offered: (this.componentList ?? library.names).filter((name) => library.names.includes(name)), entries, readOnly: this.readOnly, folder: this.commandFolder };
+    // `offered`: what the bot may draw (its list, no pin-only one); `pinOnly`: the status components only the pin picker offers, to every bot.
+    const pinOnly = library.names.filter((name) => library.pinOnly(name));
+    return { botId: this.id, names: [...library.names], offered: (this.componentList ?? library.names).filter((name) => library.names.includes(name) && !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
   }
 
   /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
@@ -490,7 +492,7 @@ export class BotCards {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
-    const offered = (this.componentList ?? library.names).filter((name) => library.names.includes(name));
+    const offered = (this.componentList ?? library.names).filter((name) => library.names.includes(name) && !library.pinOnly(name));
     const chat = this.chatData();
     const order = [...offered, ...library.names.filter((name) => !offered.includes(name))];
     return {

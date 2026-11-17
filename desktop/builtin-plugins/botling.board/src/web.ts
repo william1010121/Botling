@@ -45,7 +45,7 @@ export function activate(ccb: CcbWeb): () => void {
     reportVisiblePinsSoon();
   });
   ccb.messages.cardBar(
-    (display, messageID, index) => (barFor(display.name).offered ? pinBar(display, messageID, index) : null),
+    (display, messageID, index) => (barFor(display.name, display.command).offered ? pinBar(display, messageID, index) : null),
     // Before the messages are drawn: the bars take what is pinned from this state; a message with a card is drawn again when that changes.
     (state) => {
       const board = boardState(state);

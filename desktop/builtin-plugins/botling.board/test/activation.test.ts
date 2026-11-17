@@ -86,10 +86,10 @@ describe("botling.board loaded into the chat page", () => {
 
   it("puts its bar on a component in a reply, only in a chat that can pin", () => {
     host.chatState(state());
-    expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-holder > .pin-bar")).not.toBeNull();
+    expect(messageElement(message({ name: "cpu", data: "{}", command: "uptime", folder: "/p", status: "done" }), components).querySelector(".pin-holder > .pin-bar")).not.toBeNull();
     // No data from the program part yet, or a subagent watched: no bar.
     host.chatState(state({ pluginData: undefined }));
-    expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-bar")).toBeNull();
+    expect(messageElement(message({ name: "cpu", data: "{}", command: "uptime", folder: "/p", status: "done" }), components).querySelector(".pin-bar")).toBeNull();
   });
 
   it("tells the app which pins are seen when the window is hidden", () => {
@@ -110,7 +110,7 @@ describe("botling.board loaded into the chat page", () => {
     host.unload(manifest.name);
     expect(document.querySelector("#pin-area")!.children).toHaveLength(0);
     expect(document.querySelector(".float-layer")).toBeNull();
-    expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-bar")).toBeNull();
+    expect(messageElement(message({ name: "cpu", data: "{}", command: "uptime", folder: "/p", status: "done" }), components).querySelector(".pin-bar")).toBeNull();
     expect(redraws).toBeGreaterThan(0);
   });
 });
