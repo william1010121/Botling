@@ -22,7 +22,10 @@ describe("plugins.list carries the tiles of the plugins that are on", () => {
     await until(async () => tilesOf(await list(c), CARDS).length > 0, { timeout: 20_000 });
     const view = await list(c);
     expect(PluginsView.safeParse(view).success).toBe(true);
-    expect(tilesOf(view, CARDS)).toEqual([{ plugin: CARDS, id: `${CARDS}.網頁預覽卡片`, title: "網頁預覽卡片", sizes: ["2x2"], surfaces: ["board", "whiteboard", "pin"] }]);
+    expect(tilesOf(view, CARDS)).toEqual([
+      { plugin: CARDS, id: `${CARDS}.inline-report-block`, title: "inline-report-block", sizes: ["2x2"], surfaces: ["board", "whiteboard", "pin"] },
+      { plugin: CARDS, id: `${CARDS}.網頁預覽卡片`, title: "網頁預覽卡片", sizes: ["2x2"], surfaces: ["board", "whiteboard", "pin"] },
+    ]);
     // Every row is a plugin that is listed and on.
     for (const tile of view.tiles ?? []) expect(view.plugins.find((plugin) => plugin.name === tile.plugin)).toMatchObject({ enabled: true, failure: null });
 

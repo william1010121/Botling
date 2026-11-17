@@ -122,7 +122,7 @@ describe("the registry with built-in plugins", () => {
     expect(plugins.builtInComponentFolders()).toEqual([join(built, "botling.cards", "components")]);
     const own = join(dir, "plugins", "ccb-components", "components");
     const library = new ComponentLibrary(() => [own, ...plugins.builtInComponentFolders()]);
-    expect(library.names).toEqual(["網頁預覽卡片"]);
+    expect(library.names).toEqual(["inline-report-block", "網頁預覽卡片"]);
     expect(library.template("網頁預覽卡片")).toBe(PREVIEW_TEMPLATE);
     mkdirSync(join(own, "網頁預覽卡片"), { recursive: true });
     writeFileSync(join(own, "網頁預覽卡片", "template.html"), "<p>Mine</p>");

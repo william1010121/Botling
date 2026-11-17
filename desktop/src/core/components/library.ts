@@ -12,6 +12,13 @@ import { join } from "node:path";
 export const COMPONENT_LIMIT = 20;
 /** The app's own cards (1.x's built-ins): every bot has them from the start. */
 export const BUILT_INS = ["choices", "網頁預覽卡片"];
+/**
+ * Built-in components every bot has beyond its own list (2026-11-17, the user): `inline-report-block` (one report block drawn in a chat reply, from
+ * botling.cards). It is on no list and counts toward no COMPONENT_LIMIT, and no Maintainer request is needed to show it.
+ */
+export const ALWAYS_COMPONENTS = ["inline-report-block"];
+/** The names that count toward COMPONENT_LIMIT: without the always-yours ones. */
+export const countedComponents = (names: readonly string[]): string[] => names.filter((name) => !ALWAYS_COMPONENTS.includes(name));
 /** Components the bots' component list leaves out: the instructions already teach the choices block. */
 export const UNLISTED_COMPONENTS = ["choices"];
 export const LIVE_RANGE = { min: 1, max: 3600 };
@@ -383,7 +390,7 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
 }
 
 export function knowledgeFull(k: ComponentKnowledge): string {
-  let text = `(App: Components in the chat: ${k.own.length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them. <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
+  let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them, unless your instructions already carry examples for that component (then the examples are enough). <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
   if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; it then shows up in your list.)\n` + k.others.map((e) => e.text).join("\n");
   return text;
 }
@@ -405,5 +412,5 @@ export function knowledgeChanges(k: ComponentKnowledge, told: ComponentKnowledge
   if (gone.length) parts.push(`Gone from the library: ${gone.join(", ")}`);
   if (shelf.length) parts.push(`New or changed in the shared library, not yours yet:\n${shelf.map((e) => e.text).join("\n")}`);
   if (!parts.length) return null;
-  return `(App: Components were updated; only what changed since you were last told, the rest is as before. You have ${k.own.length} / ${k.limit}.)\n${parts.join("\n")}`;
+  return `(App: Components were updated; only what changed since you were last told, the rest is as before. You have ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit}.)\n${parts.join("\n")}`;
 }

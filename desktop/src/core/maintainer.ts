@@ -28,7 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
-import { COMPONENT_LIMIT, safeName } from "./components/library";
+import { COMPONENT_LIMIT, countedComponents, safeName } from "./components/library";
 import { writeFileAtomic } from "./durable/atomic";
 import { title } from "./plugins/manifest";
 import type { BotRequest } from "./reply";
@@ -208,7 +208,7 @@ export class MaintainerDesk {
     if (!list || !this.deps.library.names.includes(name) || this.deps.library.pinOnly(name)) return false;
     const own = bot.ownComponentNames;
     if (own.includes(name)) return true;
-    if (own.length >= COMPONENT_LIMIT) return false;
+    if (countedComponents(own).length >= COMPONENT_LIMIT) return false;
     bot.setComponentList([...list, name]);
     return true;
   }
@@ -236,7 +236,7 @@ export class MaintainerDesk {
       stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name),
     };
     const answerBack = ` If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for ${botName}</component-declined>; the app passes it on to ${botName}.`;
-    const full = ` (App: ${botName} already has ${own.length} / ${limit} components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from ${botName}'s list first, then <take-component bot="${botName}">that name</take-component>.)`;
+    const full = ` (App: ${botName} already has ${countedComponents(own).length} / ${limit} components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from ${botName}'s list first, then <take-component bot="${botName}">that name</take-component>.)`;
     // A pin-only component is changed as asked, but it never goes on the bot's list (and the bot is not told about it).
     if (exists && this.deps.library.pinOnly(name)) return ` (App: "${name}" is a pin-only component, a status card for the pin strip only: ${botName} is not told about it and it does not go on ${botName}'s list. Change it only as the request asks.${answerBack})`;
     if (exists && !own.includes(name)) {
@@ -251,8 +251,8 @@ export class MaintainerDesk {
     this.asks = this.asks.filter((other) => !(other.botId === bot.id && other.name === name));
     this.asks.push(ask);
     if (exists) return ` (App: ${botName} asked for this change.${answerBack})`;
-    if (own.length >= limit) return full;
-    return ` (App: ${botName} has ${own.length} / ${limit} components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="${botName}">its name</give-component>. Otherwise build it; once it is in the library the app adds it to ${botName}'s list.${answerBack})`;
+    if (countedComponents(own).length >= limit) return full;
+    return ` (App: ${botName} has ${countedComponents(own).length} / ${limit} components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="${botName}">its name</give-component>. Otherwise build it; once it is in the library the app adds it to ${botName}'s list.${answerBack})`;
   }
 
   private nameOf(bot: Bot) {
@@ -336,7 +336,7 @@ export class MaintainerDesk {
       if (!this.deps.library.names.includes(name)) { maintainer?.queueNote(`(App: "${name}" is not in the library, so it was not added to ${shown}'s list.)`); return; }
       if (this.deps.library.pinOnly(name)) { maintainer?.queueNote(`(App: "${name}" is a pin-only component (only the pin strip offers it), so it was not added to ${shown}'s list. A bot is never told about it.)`); return; }
       if (!this.giveComponent(name, bot)) {
-        maintainer?.queueNote(`(App: ${shown} already has ${bot.ownComponentNames.length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
+        maintainer?.queueNote(`(App: ${shown} already has ${countedComponents(bot.ownComponentNames).length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
         return;
       }
       const asked = this.asks.find((ask) => ask.botId === bot.id && ask.name === name) ?? this.asks.find((ask) => ask.botId === bot.id && !ask.changing);
