@@ -152,6 +152,8 @@ describe("making an inline block pinnable", () => {
     expect(action.text).toContain(".bot/card-scripts/inline-chart/");
     expect(action.text).toContain("worker");
     expect(action.text).toContain('<show name="inline-chart" command=');
+    // The tag is told closed (`/>`): the reply parser's showTag matches `<show …/>` or `<show …>JSON</show>`, never a bare `<show …>`.
+    expect(action.text).toMatch(/<show name="inline-chart" command="[^"]*"\/>/);
     expect(document.querySelector(".pin-toast")?.textContent).toContain("ClaudeCodeBot");
     expect(document.querySelector(".pin-toast button")).toBeNull();
   });
