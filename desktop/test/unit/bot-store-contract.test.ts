@@ -350,6 +350,19 @@ describe("DbBotStore", () => {
       await hosts.close();
     });
 
+    it("a save before any load does not keep the parsed lines (they are parsed again from their text when loaded)", async () => {
+      const { lines, hosts, runs } = await persisted(6);
+      const store = hosts.open("bot", folder());
+      store.saveMessages(lines);
+      await store.durable();
+      expect(runs).toEqual([]);
+      const held = [...(store as unknown as { state: { messages: Map<string, { parsed?: unknown }> } }).state.messages.values()];
+      expect(held).toHaveLength(6);
+      expect(held.every((row) => row.parsed === undefined)).toBe(true);
+      expect(store.loadMessages().records).toEqual(lines);
+      await hosts.close();
+    });
+
     it("a stored line that is not in the canonical form, or has an extra key, is not rewritten while it is unchanged, and an edit writes exactly one row", async () => {
       const { db, lines, hosts, runs } = await persisted(4);
       // Row 1: the same data with spaces in it. Row 2: an extra key beside seq and record (a hand-made row).

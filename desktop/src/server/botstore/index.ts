@@ -251,7 +251,12 @@ export class DbBotStore implements BotStore {
       const old = current.get(key);
       const seq = old && old.seq > last ? old.seq : ++maxSeq;
       last = seq;
-      if (old && old.seq === seq && sameLine(old, body)) { next.set(key, old); continue; }
+      if (old && old.seq === seq && sameLine(old, body)) {
+        // A row kept by a save before any load would hold its parsed line for good; it is parsed again from its text when loaded.
+        old.parsed = undefined;
+        next.set(key, old);
+        continue;
+      }
       const row: MessageRow = { rev: (old?.rev ?? 0) + 1, seq, body, fixed: true };
       next.set(key, row);
       puts.push([key, row]);
