@@ -2,6 +2,34 @@
   {
     "kind": "card",
     "plugin": "botling.cards",
+    "id": "botling.cards.inline-chart",
+    "title": "inline-chart",
+    "component": {
+      "name": "inline-chart",
+      "dir": "components/inline-chart"
+    }
+  },
+  {
+    "kind": "tile",
+    "plugin": "botling.cards",
+    "id": "botling.cards.inline-chart",
+    "title": "inline-chart",
+    "sizes": [
+      "2x2"
+    ],
+    "surfaces": [
+      "board",
+      "whiteboard",
+      "pin"
+    ],
+    "component": {
+      "name": "inline-chart",
+      "dir": "components/inline-chart"
+    }
+  },
+  {
+    "kind": "card",
+    "plugin": "botling.cards",
     "id": "botling.cards.inline-report-block",
     "title": "inline-report-block",
     "component": {

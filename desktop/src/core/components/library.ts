@@ -13,17 +13,36 @@ export const COMPONENT_LIMIT = 20;
 /** The app's own cards (1.x's built-ins): every bot has them from the start. */
 export const BUILT_INS = ["choices", "網頁預覽卡片"];
 /**
- * Built-in components every bot has beyond its own list (2026-11-17, the user): `inline-report-block` (one report block drawn in a chat reply, from
- * botling.cards). It is on no list and counts toward no COMPONENT_LIMIT, and no Maintainer request is needed to show it.
+ * Built-in components every bot has beyond its own list: the ones whose about.md carries the tag `Built-in: yes` (2026-11-17, the user:
+ * "有一個 tag 可以讓 maintainer 決定要怎麼放"). Maintainer decides which components these are, in the plugin library as in a built-in
+ * plugin (botling.cards ships `inline-report-block` and `inline-chart` with the tag): nothing here names one. A built-in is on no list,
+ * counts toward no COMPONENT_LIMIT, and no Maintainer request is needed to show it. An optional `Built-in order: N` places it: built-ins
+ * come first in a bot's component lines, lowest number first, then by name (default 0). The tag is read from the copy of the component that
+ * wins in the library (the plugin library's own, then the plugins'), so a plugin-library copy without the line untags the shipped one.
+ *
+ * Cache: the tag only decides what a bot's component note says (a message part, `ComponentKnowledge`); no system prompt is built from it
+ * (prompts.ts, inline-blocks.ts never read the library; a test holds it), so tagging or untagging mid-session reaches a bot as an appended
+ * "what changed" note (`knowledgeChanges`) and never rewrites the cached front. The whole list is told again at the next fresh session.
  */
-export const ALWAYS_COMPONENTS = ["inline-report-block"];
-/** The names that count toward COMPONENT_LIMIT: without the always-yours ones. */
-export const countedComponents = (names: readonly string[]): string[] => names.filter((name) => !ALWAYS_COMPONENTS.includes(name));
+export const BUILT_IN_TAG = "built-in:";
+export const BUILT_IN_ORDER_TAG = "built-in order:";
+/** The names that count toward COMPONENT_LIMIT: without the built-in ones (`builtIn`: the library's `builtInNames()`). */
+export const countedComponents = (names: readonly string[], builtIn: readonly string[]): string[] => names.filter((name) => !builtIn.includes(name));
 /** Components the bots' component list leaves out: the instructions already teach the choices block. */
 export const UNLISTED_COMPONENTS = ["choices"];
 export const LIVE_RANGE = { min: 1, max: 3600 };
 /** What an about.md `Pin only:` line may say to turn it on. */
 const PIN_ONLY_YES = ["yes", "true", "on", "1"];
+
+/** Whether an about.md is a pin-only component (`Pin only: yes` with a Command). */
+const isPinOnly = (about: string): boolean => PIN_ONLY_YES.includes((aboutLine(about, "pin only:") ?? "").toLowerCase()) && aboutLine(about, "command:") !== null;
+
+/** The built-in tag of an about.md: its order (`Built-in order:`, a whole number, default 0), or null when it has no `Built-in: yes` line or is pin-only (a bot is never told about those). */
+export function builtInTag(about: string): { order: number } | null {
+  if (!PIN_ONLY_YES.includes((aboutLine(about, BUILT_IN_TAG) ?? "").toLowerCase()) || isPinOnly(about)) return null;
+  const order = /^-?\d{1,6}$/.test(aboutLine(about, BUILT_IN_ORDER_TAG) ?? "") ? Number(aboutLine(about, BUILT_IN_ORDER_TAG)) : 0;
+  return { order };
+}
 
 /** Seconds from "2s", "every 2s", "1.5s", "5 seconds", "3", "1m", "500ms" (raised to a second); null for anything else or past an hour (`ComponentRefresh.seconds`). */
 export function refreshSeconds(text: string): number | null {
@@ -119,6 +138,8 @@ export class ComponentLibrary {
   private working = new Map<string, string>();
   /** Whether git has an earlier version of each, asked once per change (`previous`). */
   private previous = new Map<string, boolean>();
+  /** The components that carry the built-in tag, with their order, as of the last `rescan` (read when an about.md changes, so a change reaches the bots through `rescan`'s answer). */
+  private builtIns = new Map<string, number>();
   /** The plugin library's git, for earlier versions; null when there is none. */
   git: HistoryGit | null = null;
   /** Bumps whenever a template or about.md changes (for views to redraw). */
@@ -155,9 +176,12 @@ export class ComponentLibrary {
    * A status component that exists only to be pinned (an about.md `Pin only: yes` line): the bots are not told about it and cannot
    * be asked to draw it, the pin picker still offers it. Only one with a Command counts: without one there is nothing to pin.
    */
-  pinOnly(name: string): boolean {
-    const about = this.about(name);
-    return PIN_ONLY_YES.includes((aboutLine(about, "pin only:") ?? "").toLowerCase()) && aboutLine(about, "command:") !== null;
+  pinOnly(name: string): boolean { return isPinOnly(this.about(name)); }
+  /** Whether `name` carries the built-in tag (an about.md `Built-in: yes` line): every bot has it, on no list, counted toward no limit. */
+  builtIn(name: string): boolean { return this.builtIns.has(name); }
+  /** The built-in components, placed: by `Built-in order:` (lowest first), then by name. As of the last `rescan`. */
+  builtInNames(): string[] {
+    return [...this.builtIns].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name]) => name);
   }
   icon(name: string): string | null { const icon = aboutLine(this.about(name), "icon:"); return icon && (isSymbolName(icon) || isEmoji(icon)) ? icon : null; }
 
@@ -316,10 +340,14 @@ export class ComponentLibrary {
       if (this.aboutModified.get(name) !== about) {
         if (this.aboutModified.has(name)) catalogChanged = true;
         this.aboutModified.set(name, about);
+        const tag = builtInTag(this.about(name));
+        if (tag) this.builtIns.set(name, tag.order); else this.builtIns.delete(name);
         this.previous.delete(name);
         this.stamp++;
       }
     }
+    // One that went away is read again if it comes back (its about.md may carry the same mtime).
+    for (const name of [...this.builtIns.keys()]) if (!found.has(name)) { this.builtIns.delete(name); this.aboutModified.delete(name); }
     return catalogChanged;
   }
 }
@@ -366,6 +394,8 @@ export interface ComponentKnowledge {
   own: { name: string; text: string }[];
   others: { name: string; text: string }[];
   limit: number;
+  /** The built-in components (the library's tag, in their order): in `own` but not counted toward `limit`. */
+  builtIn?: string[];
   /** The bot's instructions carry examples for a component (the inline blocks guidance): no app_component_usage lookup for it. */
   examples?: boolean;
 }
@@ -377,23 +407,27 @@ export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">
 }
 
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
-export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly">>, mine: readonly string[], examples = false): ComponentKnowledge {
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly" | "builtInNames">>, mine: readonly string[], examples = false): ComponentKnowledge {
   // choices is the app's own buttons: the instructions already teach its block, so it is not listed again. A pin-only component (status
   // things for the pin strip) is in neither list: the bots do not see it.
   const listed = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name);
-  const own = library.names.filter((name) => mine.includes(name) && listed(name));
+  // The built-ins come first, in their placed order (`Built-in order:`); the rest stay in the library's order (a stable sort).
+  const builtIn = library.builtInNames?.() ?? [];
+  const rank = (name: string) => { const at = builtIn.indexOf(name); return at < 0 ? builtIn.length : at; };
+  const own = library.names.filter((name) => mine.includes(name) && listed(name)).sort((a, b) => rank(a) - rank(b));
   const others = library.names.filter((name) => !mine.includes(name) && listed(name));
   return {
     // One line each, its whole usage only when the bot asks (app_component_usage), so a wake does not carry every about.md.
     own: own.map((name) => ({ name, text: ownLine(library, name) })),
     others: others.map((name) => ({ name, text: library.summaries([name]) })),
     limit: COMPONENT_LIMIT,
+    ...(builtIn.length ? { builtIn } : {}),
     ...(examples ? { examples } : {}),
   };
 }
 
 export function knowledgeFull(k: ComponentKnowledge): string {
-  let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them.${k.examples ? " Exception: a component your instructions already carry examples for (the inline blocks rule) needs no lookup; the examples are enough." : ""} <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
+  let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name), k.builtIn ?? []).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them.${k.examples ? " Exception: a component your instructions already carry examples for (the inline blocks rule) needs no lookup; the examples are enough." : ""} <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
   if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; it then shows up in your list.)\n` + k.others.map((e) => e.text).join("\n");
   return text;
 }
@@ -415,5 +449,5 @@ export function knowledgeChanges(k: ComponentKnowledge, told: ComponentKnowledge
   if (gone.length) parts.push(`Gone from the library: ${gone.join(", ")}`);
   if (shelf.length) parts.push(`New or changed in the shared library, not yours yet:\n${shelf.map((e) => e.text).join("\n")}`);
   if (!parts.length) return null;
-  return `(App: Components were updated; only what changed since you were last told, the rest is as before. You have ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit}.)\n${parts.join("\n")}`;
+  return `(App: Components were updated; only what changed since you were last told, the rest is as before. You have ${countedComponents(k.own.map((e) => e.name), k.builtIn ?? []).length} / ${k.limit}.)\n${parts.join("\n")}`;
 }

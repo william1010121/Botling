@@ -10,7 +10,7 @@ import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { inlineBlocksFor } from "../inline-blocks";
-import { ALWAYS_COMPONENTS, BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
+import { BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
@@ -96,20 +96,20 @@ export class BotCards {
     if (!context || !list) return;
     const next = [...list];
     for (const name of new Set(names)) {
-      // An always-yours component (inline-report-block) is on no list and counts toward no limit.
-      if (!context.library.names.includes(name) || context.library.pinOnly(name) || ALWAYS_COMPONENTS.includes(name)) continue;
-      const own = countedComponents(context.library.names.filter((candidate) => next.includes(candidate)));
+      // A built-in component (the library's `Built-in: yes` tag) is on no list and counts toward no limit.
+      if (!context.library.names.includes(name) || context.library.pinOnly(name) || context.library.builtIn(name)) continue;
+      const own = countedComponents(context.library.names.filter((candidate) => next.includes(candidate)), context.library.builtInNames());
       if (own.includes(name) || own.length >= COMPONENT_LIMIT) continue;
       next.push(name);
     }
     if (next.length !== list.length) this.setComponentList(next);
   }
 
-  /** Its components in the library, in the library's order: its list, and the always-yours ones (they are on no list; `countedComponents` leaves them out of the limit). */
+  /** Its components in the library, in the library's order: its list, and the built-in ones (the library's tag; they are on no list, `countedComponents` leaves them out of the limit). */
   ownComponents(): string[] {
     const context = this.context;
     if (!context) return [];
-    const own = new Set([...(this.owner.cards.componentList ?? []), ...ALWAYS_COMPONENTS]);
+    const own = new Set([...(this.owner.cards.componentList ?? []), ...context.library.builtInNames()]);
     return context.library.names.filter((name) => own.has(name));
   }
 
@@ -390,7 +390,7 @@ export class BotCards {
     const entries = Object.fromEntries(library.names.map((name) => [name, { command: library.command(name), detail: library.detailCommand(name), every: library.refreshInterval(name), sizes: library.sizes(name) }]));
     // `offered`: what the bot may draw (its list, no pin-only one); `pinOnly`: the status components only the pin picker offers, to every bot.
     const pinOnly = library.names.filter((name) => library.pinOnly(name));
-    return { botId: this.id, names: [...library.names], offered: [...new Set([...(this.componentList ?? library.names), ...ALWAYS_COMPONENTS])].filter((name) => library.names.includes(name) && !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
+    return { botId: this.id, names: [...library.names], offered: [...new Set([...(this.componentList ?? library.names), ...library.builtInNames()])].filter((name) => library.names.includes(name) && !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
   }
 
   /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
@@ -496,7 +496,7 @@ export class BotCards {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
-    const offered = [...new Set([...(this.componentList ?? library.names), ...ALWAYS_COMPONENTS])].filter((name) => library.names.includes(name) && !library.pinOnly(name));
+    const offered = [...new Set([...(this.componentList ?? library.names), ...library.builtInNames()])].filter((name) => library.names.includes(name) && !library.pinOnly(name));
     const chat = this.chatData();
     const order = [...offered, ...library.names.filter((name) => !offered.includes(name))];
     return {
