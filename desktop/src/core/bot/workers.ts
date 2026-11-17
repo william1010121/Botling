@@ -312,8 +312,10 @@ export class BotWorkers {
     const library = this.context?.library;
     if (!library) throw new Error("The component library is not available here.");
     const wanted = typeof args.name === "string" ? args.name.trim() : "";
-    const name = library.names.find((each) => each === wanted) ?? library.names.find((each) => each.toLowerCase() === wanted.toLowerCase());
-    if (!name) throw new Error(`No component named "${wanted}". The library has: ${library.names.join(", ")}.`);
+    // A pin-only component (only the pin strip offers it) is not the bot's to know: it is neither answered nor listed.
+    const known = library.names.filter((each) => !library.pinOnly(each));
+    const name = known.find((each) => each === wanted) ?? known.find((each) => each.toLowerCase() === wanted.toLowerCase());
+    if (!name) throw new Error(`No component named "${wanted}". The library has: ${known.join(", ")}.`);
     const yours = this.ownComponents().includes(name) || BUILT_INS.includes(name);
     return {
       name, yours, command: library.command(name), usage: library.catalog([name]),

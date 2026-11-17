@@ -14,7 +14,7 @@ const pins: PinView[] = ["CPU 24%", "426/494 GB", "Memory 80%", "Today: Claude�
 const state = (items = pins): BoardState => ({
   botID: "status-strip", botName: "botling", messages: [], working: false, avatar: "", placeholder: "",
   replyingTo: null, pendingFiles: [], components: {}, pins: items,
-  pinChoices: [{ name: "New status", uses: 1, command: null, pinned: false }],
+  pinChoices: [{ name: "New status", uses: 1, command: "uptime", pinned: false }],
 });
 let area: PinArea;
 beforeEach(() => {
@@ -65,5 +65,47 @@ describe("the status strip keeps its add control beside overflowing pins", () =>
     area.update(state(pins.map(pin => ({ ...pin, chip: { text: "Updated", tone: "good" } }))));
     expect(document.querySelector(".pin-chip.add")).toBe(add);
     expect(document.activeElement).toBe(add);
+  });
+});
+
+describe("the strip with nothing pinned", () => {
+  const addButton = () => document.querySelector<HTMLButtonElement>(".pin-dock > .pin-chip.add")!;
+
+  it("stays, holding only a labelled add button that opens the same picker", () => {
+    area.update(state([]));
+    const dock = document.querySelector<HTMLElement>(".pin-dock")!;
+    expect(dock.hidden).toBe(false);
+    expect(dock.classList.contains("empty")).toBe(true);
+    expect(dock.querySelectorAll(".pin-chip:not(.add)")).toHaveLength(0);
+    const add = addButton();
+    expect(add.querySelector<HTMLElement>(".pin-chip-label")!.hidden).toBe(false);
+    expect(add.textContent).toBe("Add component");
+    expect(add.getAttribute("aria-label")).toBe("Add component");
+    add.click();
+    expect(document.querySelector(".pin-picker-row")?.textContent).toContain("New status");
+  });
+
+  it("says it in the page's language", () => {
+    document.documentElement.lang = "zh-Hant";
+    try {
+      area.update(state([]));
+      expect(addButton().textContent).toBe("加組件");
+      expect(addButton().getAttribute("aria-label")).toBe("加組件");
+    } finally {
+      document.documentElement.lang = "";
+    }
+  });
+
+  it("goes back to the plain + once something is pinned, and keeps the same button", () => {
+    area.update(state([]));
+    const add = addButton();
+    area.update(state());
+    expect(addButton()).toBe(add);
+    expect(document.querySelector(".pin-dock")!.classList.contains("empty")).toBe(false);
+    expect(add.querySelector<HTMLElement>(".pin-chip-label")!.hidden).toBe(true);
+    expect(add.textContent).toBe("");
+    expect(add.getAttribute("aria-label")).toBe("Pin a component");
+    area.update(state([]));
+    expect(document.querySelector(".pin-dock")!.classList.contains("empty")).toBe(true);
   });
 });

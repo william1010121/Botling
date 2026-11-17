@@ -157,27 +157,39 @@ export class PinBook {
     if (changed) this.save(botId, pins, false);
   }
 
-  /** The picker's list: components it drew (newest first), then its own others with a Command. */
+  /**
+   * The picker's list: only components with a Command (a pin runs it to stay current; there are no snapshot pins). First the pin-only
+   * status components (the main use of the strip; the bot is not told of them, every bot's picker has them), then the ones the bot drew
+   * with a command (newest first), then its own others with one.
+   */
   private choices(library: CardLibrary, pins: PinRecord[], shown: ShownCard[]): PinChoiceView[] {
     const available = new Set(library.names);
+    const pinOnly = new Set(library.pinOnly);
     const uses = new Map<string, number>();
     const commands = new Map<string, string>();
     const order: string[] = [];
     for (const card of shown) {
       if (!available.has(card.name) || card.name === "choices") continue;
-      if (!uses.has(card.name)) {
-        order.push(card.name);
-        if (card.shownCommand) commands.set(card.name, card.shownCommand);
-      }
+      if (!uses.has(card.name)) order.push(card.name);
+      // The newest line that drew it with a command.
+      if (card.shownCommand && !commands.has(card.name)) commands.set(card.name, card.shownCommand);
       uses.set(card.name, (uses.get(card.name) ?? 0) + 1);
     }
     const pinned = new Set(pins.map((pin) => pin.name));
-    const used = order.map((name) => ({ name, command: commands.get(name) ?? null, uses: uses.get(name) ?? 0, pinned: pinned.has(name) }));
-    const others = library.offered.filter((name) => available.has(name) && !uses.has(name)).flatMap((name) => {
-      const command = library.entries[name]?.command ?? null;
-      return command ? [{ name, command, uses: 0, pinned: pinned.has(name) }] : [];
+    const choice = (name: string, command: string): PinChoiceView => ({ name, command, uses: uses.get(name) ?? 0, pinned: pinned.has(name) });
+    const first = library.pinOnly.filter((name, at, all) => available.has(name) && all.indexOf(name) === at).flatMap((name) => {
+      const command = commands.get(name) ?? library.entries[name]?.command ?? null;
+      return command ? [choice(name, command)] : [];
     });
-    return [...used, ...others].slice(0, 200);
+    const used = order.filter((name) => !pinOnly.has(name)).flatMap((name) => {
+      const command = commands.get(name) ?? library.entries[name]?.command ?? null;
+      return command ? [choice(name, command)] : [];
+    });
+    const others = library.offered.filter((name, at, all) => available.has(name) && !pinOnly.has(name) && !uses.has(name) && all.indexOf(name) === at).flatMap((name) => {
+      const command = library.entries[name]?.command ?? null;
+      return command ? [choice(name, command)] : [];
+    });
+    return [...first, ...used, ...others].slice(0, 200);
   }
 
   /** The pins as the page draws them, those floating, and what the picker offers. */
@@ -221,8 +233,8 @@ export class PinBook {
     let { messageId, index } = from;
     const shown = await this.host.cards.shown(bot);
     if (!messageId && from.name) {
-      // The newest line that shows it.
-      const found = shown.find((card) => card.name === from.name);
+      // The newest line that shows it with a command (a line of plain data is no pin: there are no snapshot pins).
+      const found = shown.find((card) => card.name === from.name && card.shownCommand);
       if (found) { messageId = found.messageId; index = found.index; }
     }
     const make = (name: string, command: string | null, data: string, ranAt?: number): PinRecord => {
@@ -245,9 +257,9 @@ export class PinBook {
       if (command) {
         const [state] = await this.host.cards.states(bot, [{ card: `${card.messageId}/${card.index}`, command, name: card.name }]);
         if (state?.run && state.run.data !== null) { data = state.run.data; ranAt = state.run.ranAt !== null ? toSwiftDate(state.run.ranAt) : undefined; }
-      } else if (data === "null") return { pinned: false };
+      } else return { pinned: false };
       pin = make(card.name, command, data, ranAt);
-      if (command) pin.followsComponent = card.command === null;
+      pin.followsComponent = card.command === null;
       // Provenance from the stored reply, never from a component action payload.
       pin.linkAuthor = card.author ?? bot;
     } else if (from.name && library.names.includes(from.name)) {

@@ -14,6 +14,8 @@ export class FakeBotling {
   details = new Map<string, string>();
   entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }> = {};
   shownCards: ShownCard[] = [];
+  /** The library's pin-only components (the bot is not offered them; the picker is). */
+  pinOnly: string[] = [];
   readOnly = false;
   /** Runs asked for, in order (card, command, force); each card's last run. */
   runs: { card: string; command: string; force: boolean }[] = [];
@@ -27,7 +29,7 @@ export class FakeBotling {
   clock = 1_800_000_000_000;
 
   library(): CardLibrary {
-    return { botId: BOT, names: Object.keys(this.entries), offered: Object.keys(this.entries), entries: this.entries, readOnly: this.readOnly, folder: FOLDER };
+    return { botId: BOT, names: Object.keys(this.entries), offered: Object.keys(this.entries).filter((name) => !this.pinOnly.includes(name)), pinOnly: this.pinOnly, entries: this.entries, readOnly: this.readOnly, folder: FOLDER };
   }
 
   readonly host: BookHost = {

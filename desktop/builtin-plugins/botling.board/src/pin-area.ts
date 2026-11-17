@@ -3,7 +3,7 @@ import {
 } from "./kit";
 import type { ComponentInfo, PinRefresh, PinSize } from "../../../../Web/src/types";
 import type { BoardState, ChipStatus, PinView } from "./types";
-import { button, closePopups, icons, liveNote, newID, openPinDialog, pinMenu, pinsState, prime, showToast, type PinAdd } from "./pins";
+import { button, closePopups, icons, liveNote, newID, openPinDialog, pinMenu, pinsState, prime, type PinAdd } from "./pins";
 
 // The picker, the pinned component, a pin's header and `PinArea`, moved out of pins.ts unchanged (M7-S97).
 // pins.ts re-exports every name from here, so no importer changes. The two files import each other (pins.ts: `whenWords`
@@ -53,23 +53,17 @@ function openPicker(): void {
     name.className = "pin-picker-name";
     name.textContent = choice.name;
     const tag = document.createElement("span");
-    tag.className = "pin-tag" + (choice.command ? " command" : "");
-    tag.textContent = choice.command ? t("pins.command") : t("pins.snapshot");
+    tag.className = "pin-tag command";
+    tag.textContent = t("pins.command");
     const detail = document.createElement("span");
     detail.className = "pin-picker-detail";
-    detail.textContent = [choice.pinned ? t("pins.pinnedTag") : "", choice.uses ? t("pins.uses", { n: choice.uses }) : t("pins.notUsed")].filter(Boolean).join(" · ");
+    detail.textContent = [choice.pinned ? t("pins.pinnedTag") : "", choice.uses ? t("pins.uses", { n: choice.uses }) : ""].filter(Boolean).join(" · ");
     row.append(name, tag, detail);
-    if (choice.command) row.title = choice.command;
+    row.title = choice.command;
     row.addEventListener("click", () => {
       backdrop.remove();
       const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAdd => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
-      if (choice.command) {
-        openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add") ?? document.body, { name: choice.name, command: choice.command, pin });
-      } else {
-        const action = pin("manual", 15);
-        post(action);
-        showToast(t("pins.pinnedToast", { name: choice.name, bot: current.botName }), () => post({ type: "unpin", id: action.id }));
-      }
+      openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add") ?? document.body, { name: choice.name, command: choice.command, pin });
     });
     list.append(row);
   }
@@ -300,6 +294,8 @@ export class PinArea {
   private readonly dock: HTMLElement;
   private readonly chipList: HTMLElement;
   private readonly addChip: HTMLButtonElement;
+  /** The words beside the +, shown only while nothing is pinned (the strip then holds just this button). */
+  private readonly addLabel: HTMLElement;
   private readonly sheet: HTMLElement;
   private openID: string | null = null;
   private sheetKey = "";
@@ -329,6 +325,9 @@ export class PinArea {
     this.chipList = document.createElement("div");
     this.chipList.className = "pin-chip-list";
     this.addChip = button("pin-chip add", t("pins.pinAComponent"), icons.plus, () => openPicker());
+    this.addLabel = document.createElement("span");
+    this.addLabel.className = "pin-chip-label";
+    this.addChip.append(this.addLabel);
     this.dock.append(this.chipList, this.addChip);
     this.row = document.createElement("div");
     this.row.className = "dock-row";
@@ -358,8 +357,6 @@ export class PinArea {
     if (this.wordsIn !== language()) {
       this.wordsIn = language();
       this.dock.setAttribute("aria-label", t("pins.dock"));
-      this.addChip.title = t("pins.pinAComponent");
-      this.addChip.setAttribute("aria-label", t("pins.pinAComponent"));
       this.sheetKey = this.dockKey = this.sheetHeadKey = "";
     }
     prime(state);
@@ -388,7 +385,15 @@ export class PinArea {
 
   private drawDock(): void {
     const pins = this.enabled ? current.pins : [];
-    this.dock.hidden = pins.length === 0;
+    // With nothing pinned the strip stays, holding only "+ Add component", so the first one can be added.
+    const empty = pins.length === 0;
+    this.dock.hidden = !this.enabled;
+    this.dock.classList.toggle("empty", empty);
+    this.addLabel.hidden = !empty;
+    this.addLabel.textContent = empty ? t("pins.addFirst") : "";
+    const addWords = empty ? t("pins.addFirst") : t("pins.pinAComponent");
+    this.addChip.title = addWords;
+    this.addChip.setAttribute("aria-label", addWords);
     const icon = (p: PinView) => [current.components[p.name]?.icon ?? null, current.components[p.name]?.iconImage ?? null];
     const key = JSON.stringify([pins.map((p) => [p.id, p.name, p.headline, p.chip ?? null, icon(p), p.display.status]), this.openID]);
     if (key === this.dockKey) return;

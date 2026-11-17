@@ -38,9 +38,18 @@ export function prime(state: BoardState): void {
   setChat(current.enabled ? state.botID : null, current.pins);
 }
 
-/** Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned). */
+/**
+ * Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned).
+ * Every card of a library component has the bar (its ⋯ menu carries "Report a problem…"); `pinBar` leaves the pin button out for
+ * a card with no Command (`canPin`), because only a Command component can be pinned (a snapshot pin from before keeps its bar).
+ */
 export function barFor(name: string): { offered: boolean; pinned: boolean } {
   return { offered: current.enabled && !!current.components[name], pinned: current.pins.some((pin) => pin.name === name) };
+}
+
+/** A card can be pinned when it has a Command, or when it is pinned already (a snapshot pin from before: to open or undo it). */
+export function canPin(command: string | null | undefined, pinned: boolean): boolean {
+  return !!command || pinned;
 }
 
 export const icons = {
@@ -89,13 +98,14 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   });
   const pinnedHere = barFor(display.name).pinned;
+  const pinnable = canPin(display.command, pinnedHere);
   if (pinnedHere) bar.dataset.holder = "pinned";
   if (pinnedHere) {
     const badge = button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: display.name }));
     });
     bar.append(badge);
-  } else {
+  } else if (pinnable) {
     const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => pinIt(pin));
     bar.append(pin);
   }
@@ -107,9 +117,9 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
   const more = button("pin-tool", t("pins.more"), icons.more, () => {
     const pinned = current.pins.find((p) => p.name === display.name);
     openMenu(more, [
-      pinned
-        ? { label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }
-        : { label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) },
+      ...(pinned
+        ? [{ label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }]
+        : pinnable ? [{ label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) }] : []),
       reportItem(more, display.name, current.components[display.name], more.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null, pinned?.id)
         ?? { label: t("pins.report"), disabled: true, run: () => {} },
     ]);
@@ -135,16 +145,19 @@ export type PinAdd = Extract<PinAction, { type: "pin" }>;
  * The pin button of a component made from a reply (drawn under it), or a Pinned badge once this
  * bot has it. A bot-filled one whose about.md suggests a Board command is then made live.
  */
-export function specPinButton(spec: SpecChipView): HTMLElement {
+export function specPinButton(spec: SpecChipView): HTMLElement | null {
   const name = spec.component ?? spec.name;
   if (current.pins.some((p) => p.name === name)) {
     return button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: name }));
     });
   }
+  // Without a Command there is nothing to pin (no snapshot pins).
+  const command = spec.display?.command;
+  if (!command) return null;
   const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => openPinDialog(pin, {
     name,
-    command: spec.display?.command ?? null,
+    command,
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), spec: spec.id, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   }));
   return pin;

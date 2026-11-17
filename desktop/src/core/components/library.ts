@@ -15,6 +15,8 @@ export const BUILT_INS = ["choices", "網頁預覽卡片"];
 /** Components the bots' component list leaves out: the instructions already teach the choices block. */
 export const UNLISTED_COMPONENTS = ["choices"];
 export const LIVE_RANGE = { min: 1, max: 3600 };
+/** What an about.md `Pin only:` line may say to turn it on. */
+const PIN_ONLY_YES = ["yes", "true", "on", "1"];
 
 /** Seconds from "2s", "every 2s", "1.5s", "5 seconds", "3", "1m", "500ms" (raised to a second); null for anything else or past an hour (`ComponentRefresh.seconds`). */
 export function refreshSeconds(text: string): number | null {
@@ -96,6 +98,8 @@ export interface ComponentInfoData {
   sizes: string[];
   icon: string | null;
   title: string | null;
+  /** A pin-only component (`pinOnly`): the pin strip offers it, the bots and the composer's / menu do not. */
+  pinOnly: boolean;
 }
 
 export class ComponentLibrary {
@@ -140,6 +144,14 @@ export class ComponentLibrary {
   detailCommand(name: string): string | null { return aboutLine(this.about(name), "detail command:"); }
   refreshInterval(name: string): number | null { const line = aboutLine(this.about(name), "refresh:"); return line ? refreshSeconds(line) : null; }
   sizes(name: string): string[] { return aboutSizes(this.about(name)); }
+  /**
+   * A status component that exists only to be pinned (an about.md `Pin only: yes` line): the bots are not told about it and cannot
+   * be asked to draw it, the pin picker still offers it. Only one with a Command counts: without one there is nothing to pin.
+   */
+  pinOnly(name: string): boolean {
+    const about = this.about(name);
+    return PIN_ONLY_YES.includes((aboutLine(about, "pin only:") ?? "").toLowerCase()) && aboutLine(about, "command:") !== null;
+  }
   icon(name: string): string | null { const icon = aboutLine(this.about(name), "icon:"); return icon && (isSymbolName(icon) || isEmoji(icon)) ? icon : null; }
 
   /** A short human name from about.md's first line ("今日對話次數（圓餅圖）：…" → "今日對話次數"). */
@@ -166,7 +178,8 @@ export class ComponentLibrary {
 
   /** The components `text` names with /Name (`mentioned(in:)`), in the order they are named. */
   mentioned(text: string): string[] {
-    return componentMentions(text, this.names);
+    // A pin-only component is no part of what a bot draws, so naming it with / tells the bot nothing.
+    return componentMentions(text, this.names.filter((name) => !this.pinOnly(name)));
   }
 
   /** What goes to the bot, unseen, with a message that names components with / (`mentionNote(for:)`). */
@@ -184,7 +197,7 @@ export class ComponentLibrary {
     if (template === null) return null;
     return {
       template, version: this.versions.get(name) ?? 0, updated: this.updated.has(name), working: this.working.has(name), hasPrevious: this.hasPrevious(name),
-      sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name),
+      sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name), pinOnly: this.pinOnly(name),
     };
   }
 
@@ -355,10 +368,12 @@ export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">
 }
 
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
-export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries">, mine: readonly string[]): ComponentKnowledge {
-  // choices is the app's own buttons: the instructions already teach its block, so it is not listed again.
-  const own = library.names.filter((name) => mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
-  const others = library.names.filter((name) => !mine.includes(name) && !UNLISTED_COMPONENTS.includes(name));
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly">>, mine: readonly string[]): ComponentKnowledge {
+  // choices is the app's own buttons: the instructions already teach its block, so it is not listed again. A pin-only component (status
+  // things for the pin strip) is in neither list: the bots do not see it.
+  const listed = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name);
+  const own = library.names.filter((name) => mine.includes(name) && listed(name));
+  const others = library.names.filter((name) => !mine.includes(name) && listed(name));
   return {
     // One line each, its whole usage only when the bot asks (app_component_usage), so a wake does not carry every about.md.
     own: own.map((name) => ({ name, text: ownLine(library, name) })),
