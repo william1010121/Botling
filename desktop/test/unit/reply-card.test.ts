@@ -75,6 +75,15 @@ describe("<card> tag: a reply that is only a card still shows", () => {
     expect(hasVisibleContent(content)).toBe(true);
     expect(content.cards).toBe(1);
   });
+
+  it("a reaction plus a card is not a reply that only reacts: the card's bubble is kept", () => {
+    const raw = '<reaction message="11111111-2222-3333-4444-555555555555" emoji="👍" present="true"/>\n<card title="t">go</card>';
+    const parsed = parseReply(raw);
+    expect(parsed.reactions).toHaveLength(1);
+    const content = headTurnContent({ status: "done", origin: "user", sharesChat: false, raw, parsed, body: parsed.body, handoff: false, steps: 0, error: null });
+    expect(content.reactionsOnly).toBe(false);
+    expect(hasVisibleContent(content)).toBe(true);
+  });
 });
 
 describe("<card> tag: streaming", () => {
