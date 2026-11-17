@@ -97,7 +97,13 @@
     "styles": [
       "botling-chat://chat/plugin-files/botling.pin-area/dist/pin-area.css"
     ],
-    "settings": {},
+    "settings": {
+      "botling.pin-area.sorter.enabled": false,
+      "botling.pin-area.sorter.engine": "claude",
+      "botling.pin-area.sorter.model": "claude-haiku-5-5",
+      "botling.pin-area.sorter.confidence": 0.75,
+      "botling.pin-area.sorter.timeoutMs": 3500
+    },
     "builtIn": true,
     "commands": []
   },
