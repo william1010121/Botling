@@ -167,6 +167,7 @@ export class CorePluginWorld {
         },
         pluginWritten: (name) => { const botId = this.activePluginWriter(); if (botId) options.pluginWritten?.(name, botId); },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
+        updated: (title, version, allowed) => this.maintainer.pluginLive(title, version, allowed),
         log: (line) => this.log(line),
         app: {
           state: () => ({
