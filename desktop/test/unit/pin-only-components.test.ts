@@ -114,9 +114,10 @@ describe("the bot's other doors", () => {
     for (const name of ["cpu", "CPU", "mem"]) expect(() => usage(name)).toThrow(/No component named/);
     let said = "";
     try { usage("cpu"); } catch (error) { said = (error as Error).message; }
-    expect(said).toContain("The library has: ");
-    expect(said).toContain("clock");
-    expect(said).not.toMatch(/\b(cpu|mem)\b/);
+    // The message names the wanted word first; what the library has comes after it.
+    const listed = said.split("The library has: ")[1] ?? "";
+    expect(listed).toContain("clock");
+    expect(listed).not.toMatch(/\b(cpu|mem)\b/);
   });
 
   function desk() {
@@ -165,7 +166,7 @@ describe("the composer's / menu", () => {
     expect(slashLists(bot, names, ["cpu", "mem"])).toEqual({ slashComponents: ["table"], slashLibrary: ["clock"] });
     expect(slashLists({ ...bot, components: null }, names, ["cpu", "mem"])).toEqual({ slashComponents: ["clock", "table"], slashLibrary: [] });
     // Without the list of pin-only names nothing is left out (a chat of an older page).
-    expect(slashLists(bot, names)).toEqual({ slashComponents: ["table", "cpu"], slashLibrary: ["clock", "mem"] });
+    expect(slashLists(bot, names)).toEqual({ slashComponents: ["cpu", "table"], slashLibrary: ["clock", "mem"] });
   });
 
   it("the library says which components are pin-only (`info().pinOnly`) so the page can leave them out", () => {
