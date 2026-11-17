@@ -233,8 +233,22 @@ export function launchSettings(raw: RawSettings) {
     claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw),
     // Which models' app-managed workers may write spec/ (spec-guard.ts); bot heads are not restricted.
     specWriters: specWriters(raw),
+    // Extra folders every app-managed Claude worker may use (`--add-dir`), so a `cd` into a worktree there sticks (settings.json `workerExtraDirs`).
+    workerExtraDirs: workerExtraDirs(raw),
     // Which bots are told the inline block guidance (inline-blocks.ts); the bots' component note says no lookup is needed for those examples.
     inlineBlockGuidance: (raw as Record<string, unknown>).inlineBlockGuidance };
+}
+
+/**
+ * settings.json's `workerExtraDirs`: absolute folders every app-managed Claude worker also gets as `--add-dir` (default none).
+ * Claude Code keeps a Bash `cd` only inside its working folders; worktrees outside the project (the external work drive)
+ * would snap back after every command. Not a UI setting: only the user's own edit of settings.json writes it.
+ */
+export function workerExtraDirs(raw: RawSettings): string[] {
+  const value = (raw as Record<string, unknown>).workerExtraDirs;
+  if (!Array.isArray(value)) return [];
+  const dirs = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().startsWith("/") && !/[\u0000-\u001f]/.test(entry)).map((entry) => entry.trim().replace(/\/+$/, "") || "/");
+  return [...new Set(dirs)].slice(0, 20);
 }
 
 /** settings.json's `claudeWorkerLimit`: how many Claude workers of one bot may be at work at once (1–16; default 4); more wait for a slot. */

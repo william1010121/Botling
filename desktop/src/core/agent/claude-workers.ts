@@ -11,7 +11,7 @@
 // running cost turned into spend. The bot injects its member's core (`core`: the member's worker ledger, importing
 // claude-workers.json once, and its projections); the core's items go to the bot's `emit` (its one worker entry).
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { processStartTime } from "../process/kill-tree";
@@ -164,6 +164,8 @@ export interface ClaudeWorkersOptions {
   maxRunning?(): number;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). */
   specWriters?(): readonly string[];
+  /** Folders every worker here may also use (`--add-dir`; settings.json `workerExtraDirs`), so a `cd` into a worktree outside the project sticks. Only folders that exist are added; none for a worker on another machine. */
+  extraDirs?(): readonly string[];
   /** The site tools folder these workers may not write (site-tools-guard.ts); none for Maintainer's. */
   siteToolsFolder?(): string | null | undefined;
   /** The bot tools (core/bot-tools.ts: the browser pane, the Note), answered by this bot; absent: they answer that they are not available. */
@@ -232,7 +234,7 @@ function clearApiRetry(proc: Proc) {
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "rules" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "siteToolsFolder" | "browser" | "remote" | "defaultMachine">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "rules" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "extraDirs" | "siteToolsFolder" | "browser" | "remote" | "defaultMachine">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -340,6 +342,11 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   }
 
   /** A new process for the run (`--resume` once its session exists), sent the run's first words. */
+  /** The folders that are there now (an unmounted drive's folder is skipped, so claude never gets a --add-dir that is missing). */
+  private existingDirs(dirs: readonly string[]): string[] {
+    return dirs.filter((dir) => { try { return statSync(dir).isDirectory(); } catch { return false; } });
+  }
+
   private spawn(proc: Proc, r: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle, sessionId: string) {
     // Never two processes on one session: an earlier tree must be gone first (a leader that exited may leave children).
     if (proc.tree && proc.tree.gone?.() === false) throw new Error("This worker's earlier process is still ending; try again in a moment.");
@@ -348,6 +355,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const def = r.type ? this.definition(r.type) : null;
     if (def && "error" in def) throw new Error(def.error);
     const siteToolsFolder = this.options.siteToolsFolder?.();
+    const extra = nonEmpty(r.engineData.machine) ? [] : this.existingDirs(this.options.extraDirs?.() ?? []);
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
       model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
@@ -356,6 +364,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       systemPrompt: [claudeWorkerPolicy(this.options.rules?.()), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),
+      ...(extra.length ? { addDirs: [...new Set([...(base.addDirs ?? []), ...extra])] } : {}),
       // A worker a plugin started (M7-O03a, review F3/F4): never spec/ whatever its model, never the bot's skip-the-cards modes, and none of the "always allow" rules the user gave the bot (M7-O04).
       ...(r.engineData.pluginStarted === true ? { bypassPermissions: false, autoMode: false, askPermission: true, allowRules: [] } : {}),
     };
