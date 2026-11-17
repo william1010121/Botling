@@ -926,3 +926,108 @@ describe("cards put away keep their 釘回 (review S4)", () => {
     expect(M.sweep(b, T0 + 61 * 60_000).closed).toEqual([pin.id]);
   });
 });
+
+describe("a line sorted after its send (takeLate, attachLateReply)", () => {
+  const line = (id = "u1", text = "部署那個好了嗎", at = T0 + 5) => ({ id, text, at });
+  const reply = (id = "b1", text = "還沒好。") => ({ id, text });
+  const rid = (n: number) => `r${n}`;
+
+  it("takeLate puts the line (and the reply when it is there) in as one late turn: via auto, shown, seen, the line's id kept; it never waits for a <pin-say>", () => {
+    const b = book();
+    const pin = make(b);
+    const done = M.takeLate(b, pin.id, line(), reply(), rid(1), T0 + 20)!;
+    expect(done).toMatchObject({ rid: "r1", q: "部署那個好了嗎", a: "還沒好。", via: "auto", late: true, msgId: "u1", replyId: "b1", qAt: T0 + 5, postedAt: T0 + 5, seenAt: T0 + 5, aAt: T0 + 20 });
+    const open = M.takeLate(b, pin.id, line("u2", "再問一句"), null, rid(2), T0 + 30)!;
+    expect(open).toMatchObject({ a: null, late: true, msgId: "u2" });
+    expect(open.replyId).toBeUndefined();
+    // an open late turn is not the card's open turn: a <pin-say> or a plain reply does not land in it, and the bot's turn does not "see" it
+    expect(M.openTurn(pin)).toBeUndefined();
+    expect(M.answerTurn(b, pin.id, "bot says", T0 + 40) && pin.thread.at(-1)!.q).toBe("");
+    expect(open.a).toBeNull();
+    expect(M.answerOnlyWaiting(b, "a plain reply", T0, T0 + 50)).toBeNull();
+    expect(M.markSeen(b, T0 + 60)).toBe(false);
+    expect(M.pruneUnposted(b, T0 + 10 * M.UNPOSTED_MS)).toBe(false);
+  });
+
+  it("takeLate refuses a card that is not there, a bad id, no words, no line id, a line or a reply already in a card (once, never twice)", () => {
+    const b = book();
+    const pin = make(b);
+    expect(M.takeLate(b, "p-0099", line(), null, rid(1), T0)).toBeNull();
+    expect(M.takeLate(b, "constructor", line(), null, rid(1), T0)).toBeNull();
+    expect(M.takeLate(b, pin.id, line("u1", "  "), null, rid(1), T0)).toBeNull();
+    expect(M.takeLate(b, pin.id, line(""), null, rid(1), T0)).toBeNull();
+    expect(M.takeLate(b, pin.id, line("x".repeat(201)), null, rid(1), T0)).toBeNull();
+    expect(M.takeLate(b, pin.id, line(), null, "../x", T0)).toBeNull();
+    expect(pin.thread).toHaveLength(0);
+    expect(M.takeLate(b, pin.id, line(), reply("b1"), rid(1), T0)).not.toBeNull();
+    expect(M.takeLate(b, pin.id, line(), null, rid(2), T0)).toBeNull();
+    // a reply whose message is already in a card is left out (the turn is made without it)
+    const second = M.takeLate(b, pin.id, line("u2", "x y z"), reply("b1"), rid(3), T0)!;
+    expect(second.a).toBeNull();
+    expect(second.replyId).toBeUndefined();
+    expect(pin.thread).toHaveLength(2);
+  });
+
+  it("takeLate keeps the thread in the order the lines were written, whatever order they were moved in", () => {
+    const b = book();
+    const pin = make(b);
+    M.takeLate(b, pin.id, line("u2", "later", T0 + 50), null, rid(2), T0 + 60);
+    M.takeLate(b, pin.id, line("u1", "earlier", T0 + 10), null, rid(1), T0 + 70);
+    expect(pin.thread.map((turn) => turn.q)).toEqual(["earlier", "later"]);
+  });
+
+  it("attachLateReply fills the open late turn of a live card once; not a turn that is back in the chat, one that has its reply, an ordinary turn, a card that is down, or a reply already used", () => {
+    const b = book();
+    const pin = make(b);
+    const turn = M.takeLate(b, pin.id, line(), null, rid(1), T0)!;
+    expect(M.attachLateReply(b, "r1", reply("b1", "  "), T0 + 1)).toBe(false);
+    expect(M.attachLateReply(b, "r1", reply("b1"), T0 + 1)).toBe(true);
+    expect(turn).toMatchObject({ a: "還沒好。", replyId: "b1", aAt: T0 + 1 });
+    expect(pin.updatedAt).toBe(T0 + 1);
+    expect(M.attachLateReply(b, "r1", reply("b2", "again"), T0 + 2)).toBe(false);
+    const back = M.takeLate(b, pin.id, line("u2", "x y z"), null, rid(2), T0)!;
+    M.moveBack(b, "r2", T0 + 3);
+    expect(M.attachLateReply(b, "r2", reply("b3"), T0 + 4)).toBe(false);
+    expect(back.a).toBeNull();
+    const used = M.takeLate(b, pin.id, line("u3", "q r s"), null, rid(3), T0)!;
+    expect(M.attachLateReply(b, "r3", reply("b1"), T0 + 5)).toBe(false);
+    expect(used.a).toBeNull();
+    const plain = M.addTurn(pin, "r4", "typed", T0, "at");
+    expect(M.attachLateReply(b, "r4", reply("b9"), T0)).toBe(false);
+    expect(plain.a).toBeNull();
+    const down = M.takeLate(b, pin.id, line("u5", "t u v"), null, rid(5), T0)!;
+    M.remove(b, pin.id, T0 + 6, "user");
+    expect(M.attachLateReply(b, "r5", reply("b5"), T0 + 7)).toBe(false);
+    expect(down.a).toBeNull();
+  });
+
+  it("the trace folds the line and the reply; a late turn that is back in the chat (taken back, or its card taken down) draws nothing, and 釘回 folds it again", () => {
+    const b = book();
+    const pin = make(b);
+    M.takeLate(b, pin.id, line(), reply(), rid(1), T0 + 20);
+    M.takeLate(b, pin.id, line("u2", "x y z", T0 + 30), null, rid(2), T0 + 31);
+    const folds = () => M.tracesOf(b).map((trace) => [trace.key, trace.fold, trace.after]);
+    expect(folds()).toEqual([["mv-r2", ["u2"], undefined], ["mv-r1", ["u1", "b1"], undefined]]);
+    M.moveBack(b, "r1", T0 + 40);
+    expect(folds()).toEqual([["mv-r2", ["u2"], undefined]]);
+    M.remove(b, pin.id, T0 + 50, "user");
+    expect(folds()).toEqual([]);
+    M.restore(b, pin.id, T0 + 60);
+    expect(folds()).toEqual([["mv-r2", ["u2"], undefined]]);
+    // a turn the bot moved with <pin-say move> (not late) still draws its "back" line with the answer under it
+    const b2 = book();
+    const p2 = make(b2);
+    M.takeAuto(b2, p2.id, { id: "m1", text: "hello", at: T0 }, "answer", "r9", T0 + 1);
+    M.moveBack(b2, "r9", T0 + 2);
+    expect(M.tracesOf(b2)[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "answer" } });
+  });
+
+  it("what storage holds of a late turn is read back whole, and `late` / `replyId` are only taken on an automatic turn, the id only when it is a short text", () => {
+    const stored = (turn: Record<string, unknown>) => M.readBook({ pins: [{ id: "p-0001", origin: "user", title: "T", handle: "T", state: "run", status: "s", source: "user", thread: [{ rid: "r1", q: "q", a: "a", qAt: 1, ...turn }], updates: [], createdAt: 1, updatedAt: 1 }] }).pins[0]!.thread[0]!;
+    expect(stored({ via: "auto", late: true, replyId: "b1", msgId: "u1" })).toMatchObject({ late: true, replyId: "b1", msgId: "u1" });
+    expect(stored({ via: "at", late: true, replyId: "b1" }).late).toBeUndefined();
+    expect(stored({ via: "at", late: true, replyId: "b1" }).replyId).toBeUndefined();
+    expect(stored({ via: "auto", late: true, replyId: "x".repeat(201) }).replyId).toBeUndefined();
+    expect(stored({ via: "auto", late: "yes", replyId: "b1" }).late).toBeUndefined();
+  });
+});

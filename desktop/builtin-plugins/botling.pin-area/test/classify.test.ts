@@ -42,11 +42,12 @@ describe("what the model is asked", () => {
 describe("the sorter settings (package.json contributes.settings)", () => {
   const from = (values: Record<string, unknown>) => C.sorterSettings((key) => values[key]);
 
-  it("nothing set gives the defaults: OFF (the sort before the send is off, review R1), claude, the default model, 0.75, the longest time that fits the deadline", () => {
-    expect(from({})).toEqual({ enabled: false, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 3_500 });
+  it("nothing set gives the defaults: OFF (until the user tries it), claude, the default model, 0.75, 10 s (the sort runs after the send, nothing waits for it)", () => {
+    expect(from({})).toEqual({ enabled: false, engine: "claude", model: C.DEFAULT_SORTER_MODEL, confidence: 0.75, timeoutMs: 10_000 });
     expect(C.DEFAULT_SORTER_MODEL).toBe("claude-haiku-5-5");
-    expect(C.TIMEOUT_MAX_MS + 300).toBeLessThan(C.SORT_DEADLINE_MS);
-    expect(C.SORT_DEADLINE_MS).toBeLessThanOrEqual(4_000);
+    // the small model measured 3.5–5.5 s: the default limit is well over that, and the range is 1 s – 30 s
+    expect([C.TIMEOUT_MIN_MS, C.TIMEOUT_DEFAULT_MS, C.TIMEOUT_MAX_MS]).toEqual([1_000, 10_000, 30_000]);
+    expect(C.MAX_SORTING).toBe(3);
   });
 
   it("the model is any plain name the user sets (not written into the code); a name that could read as a flag or carries other characters falls back to the default", () => {
@@ -187,6 +188,14 @@ describe("the isolated model call", () => {
     await expect(askModel(fake("err", `process.stdin.resume(); process.stdin.on("end", () => process.stdout.write(JSON.stringify({ is_error: true, result: "boom" })));`), "q", call())).rejects.toThrow("answer");
     await expect(askModel(fake("exit", `process.stdin.resume(); process.stdin.on("end", () => process.exit(3));`), "q", call())).rejects.toThrow("exit");
     await expect(askModel({ file: join(folder, "does-not-exist"), args: [], env: {} }, "q", call())).rejects.toThrow("spawn");
+    // a signal (the host going away) ends the call at once: the child is killed, the call rejects with "abort"; one that is already aborted starts nothing
+    const controller = new AbortController();
+    const hanging = askModel(fake("hang", `process.stdin.resume(); setTimeout(() => {}, 30000);`), "q", call({ signal: controller.signal, timeoutMs: 20_000 }));
+    setTimeout(() => controller.abort(), 100);
+    await expect(hanging).rejects.toThrow("abort");
+    const gone = new AbortController();
+    gone.abort();
+    await expect(askModel(fake("hang2", `setTimeout(() => {}, 30000);`), "q", call({ signal: gone.signal }))).rejects.toThrow("abort");
     // an engine that is not wired is refused before anything is started
     await expect(askModel(fake("never", `process.exit(0);`), "q", call({ engine: "codex" as never }))).rejects.toThrow("engine");
     const started = Date.now();

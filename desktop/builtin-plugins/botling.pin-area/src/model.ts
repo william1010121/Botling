@@ -20,6 +20,11 @@ export interface Turn {
   msgId?: string; redirected?: boolean;
   /** `via` "worker": the worker's task id and what it said (`a` holds the words, `q` is empty); `msgId` is then the bot's reply in the chat to it (folded behind a trace), `say` that reply. */
   worker?: string; wkind?: WorkerKind; say?: string;
+  /**
+   * `via` "auto" sorted AFTER the send (4c): the line was sent to the bot as a plain chat line and answered there; the app moved the line and the bot's reply
+   * (`replyId`: the reply's message in the chat, folded with the line) into this card. Such a turn never waits for a `<pin-say>` (the bot was not told about the card).
+   */
+  late?: true; replyId?: string;
 }
 export interface Update { at: number; state: State; status: string; source: Source }
 export interface Step { done: number; total: number }
@@ -153,6 +158,7 @@ function readTurn(raw: unknown): Turn | null {
     rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt),
     via: t.via === "auto" ? "auto" : t.via === "worker" && isFrom(t.worker) && wkind ? "worker" : "at", ...(t.moved === true ? { moved: true } : {}),
     ...(typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}), ...(t.redirected === true ? { redirected: true } : {}),
+    ...(t.via === "auto" && t.late === true ? { late: true as const } : {}), ...(t.via === "auto" && t.late === true && typeof t.replyId === "string" && t.replyId && t.replyId.length <= 200 ? { replyId: t.replyId } : {}),
     ...(t.via === "worker" && isFrom(t.worker) && wkind ? { worker: t.worker, wkind, ...(typeof t.say === "string" && t.say ? { say: t.say.slice(0, MAX_A) } : {}) } : {}),
   };
 }
@@ -616,7 +622,7 @@ export function addTurn(pin: Pin, rid: string, text: string, now: number, via: V
   pin.updatedAt = now;
   return turn;
 }
-const waits = (turn: Turn): boolean => turn.a === null && !turn.moved;
+const waits = (turn: Turn): boolean => turn.a === null && !turn.moved && !turn.late;
 /**
  * The turn the card's next answer goes to: the oldest unanswered one whose line is in the chat (answers come in the order the
  * questions were asked), else the oldest unanswered one. Two questions written into one card before an answer each get theirs.
@@ -714,7 +720,7 @@ export function findTurn(book: Book, rid: string): { pin: Pin; turn: Turn; remov
   for (const entry of book.removed) { const turn = entry.pin.thread.find((t) => t.rid === rid); if (turn) return { pin: entry.pin, turn, removed: true }; }
   return null;
 }
-const lineUsed = (book: Book, msgId: string): boolean => [...book.pins, ...book.removed.map((entry) => entry.pin)].some((pin) => pin.thread.some((turn) => turn.msgId === msgId));
+const lineUsed = (book: Book, msgId: string): boolean => [...book.pins, ...book.removed.map((entry) => entry.pin)].some((pin) => pin.thread.some((turn) => turn.msgId === msgId || turn.replyId === msgId));
 
 /**
  * The bot's `<pin-say id move="yes">answer</pin-say>`: the user's plain line (`line`, the one this turn answers) and the bot's answer go into the card
@@ -734,6 +740,44 @@ export function takeAuto(book: Book, id: string, line: { id: string; text: strin
   turn.msgId = line.id;
   pin.updatedAt = now;
   return turn;
+}
+/**
+ * Sorted AFTER the send (4c): the user's plain line (`line`, already in the chat) and the bot's reply to it (`reply`, when it has come) go into the card as one turn,
+ * `via: "auto"`, `late`. With no reply yet the turn is open (`attachLateReply` fills it when the reply is posted). Null: no such card, no words, or the line (or the reply) is already in a card.
+ */
+export function takeLate(book: Book, id: string, line: { id: string; text: string; at: number }, reply: { id: string; text: string } | null, rid: string, now: number): Turn | null {
+  const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
+  const words = clean(line.text, MAX_ROUTED).trim();
+  if (!pin || !words || !line.id || line.id.length > 200 || lineUsed(book, line.id) || !isRid(rid)) return null;
+  const turn = addTurn(pin, rid, words, line.at, "auto");
+  turn.q = clean(words, MAX_Q);
+  turn.postedAt = line.at;
+  turn.seenAt = line.at;
+  turn.msgId = line.id;
+  turn.late = true;
+  pin.thread.sort((a, b) => a.qAt - b.qAt);
+  pin.updatedAt = now;
+  if (reply) fillReply(book, turn, reply, now);
+  return turn;
+}
+function fillReply(book: Book, turn: Turn, reply: { id: string; text: string }, now: number): boolean {
+  const text = clean(reply.text, MAX_A * 2).trim().slice(0, MAX_A);
+  if (!text || !reply.id || reply.id.length > 200 || lineUsed(book, reply.id)) return false;
+  turn.a = text;
+  turn.aAt = now;
+  turn.replyId = reply.id;
+  return true;
+}
+/** The bot's reply to a line that went into a card before the reply came: it is filled into that turn (of a live card), and folds with the line. False: no such open late turn. */
+export function attachLateReply(book: Book, rid: string, reply: { id: string; text: string }, now: number): boolean {
+  for (const pin of book.pins) {
+    const turn = pin.thread.find((candidate) => candidate.rid === rid);
+    if (!turn) continue;
+    if (!turn.late || turn.a !== null || turn.moved || !fillReply(book, turn, reply, now)) return false;
+    pin.updatedAt = now;
+    return true;
+  }
+  return false;
 }
 /** A `move` answer with no line left to move: its own turn in that card (no question), as `answerTurn` keeps an answer with nothing waiting. */
 export function keepAnswer(book: Book, id: string, answer: string, now: number): boolean {
@@ -806,7 +850,9 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
   // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
   // (a card merged into another has its turns there already)
   for (const entry of book.removed) if (!entry.merged) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
-  return all.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
+  // a turn sorted after the send that is back in the chat (taken back, or its card taken down) draws nothing: its line and the bot's reply are real messages there and simply show again
+  const visible = all.filter(({ turn, live }) => !(turn.late && (turn.moved === true || !live)));
+  return visible.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
     const back = turn.moved === true || !live;
     const worker = turn.via === "worker";
     const shown = worker ? turn.say ?? turn.a : turn.a;
@@ -814,7 +860,7 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
       kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot",
       ...(back && shown ? { a: clean(shown, 600) } : {}), ...(worker ? { worker: true as const } : {}),
     };
-    return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: [turn.msgId!], data };
+    return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: turn.replyId ? [turn.msgId!, turn.replyId] : [turn.msgId!], data };
   });
 }
 

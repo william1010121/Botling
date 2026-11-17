@@ -386,7 +386,7 @@
         {
           "key": "botling.pin-area.sorter.enabled",
           "type": "boolean",
-          "title": "Sort plain lines into cards before they are sent (off: being redone as after-send)",
+          "title": "Sort plain lines into cards after they are sent (off until you try it)",
           "options": [],
           "secret": false,
           "value": false,
@@ -428,12 +428,12 @@
         {
           "key": "botling.pin-area.sorter.timeoutMs",
           "type": "number",
-          "title": "Sorter time limit in ms (500 to 3500)",
+          "title": "Sorter time limit in ms (1000 to 30000)",
           "options": [],
           "secret": false,
-          "value": 3500,
+          "value": 10000,
           "set": true,
-          "default": 3500
+          "default": 10000
         }
       ],
       "commands": [],

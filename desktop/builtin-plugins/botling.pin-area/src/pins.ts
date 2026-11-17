@@ -41,8 +41,6 @@ const viaCli = (api: BotlingApi): Ask | null =>
       }
     : null;
 
-/** What the hook gives back for a line (the core sends this instead of the user's text; false: nothing is sent). */
-type Sent = string | false | undefined;
 
 /** `ask`: the model call for the lines of the user's no @card names (tests give a fake one; null: none, so no line is sorted). */
 export function activatePins(api: BotlingApi, expose: Expose, now: () => number = Date.now, ask: Ask | null = viaCli(api)) {
@@ -234,74 +232,90 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       return [];
     }
   };
-  /** The line as it goes when nothing was done for it: the briefing carried with it (none: the text as it is). */
-  const plainLine = (botId: string, text: string): Sent => {
-    const brief = M.briefing(load(botId), now());
-    return brief ? M.withBriefing(text, brief) : undefined;
-  };
-  /**
-   * A plain line of a chat that has cards, asked of the small model (no tools): assign (written into the card like an @card, with an automatic turn the user can
-   * take back), new or merge (only suggested; the user taps), or chat. Any failure, a slow answer or a low confidence leaves the line in the chat, with the briefing.
-   *
-   * The core gives a `beforeSend` hook 5 s and then sends the line as it is, so this has until `deadline` (4 s from the hook's start) for everything: a guard
-   * timer gives the plain line at the deadline, and every step after a wait checks the clock again, so an answer that comes late writes nothing (no orphan turn,
-   * no suggestion for a line the core already sent). The model's own time limit is what is left of the deadline, at most the setting's.
-   */
-  const sortLine = (botId: string, text: string, settings: C.SorterSettings, deadline: number): Promise<Sent> => {
-    let over = false;
-    let guard: ReturnType<typeof setTimeout> | undefined;
-    const alive = () => !over && now() < deadline;
-    const expired = new Promise<Sent>((resolve) => {
-      guard = setTimeout(() => { over = true; resolve(plainLine(botId, text)); }, Math.max(0, deadline - now()));
-      (guard as { unref?: () => void }).unref?.();
-    });
-    const run = async (): Promise<Sent> => {
-      try {
-        const book = load(botId);
-        const recent = await recentLines(botId);
-        const left = deadline - now();
-        if (!alive() || left < C.MIN_BUDGET_MS) return plainLine(botId, text);
-        const answer = await ask!(C.classifyPrompt(book, recent, text), { engine: settings.engine!, model: settings.model, timeoutMs: Math.min(settings.timeoutMs, left - 300) });
-        // after the waits: if the deadline passed the core has sent the line already, so nothing is written for it
-        if (!alive()) return plainLine(botId, text);
-        // the book as it is now decides (a card may be gone, the user may have written into it)
-        const fresh = load(botId);
-        const decision = C.decide(fresh, C.parseVerdict(answer), settings.confidence);
-        if (decision.kind === "assign" && text.length <= M.MAX_ROUTED) {
-          const sent = writeInto(botId, decision.pin.id, text, "auto");
-          if (sent !== undefined) return sent;
-        } else if (decision.kind === "new" || decision.kind === "merge") {
-          const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text } : { kind: "merge", text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
-          if (made) save(botId, fresh);
-        }
-        return plainLine(botId, text);
-      } catch (error) {
-        console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
-        return plainLine(botId, text);
-      }
-    };
-    return Promise.race([run(), expired]).finally(() => clearTimeout(guard));
-  };
   const readSetting = (key: string): unknown => (typeof api.settings?.get === "function" ? api.settings.get(key) : undefined);
 
-  /** What the hook does with a message: the @card or the 回覆到 chip is written into its card by code, a plain line is sorted (a promise), anything else carries the briefing. */
-  const handleLine = (message: { bot: { id: string }; text: string }, deadline: number): Sent | Promise<Sent> => {
-    const botId = message.bot.id;
-    sweepBook(botId);
-    const book = load(botId);
-    const hit = M.route(book, message.text);
-    if (!hit && M.briefable(message.text)) {
-      const brief = M.briefing(book, now());
-      if (!brief) return undefined;
-      const settings = ask ? C.sorterSettings(readSetting) : null;
-      if (!ask || !settings?.enabled || !settings.engine || message.text.trim().length < C.MIN_LINE) return M.withBriefing(message.text, brief);
-      return sortLine(botId, message.text, settings, deadline);
-    }
-    if (!hit || hit.rest.length > M.MAX_ROUTED) return;
-    return writeInto(botId, hit.pin.id, hit.rest, "at");
+  // ---- the sort AFTER the send (4c): the line goes to the bot at once; the small model decides meanwhile; a confident assign moves the line and the bot's reply into the card ----
+  /** One plain line being sorted: where it is in the chat, which bot turn answers it, and what has come of the verdict. */
+  interface Job {
+    botId: string; text: string; at: number;
+    /** The model has not answered yet. */
+    pending: boolean;
+    /** The line's id in the chat once it showed (`messagePosted`), and when. */
+    lineId?: string; lineAt?: number;
+    /** The bot turn that answers it: "mine" (the only line that turn began after), "shared" (several lines: the reply is not moved), or none yet. */
+    turn: "none" | "mine" | "shared";
+    /** That turn is over. */
+    finished: boolean;
+    /** The bot's reply to it (its message id and words), once posted. */
+    reply?: { id: string; text: string };
+    /** The card the model chose, and the card's turn once the line was moved (the reply is filled into it). */
+    pinId?: string; rid?: string; moved: boolean;
+  }
+  const jobs = new Map<string, Job[]>();
+  /** A job nobody finished with is forgotten after this long (a line that never showed, a turn that never ended). */
+  const JOB_MS = 15 * 60_000;
+  const MAX_JOBS = 12;
+  const quit = new AbortController();
+  const jobsOf = (botId: string): Job[] => jobs.get(botId) ?? [];
+  const prune = (botId: string): void => {
+    const list = jobsOf(botId).filter((job) => now() - job.at < JOB_MS && !(job.finished && !job.pending));
+    if (list.length) jobs.set(botId, list); else jobs.delete(botId);
   };
-  /** Each bot's lines in the order they were sent: a line behind one that is still being sorted waits for it (it has to be settled before this one is). */
-  const lineQueue = new Map<string, Promise<unknown>>();
+  /** The newest chat lines for the model, without the line being sorted (it may already be there). */
+  const recentFor = async (botId: string, text: string): Promise<C.Recent[]> => {
+    const lines = await recentLines(botId);
+    const last = lines[lines.length - 1];
+    return last && last.who === "user" && last.text.trim() === text.trim() ? lines.slice(0, -1) : lines;
+  };
+  /** The line is in the chat and the model chose `job.pinId`: line and reply (when it has come) go into that card, with the trace. Nothing moves if the card went or the line is in a card already. */
+  const moveJob = (job: Job): void => {
+    if (job.moved || !job.pinId || !job.lineId) return;
+    job.moved = true;
+    const book = load(job.botId);
+    const turn = M.takeLate(book, job.pinId, { id: job.lineId, text: job.text, at: job.lineAt ?? now() }, job.turn === "mine" ? job.reply ?? null : null, ridOf(), now());
+    if (!turn) return;
+    job.rid = turn.rid;
+    save(job.botId, book);
+  };
+  /** The model's verdict, decided on the book as it is now: assign moves (once the line has shown), new / merge only suggest, anything else leaves the line where it is. */
+  const settle = (job: Job, verdict: C.Verdict | null, confidence: number): void => {
+    const fresh = load(job.botId);
+    const decision = C.decide(fresh, verdict, confidence);
+    if (decision.kind === "assign") {
+      job.pinId = decision.pin.id;
+      moveJob(job);
+    } else if (decision.kind === "new" || decision.kind === "merge") {
+      const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text: job.text } : { kind: "merge", text: job.text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
+      if (made) save(job.botId, fresh);
+    }
+  };
+  const sortAfter = async (job: Job, settings: C.SorterSettings): Promise<void> => {
+    try {
+      const recent = await recentFor(job.botId, job.text);
+      const answer = await ask!(C.classifyPrompt(load(job.botId), recent, job.text), { engine: settings.engine!, model: settings.model, timeoutMs: settings.timeoutMs, signal: quit.signal });
+      if (!quit.signal.aborted) settle(job, C.parseVerdict(answer), settings.confidence);
+    } catch (error) {
+      // a slow or failed model: the line is already in the chat where it was sent, nothing else happens
+      if (!quit.signal.aborted) console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
+    } finally {
+      job.pending = false;
+      prune(job.botId);
+    }
+  };
+  /** Starts the sort of a line that is being sent as it is (best effort: too many in flight, or no model, and it is not sorted). */
+  const startSort = (botId: string, text: string): void => {
+    try {
+      const settings = ask ? C.sorterSettings(readSetting) : null;
+      if (!ask || !settings?.enabled || !settings.engine || text.trim().length < C.MIN_LINE) return;
+      const list = jobsOf(botId);
+      if (list.length >= MAX_JOBS || list.filter((job) => job.pending).length >= C.MAX_SORTING) return;
+      const job: Job = { botId, text, at: now(), pending: true, turn: "none", finished: false, moved: false };
+      jobs.set(botId, [...list, job]);
+      void sortAfter(job, settings);
+    } catch (error) {
+      console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
+    }
+  };
 
   const subs = [
     // the bot's turn began: what was in the chat before it has been seen
@@ -313,6 +327,11 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (line) { turnLine.set(botId, line); lastLine.delete(botId); } else turnLine.delete(botId);
       saidInTurn.delete(botId);
       if (reports?.length) carried.set(botId, reports.filter(M.isFrom).slice(0, 8)); else carried.delete(botId);
+      // the lines sorted after their send that this turn answers: one line, its reply can be moved too; several lines, only the lines
+      if (!reports?.length) {
+        const waiting = jobsOf(botId).filter((job) => job.lineId && job.turn === "none");
+        for (const job of waiting) job.turn = waiting.length === 1 ? "mine" : "shared";
+      }
       const book = load(botId);
       if (M.markSeen(book, now())) save(botId, book);
     }),
@@ -329,6 +348,15 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!bots.has(botId)) return;
       if (role === "bot") {
         lastBotLine.set(botId, { text: String(text ?? ""), at: now() });
+        // the reply to a line that is being (or was) sorted after its send: kept; when the line is in a card already the reply goes in and folds with it
+        const answered = jobsOf(botId).find((job) => job.turn === "mine" && !job.reply);
+        if (answered && typeof id === "string" && id && String(text ?? "").trim()) {
+          answered.reply = { id, text: String(text) };
+          if (answered.rid) {
+            const book = load(botId);
+            if (M.attachLateReply(book, answered.rid, answered.reply, now())) save(botId, book);
+          }
+        }
         // the bot's reply to a worker's report that a card holds in full: one line of trace in the chat, the words kept with it
         const workers = carried.get(botId);
         if (workers?.length && typeof id === "string" && id) {
@@ -338,7 +366,12 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
         }
         return;
       }
-      if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) lastLine.set(botId, { id, text: M.stripBriefing(String(text)), at: now() });
+      if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) {
+        lastLine.set(botId, { id, text: M.stripBriefing(String(text)), at: now() });
+        // the line being sorted after its send showed in the chat: if the model has chosen a card already, it moves now
+        const job = jobsOf(botId).find((candidate) => !candidate.lineId && candidate.text.trim() === M.stripBriefing(String(text)).trim());
+        if (job) { job.lineId = id; job.lineAt = now(); if (job.pinId) moveJob(job); }
+      }
       const asked = M.parseAsk(String(text ?? ""));
       if (!asked) return;
       const book = load(botId);
@@ -349,6 +382,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!bots.has(botId)) return;
       turnLine.delete(botId);
       carried.delete(botId);
+      for (const job of jobsOf(botId)) if (job.turn !== "none") job.finished = true;
+      prune(botId);
       try {
         const line = lastBotLine.get(botId);
         const started = turnStart.get(botId) ?? 0;
@@ -443,23 +478,18 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.hooks.beforeSend((message) => {
       const botId = message.bot.id;
       if (!bots.has(botId)) return;
-      const deadline = now() + C.SORT_DEADLINE_MS;
-      const behind = lineQueue.get(botId);
-      let result: Sent | Promise<Sent>;
-      if (!behind) result = handleLine(message, deadline);
-      else {
-        // behind a line still being sorted: wait for it (it is settled within its own deadline, which is earlier than this one), then do what a first line does
-        let guard: ReturnType<typeof setTimeout> | undefined;
-        let over = false;
-        const expired = new Promise<Sent>((resolve) => { guard = setTimeout(() => { over = true; resolve(plainLine(botId, message.text)); }, Math.max(0, deadline - now())); (guard as { unref?: () => void }).unref?.(); });
-        // a line that waited past its deadline was sent as it is: nothing is written for it afterwards
-        result = Promise.race([behind.then(() => (over ? undefined : handleLine(message, deadline))), expired]).finally(() => clearTimeout(guard));
+      sweepBook(botId);
+      const book = load(botId);
+      const hit = M.route(book, message.text);
+      if (!hit && M.briefable(message.text)) {
+        const brief = M.briefing(book, now());
+        if (!brief) return undefined;
+        // the line goes at once, as it is, with the briefing; the sort (when it is on) runs beside it and may move the line and the bot's reply into a card afterwards
+        startSort(botId, message.text);
+        return M.withBriefing(message.text, brief);
       }
-      if (!(result instanceof Promise)) return result;
-      const tail = result.then(() => undefined, () => undefined);
-      lineQueue.set(botId, tail);
-      void tail.then(() => { if (lineQueue.get(botId) === tail) lineQueue.delete(botId); });
-      return result;
+      if (!hit || hit.rest.length > M.MAX_ROUTED) return;
+      return writeInto(botId, hit.pin.id, hit.rest, "at");
     }),
   ];
 
@@ -612,5 +642,5 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   // once a minute, for the bots that have cards (the clock is the host's; a minute is as fine as the 20 minutes and the hour it counts)
   const timer = setInterval(() => { for (const botId of [...bots]) sweepBook(botId); }, 60_000);
   (timer as { unref?: () => void }).unref?.();
-  return [...subs, ...methods, () => clearInterval(timer)];
+  return [...subs, ...methods, () => clearInterval(timer), () => { quit.abort(); jobs.clear(); }];
 }
