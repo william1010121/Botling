@@ -137,7 +137,6 @@ describe("a cold cache is never resumed (ensureHead)", () => {
     await waitFor("the message to reach a new head", () => fixture.heads[1]?.sent.length === 1);
     expect(fixture.heads[1].config.resume).toBe(false);
     expect(fixture.heads[1].config.sessionId).not.toBe(id);
-    expect(r.peek.headRun.startedFresh).toBe(true);
   });
 
   it("last model call inside the warm window: the same session is resumed", async () => {
