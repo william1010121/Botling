@@ -44,7 +44,7 @@ describe("componentKnowledgeFor with the cards", () => {
   });
 
   it("the note keeps the show mechanics and the built-in lines, says one line about the rest, and names none of them", () => {
-    const text = knowledgeFull(componentKnowledgeFor(fake(NAMES), ["status"], false, true));
+    const text = knowledgeFull(componentKnowledgeFor(fake(NAMES), ["status", "inline-chart", "inline-report-block", "網頁預覽卡片"], false, true));
     expect(text).toContain("(App: Components in the chat, one line each below.");
     expect(text).not.toContain("/ 20 yours");
     expect(text).toContain("<show name=\"name\" command=\"git diff --stat\"></show>");
