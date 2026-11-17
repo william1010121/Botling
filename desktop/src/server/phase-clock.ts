@@ -4,6 +4,8 @@
 // stop keep their golden order, test/unit/botlingd-start-order.test.ts). It never changes what a phase does.
 
 export const SLOW_PHASE_MS = 500;
+/** Start phases are logged from this length on (startup_perf.py reads them); stop keeps SLOW_PHASE_MS. */
+export const START_PHASE_LOG_MS = 100;
 
 export class PhaseClock {
   constructor(

@@ -132,7 +132,8 @@ describe("M7-S84: Botlingd start / stop order", () => {
       env: botlingdEnv(dataDir),
       outDir: join(desktop, "out"),
       // "start: <phase> took N ms" / "stop: <step> took N ms" (phase-clock.ts) appear only when a phase is slow: not part of the order.
-      log: (line) => { if (!/^(start|stop): .+ took \d+ ms$/.test(line)) mark(`log ${line.split(/[:,(]/)[0]}`); },
+      // Nor are the "timing: <phase> N ms" lines of the startup phases (core/phase-marks.ts).
+      log: (line) => { if (!/^(start|stop): .+ took \d+ ms$/.test(line) && !line.startsWith("timing: ")) mark(`log ${line.split(/[:,(]/)[0]}`); },
     });
     mark(null);
     const start = events;

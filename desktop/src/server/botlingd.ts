@@ -45,7 +45,7 @@ import { PassThrough, PassThroughOwner, PeerLogCache, PeerTables, SummaryRows, T
 import { ServerOrigin } from "./forward";
 import { BOTLINGD_VERSION, clusterOrigins, DataDirInUseError, peerChatList, PEERS_FILE, relayAllowList, type BotlingdOptions } from "./botlingd-cluster";
 import { originTestHookEnabled, startOriginTestHook } from "./botlingd-setup";
-import { NETWORK_STOP_BUDGET_MS, PhaseClock, withinBudget } from "./phase-clock";
+import { NETWORK_STOP_BUDGET_MS, PhaseClock, START_PHASE_LOG_MS, withinBudget } from "./phase-clock";
 import { openIdentity, startCore, startRuntime, startPush, startContent, startPairing, startForwarding, startSessions, startPeers } from "./botlingd-start";
 import type { Later, StartContext } from "./botlingd-start-context";
 export {
@@ -233,8 +233,9 @@ export class Botlingd {
 
     let store: ServerStore | null = null;
     try {
-      // Each phase that takes 500 ms or more says so in the log (an install waits for these one after another).
-      const clock = new PhaseClock(log);
+      // Each phase that takes 100 ms or more says so in the log (an install waits for these one after another); the
+      // `timing:` lines of startCore, startRuntime and startPush and of the core itself say where a long one went.
+      const clock = new PhaseClock(log, START_PHASE_LOG_MS);
       const began = Date.now();
       store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir, { compaction: options.compaction === false ? false : { log, ...options.compaction } }));
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;

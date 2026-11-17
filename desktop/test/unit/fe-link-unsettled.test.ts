@@ -170,6 +170,20 @@ describe("D67 loop bound (bye{unsettled} and giveUp)", () => {
     expect(link.pending(BOT)).toEqual([]);
   });
 
+  it("reconnectFastMs does not shorten the bye{unsettled} escalation: dial intervals stay 250, 500, 1000, 2000", async () => {
+    const server = new FakeServer();
+    const clock = new FakeClock();
+    const { dial, dialTimes } = wrapServer(server, clock, (msg) => {
+      if (msg.slot.target === BOT && msg.slot.n === 1) return "unsettled";
+    });
+    const { link } = await openLink(dial, new MemoryFeStorage(), clock, { reconnectFastMs: 500 });
+    await flush();
+    await link.submit(BOT, react("m1"));
+    await flush();
+    for (const ms of [250, 500, 1_000, 2_000]) { clock.advance(ms); await flush(); }
+    expect(dialTimes.slice(1).map((t, i) => t - dialTimes[i]!)).toEqual([250, 500, 1_000, 2_000]);
+  });
+
   it("giving up with an empty tail sends nothing immediately; the next command carries floor > n", async () => {
     const server = new FakeServer();
     const clock = new FakeClock();

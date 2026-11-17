@@ -67,6 +67,7 @@ import { CoreEvents } from "./server/events";
 
 // AppOp, AppAnswer, PEER_ID, PEER_MESSAGE_BYTES, oneLine, CoreOptions, ApplyNowCommand and BotMaking live in ./server/options (M7-S70b) and are re-exported here.
 import type { CoreOptions } from "./server/options";
+import { PhaseMarks, Slowest } from "./phase-marks";
 export { PEER_ID, PEER_MESSAGE_BYTES, oneLine } from "./server/options";
 export type { AppOp, AppAnswer, ApplyNowCommand, BotMaking, CoreOptions } from "./server/options";
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
@@ -202,6 +203,7 @@ export class Core {
   }
 
   constructor(readonly options: CoreOptions) {
+    const marks = new PhaseMarks(options.phaseLog, "core construct");
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;
     this.runMainBot = options.runMainBot !== false;
@@ -212,7 +214,9 @@ export class Core {
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
+    marks.lap("storage, ledger, leftovers");
     this.importOnce();
+    marks.lap("import once");
     // A remote worker's connection came or went: the worker rows that show it are drawn again (only those that changed).
     options.remoteWorkers?.onChange(() => { for (const bot of this.bots.values()) bot.subagentRowBook.workerRowsChanged(); });
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
@@ -222,6 +226,7 @@ export class Core {
     const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
     const { editedEditor } = prepareLibrary(options.dataDir, claudeModelOrNull(editorModel) ?? DEFAULT_COMPONENT_EDITOR_MODEL, options.plugins?.builtIns ?? null);
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
+    marks.lap("prepare library");
     // The component library: <data>/plugins/ccb-components/components first, then other plugins' components/,
     // then the built-in plugins' (botling.cards: the web preview card), so a copy in the library wins.
     const plugins = join(options.dataDir, "plugins");
@@ -254,6 +259,7 @@ export class Core {
     // left behind it would make start() announce what the snapshot shows already, with a seq a client may hold.)
     this.components.library.rescan();
     this.componentStamp = this.components.library.stamp;
+    marks.lap("plugins object, settings moves, library scan");
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.markPluginsShown(JSON.stringify(this.plugins.view()));
     this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
@@ -281,6 +287,7 @@ export class Core {
           return hasHistory ? [{ ...profile, role: "bot" as const, name: "Main (old)" }] : [];
         });
     const profiles = [...baseProfiles, appMaintainer];
+    marks.lap("usage book, projects, maintainer profile");
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig, this.maintainerId);
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     this.profiles = profiles;
@@ -291,15 +298,21 @@ export class Core {
       catch (error) { this.log(`agents.json migration: ${(error as Error).message}`); }
     }
     this.agents.onChange((record, previous) => this.agentChanged(record, previous));
+    marks.lap("agent registry");
     this.newBot = (profile) => {
       const bot = this.coreBots.build(profile, threads, editorBinding);
       this.bots.set(profile.id, bot);
       return bot;
     };
+    const slowestBots = new Slowest(5);
     for (const profile of profiles) {
+      const began = performance.now();
       this.newBot(profile);
       this.order.push(profile.id);
+      slowestBots.add(profile.name, performance.now() - began);
     }
+    marks.lap(`${profiles.length} bots`);
+    options.phaseLog?.(`timing: core construct: bots ${slowestBots.line(profiles.length)}`);
     this.conversations = new Conversations({
       dataDir: options.dataDir,
       // Everyone who can answer outside their own chat, in turn order (`everyMember`).
@@ -369,17 +382,29 @@ export class Core {
       log: (line) => this.log(line),
     });
     // The registry against the bots' subagent lists (A1.3), once everything is built; its notices wait for `activate`.
+    marks.lap("conversations, maintainer, plugin store, notes, releases");
     try { this.reconcileAgents(false); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
+    marks.lap("agents reconcile");
+    marks.total("constructor total");
     if (!options.deferStartup) this.activate();
   }
 
   activate() {
     if (this.activated) return;
     this.activated = true;
+    const marks = new PhaseMarks(this.options.phaseLog, "core activate");
     if (this.options.doctor) void this.doctor.run(false).catch(() => this.log("Doctor check failed."));
-    for (const bot of this.bots.values()) bot.activateStartup();
+    const slowestBots = new Slowest(5);
+    for (const bot of this.bots.values()) {
+      const began = performance.now();
+      bot.activateStartup();
+      slowestBots.add(bot.profile.name, performance.now() - began);
+    }
+    marks.lap(`${this.bots.size} bots activateStartup`);
+    this.options.phaseLog?.(`timing: core activate: bots ${slowestBots.line(this.bots.size)}`);
     // Started by a core hot swap: the old core's sessions go on, and what waited there is delivered.
     this.adoptSwap();
+    marks.lap("adopt swap");
     try { new RestartJournal(this.options.dataDir).recover(entry => {
       const bot=this.bots.get(entry.botId);if(!bot)throw Error("Original bot unavailable.");bot.adoptRestart(entry);
     }, (entry,reason) => {
@@ -391,14 +416,18 @@ export class Core {
       this.log(String(error));
       this.mainBot()?.appNotice("Restart continuation could not be read. The checkpoint is preserved; no recovery prompt was sent. Reconcile it before retrying.");
     }
+    marks.lap("restart recovery");
     // After restart recovery: the registry again, and what it found told (moves cut short finish their notices).
     try { this.reconcileAgents(true); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
+    marks.lap("agents reconcile");
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
     // Botling 3: only once a window stayed attached to this botlingd (`windowHeld`).
     try { confirmHealthyWhen(options.dataDir, options.app?.windowHeld, undefined, (line) => this.log(line)); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
+    marks.lap("self-update check");
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
+    marks.lap("plugins.start call");
     if (options.pluginCatalog?.autoRefresh) this.pluginStore.startup();
     // Checking a wall-clock time every 15 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
@@ -412,6 +441,7 @@ export class Core {
       });
       this.libraryWatch.start();
     }
+    marks.lap("component library watch");
     const tick = options.routineTickMs ?? ROUTINE_TICK_MS;
     if (tick > 0) {
       setTimeout(() => this.checkRoutines(), 0);
@@ -426,7 +456,9 @@ export class Core {
     }
     // Memory files change under the bots' hands (a manager's "Waiting on you", "In progress"): watched, and looked at
     // every so often in case a change was missed (a project on an external disk that went away and came back).
+    marks.lap("routine and watch clocks");
     this.lastWaiting = JSON.stringify(this.waiting());
+    marks.lap("waiting list");
     const look = options.waitingScanMs ?? 60_000;
     if (look > 0) {
       this.memoryWatch = new FolderWatch({
@@ -435,6 +467,8 @@ export class Core {
       });
       this.memoryWatch.start();
     }
+    marks.lap("memory watch");
+    marks.total("activate total");
   }
 
   private libraryTargets(...a: Parameters<CoreWatch["libraryTargets"]>) { return this.coreWatch.libraryTargets(...a); }

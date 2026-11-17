@@ -704,7 +704,8 @@ export class Bot {
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */
   async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
-    // 1.x waits for each awake bot's tidy at quit with no time limit (`putEveryoneToSleep`).
+    // 1.x waits for each awake bot's tidy at quit with no time limit (`putEveryoneToSleep`); the app sets a cap
+    // (`quitTidyMs`, core-process.ts) so an install or restart is not held by a slow tidy. A Bot made without one waits.
     const tidyMs = tidy ? this.options.quitTidyMs ?? Number.POSITIVE_INFINITY : 0;
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.group.dropClaim(); }
     const partner = Promise.allSettled(this.peers.map(peer => peer.shutdown({ tidy }))).then(results => results.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason);
