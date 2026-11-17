@@ -299,7 +299,7 @@ export class AdapterEntries {
       resolvers.push(resolve);
     }
     if (outcome.kind !== "applied") {
-      for (const resolve of resolvers) resolve({ ok: false, error: wireError(outcome) });
+      for (const resolve of resolvers) resolve({ ok: false, error: wireError(outcome, item.unsendable) });
       // A "not sent" item answered to the window that asked needs no line or later dismissal.
       void this.options.link.dismiss(item.slot).catch(() => undefined);
       return;

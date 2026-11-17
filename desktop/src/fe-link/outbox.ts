@@ -244,6 +244,19 @@ export class Outbox {
     });
   }
 
+  /**
+   * The item's copy can never be encoded (over the frame limit, or refused by the codec): it leaves `unresolved()` as
+   * `state: "not sent"` / `outcome: { kind: "skipped" }`, exactly like `giveUp`, so the queue's next command carries a `floor` past
+   * it and the owner skips its slot (`cmd.skipped`, §11.3). `why` is kept as the item's `unsendable` words. Survives a restart.
+   */
+  markUnsendable(slot: Slot, why: string): Promise<OutboxItem | undefined> {
+    return this.change(slot, (item) => {
+      if (!unresolved(item)) return null;
+      const { retryInc: _retry, heldAt: _held, ...rest } = item;
+      return { ...rest, state: "not sent", outcome: { kind: "skipped" }, unsendable: why };
+    });
+  }
+
   /** The UI is done with a resolved item ("not sent", or "delivered, then lost"). */
   dismiss(slot: Slot): Promise<boolean | undefined> {
     return this.writer.run(() => {

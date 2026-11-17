@@ -125,13 +125,86 @@ export class LinkStreams {
     // The inc at send time, not when the refusal arrives: a late refusal (a forwarded reply) can come after the stream already moved on.
     // The refused copy's inc, not the last copy's: a copy sent under a newer inc and lost to a reconnect was never refused (re-check M7-11b).
     if (item.retryInc && item.retryInc !== inc && this.refusedUnder.get(key) === inc) return;
-    if (!this.send(session, { t: "cmd", ...this.outbox.envelope(item, inc) } as Message)) return;
+    // A copy the frame codec refuses (over the frame limit) can never be sent: waiting for it would hold this item and every one behind it
+    // for ever (the slots of a queue go in order). Set it aside as "not sent" (the same way `giveUp` does) so the queue goes on.
+    if (this.unsendableBefore(item.slot) || this.behindHole(item)) return;
+    const message = { t: "cmd", ...this.outbox.envelope(item, inc) } as Message;
+    if (!this.send(session, message)) {
+      const refusal = !session.closed && session.socket ? this.host.encodeRefusal(message) : null;
+      if (refusal) void this.setAside(item, refusal.reason === "too-large" ? "too large to send" : "could not be encoded");
+      return;
+    }
     session.sent.add(key);
     this.sentUnder.set(key, inc);
     if (this.sentUnder.size > 256) {
       for (const other of this.sentUnder.keys()) if (!this.outbox.get(other)) { this.sentUnder.delete(other); this.refusedUnder.delete(other); }
     }
     if (item.cancel) this.send(session, { t: "cancel", slot: item.slot });
+  }
+
+  /** Slots being set aside as unsendable (memory only: a restart finds the item again and sets it aside again). */
+  private readonly settingAside = new Set<string>();
+
+  /** An earlier slot of the same queue is being set aside: this one goes out after it, with the `floor` past it. */
+  private unsendableBefore(slot: Slot): boolean {
+    for (const key of this.settingAside) {
+      const other = this.outbox.get(key)?.slot;
+      if (other && other.originEpoch === slot.originEpoch && other.target === slot.target && other.n < slot.n) return true;
+    }
+    return false;
+  }
+
+  /** Per queue, the highest slot set aside as unsendable in this run (memory only: a hole the owner never receives). */
+  private readonly holes = new Map<string, number>();
+
+  /**
+   * A slot of this queue was set aside, and an unresolved earlier one is still out (sent, its outcome not back): a copy sent now would
+   * carry that earlier slot as its `floor`, the owner would not skip the hole and would hold the copy for the missing slot until a
+   * reconnect. It waits; `resolveSlot` and `skipped` send the outbox again once the earlier one resolves.
+   */
+  private behindHole(item: OutboxItem): boolean {
+    const hole = this.holes.get(`${item.slot.originEpoch}\u0000${item.slot.target}`);
+    return hole !== undefined && item.slot.n > hole && this.outbox.floor(item) < hole;
+  }
+
+  /** An item left `unresolved()`: copies that waited behind a hole can go out now. */
+  private sendAfterHole(): void {
+    const session = this.session;
+    if (this.holes.size === 0 || !session || !this.canSend()) return;
+    this.sendOutbox(session);
+  }
+
+  /**
+   * `item`'s copy can never be encoded: it becomes "not sent" (persisted, so a restart does not try it again), and the queue's later
+   * items go out with a `floor` past it; the owner skips the slot (`cmd.skipped`, §11.3). Later items are not sent while it is being
+   * set aside (`unsendableBefore`), so none carries the old floor.
+   */
+  private async setAside(item: OutboxItem, why: string): Promise<void> {
+    const key = slotKey(item.slot);
+    if (this.settingAside.has(key)) return;
+    this.settingAside.add(key);
+    try {
+      const done = await this.outbox.markUnsendable(item.slot, why);
+      if (!done) return;
+      const queue = `${item.slot.originEpoch}\u0000${item.slot.target}`;
+      this.holes.set(queue, Math.max(this.holes.get(queue) ?? 0, item.slot.n));
+      this.visibleAt.delete(key);
+      this.cancelNoted.delete(key);
+      this.sentUnder.delete(key);
+      this.refusedUnder.delete(key);
+      this.unsettledCounts.delete(key);
+      this.unsettledStopped.delete(key);
+      this.emit({ type: "outcome", item: done });
+    } catch (error) {
+      this.emit({ type: "error", error });
+      return;
+    } finally {
+      this.settingAside.delete(key);
+    }
+    this.emit({ type: "pending" });
+    const session = this.session;
+    if (!session || !this.canSend()) return;
+    this.sendOutbox(session);
   }
 
   // -------------------------------------------------------------------------------------------
@@ -181,6 +254,7 @@ export class LinkStreams {
                 this.emit({ type: "outcome", item });
               }
               this.emit({ type: "pending" });
+              this.sendAfterHole();
             }
           }, (error) => this.emit({ type: "error", error }));
       }
@@ -384,6 +458,7 @@ export class LinkStreams {
       if (result.kind === "delivered") await this.settle(slot.target);
     }
     this.emit({ type: "pending" });
+    this.sendAfterHole();
   }
 
   /** Delivered items whose entry the cursor now covers leave the outbox; all of them for a stream nobody follows. */

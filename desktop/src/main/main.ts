@@ -13,6 +13,7 @@ import { permissionAllowed } from "./permissions";
 import { sealWithSafeStorage } from "./safe-seal";
 import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
 import {captureScale,composeWindow} from "./window-capture";
+import {fitScreenshot,pictureBudget} from "./screenshot-fit";
 import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
@@ -784,6 +785,16 @@ async function windowPicture(contents: WebContents, rect?: Electron.Rectangle): 
 }
 
 /**
+ * The picture for a command's `screenshot` field, small enough that the whole command fits one frame (it goes through the
+ * durable outbox, and a copy over the frame limit can never be sent); undefined, with a note, when even the smallest does not.
+ */
+function fitShot(image: Electron.NativeImage, rest: unknown, what: string): string | undefined {
+  const shot = fitScreenshot(image, pictureBudget(rest));
+  if (shot === null) note(`${what}: the screenshot does not fit one frame, sent without it`);
+  return shot ?? undefined;
+}
+
+/**
  * A component card's report: the card as it looks now (1.x's `snapshot(of:in:)`), taken from the app's
  * window at `rect`, goes to the core with the user's words and pictures. A page cannot supply its own.
  */
@@ -794,7 +805,7 @@ async function reportComponent(cmd: Extract<Command, { type: "component.report" 
     try {
       const rect = { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) };
       const image = await windowPicture(sender, rect);
-      if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
+      if (!image.isEmpty()) screenshot = fitShot(image, rest, "component report");
     } catch (error) {
       note(`component report: no screenshot (${(error as Error).message})`);
     }
@@ -834,7 +845,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
   try {
     const rect = cmd.rect ? { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) } : undefined;
     const image = await windowPicture(sender, rect);
-    if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
+    if (!image.isEmpty()) screenshot = fitShot(image, rest, "feedback");
   } catch (error) {
     note(`feedback: no screenshot (${(error as Error).message})`);
   }
