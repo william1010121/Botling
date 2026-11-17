@@ -1030,4 +1030,50 @@ describe("a line sorted after its send (takeLate, attachLateReply)", () => {
     expect(stored({ via: "auto", late: true, replyId: "x".repeat(201) }).replyId).toBeUndefined();
     expect(stored({ via: "auto", late: "yes", replyId: "b1" }).late).toBeUndefined();
   });
+
+  it("a late turn keeps the whole reply (up to MAX_LATE_REPLY); a longer one is not taken, and storage cuts only the turns that are not late at MAX_A", () => {
+    const b = book();
+    const pin = make(b);
+    const line = { id: "u1", text: "hello there", at: T0 };
+    expect(M.fitsLateReply("長".repeat(M.MAX_LATE_REPLY))).toBe(true);
+    expect(M.fitsLateReply("長".repeat(M.MAX_LATE_REPLY + 1))).toBe(false);
+    const whole = "答".repeat(M.MAX_A + 500);
+    const turn = M.takeLate(b, pin.id, line, { id: "b1", text: whole }, "r1", T0 + 1)!;
+    expect(turn.a).toBe(whole);
+    const back = M.readBook(JSON.parse(JSON.stringify(b)));
+    expect(back.pins[0]!.thread[0]!.a).toBe(whole);
+    // a reply over the limit is not taken, at the move or after it
+    const huge = { id: "b2", text: "大".repeat(M.MAX_LATE_REPLY + 1) };
+    const second = M.takeLate(b, pin.id, { id: "u2", text: "second line", at: T0 + 2 }, huge, "r2", T0 + 3)!;
+    expect(second.a).toBeNull();
+    expect(M.attachLateReply(b, "r2", huge, T0 + 4)).toBe(false);
+    expect(second.replyId).toBeUndefined();
+    // a turn that is not late is still cut at MAX_A when read
+    const cut = M.readBook({ pins: [{ id: "p-0001", origin: "user", title: "T", handle: "T", state: "run", status: "s", source: "user", thread: [{ rid: "r1", q: "q", a: whole, qAt: 1, via: "at" }], updates: [], createdAt: 1, updatedAt: 1 }] });
+    expect(cut.pins[0]!.thread[0]!.a).toHaveLength(M.MAX_A);
+  });
+
+  it("releaseLate takes an unanswered late turn out of its card (the line shows in the chat as sent); a turn with its reply, one taken back and one that is not late stay", () => {
+    const b = book();
+    const pin = make(b);
+    M.takeLate(b, pin.id, { id: "u1", text: "first line", at: T0 }, null, "r1", T0 + 1);
+    M.takeLate(b, pin.id, { id: "u2", text: "second line", at: T0 + 2 }, { id: "b2", text: "answer" }, "r2", T0 + 3);
+    M.addTurn(pin, "r3", "typed here", T0 + 4, "at");
+    expect(M.releaseLate(b, "r2")).toBe(false);
+    expect(M.releaseLate(b, "r3")).toBe(false);
+    expect(M.releaseLate(b, "nope")).toBe(false);
+    expect(M.releaseLate(b, "r1")).toBe(true);
+    expect(pin.thread.map((turn) => turn.rid)).toEqual(["r2", "r3"]);
+    expect(M.tracesOf(b).map((trace) => trace.key)).toEqual(["mv-r2"]);
+    expect(M.releaseLate(b, "r1")).toBe(false);
+  });
+
+  it("a late turn is drawn as the app's (`by: app`), the bot's own move and the user's choice keep theirs", () => {
+    const b = book();
+    const pin = make(b);
+    M.takeLate(b, pin.id, { id: "u1", text: "first line", at: T0 }, null, "r1", T0 + 1);
+    M.takeAuto(b, pin.id, { id: "u2", text: "second line", at: T0 + 2 }, "answer", "r2", T0 + 3);
+    const by = Object.fromEntries(M.tracesOf(b).map((trace) => [trace.data.rid, trace.data.by]));
+    expect(by).toEqual({ r1: "app", r2: "bot" });
+  });
 });

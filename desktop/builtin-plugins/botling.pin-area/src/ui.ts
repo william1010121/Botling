@@ -610,6 +610,9 @@ export class PinUi {
           bot.append(back);
         }
         parts.thread.append(bot);
+      } else if (turn.late) {
+        // a line the app moved here whose reply stays in the chat (it answered several lines, was too long, or has not come yet)
+        parts.thread.append(el("div", "pt-empty", words("turn.inChat")));
       }
     }
     const grew = pin.thread.length > (this.lastThread.get(pin.id) ?? 0);
@@ -619,7 +622,7 @@ export class PinUi {
 
   private receipt(turn: Turn): string {
     const { words } = this.deps;
-    if (turn.via === "auto") return turn.redirected ? words("receipt.redirected") : words("receipt.auto");
+    if (turn.via === "auto") return turn.redirected ? words("receipt.redirected") : turn.late ? words("receipt.app") : words("receipt.auto");
     return turn.a !== null || turn.seenAt !== null ? words("receipt.seen") : words("receipt.sent");
   }
 

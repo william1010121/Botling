@@ -44,6 +44,8 @@ function environment(extra: Record<string, string>): Record<string, string> {
 export function askModel(cli: Cli, prompt: string, call: SorterCall): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (call.engine !== "claude") { reject(new Error("engine")); return; }
+    // the host is already going away: nothing is started
+    if (call.signal?.aborted) { reject(new Error("abort")); return; }
     const folder = mkdtempSync(join(tmpdir(), "botling-pin-"));
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -61,7 +63,6 @@ export function askModel(cli: Cli, prompt: string, call: SorterCall): Promise<un
       try { if (child.pid && process.platform !== "win32") process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } }
     };
     function abort() { kill(); done(new Error("abort")); }
-    if (call.signal?.aborted) { abort(); return; }
     call.signal?.addEventListener("abort", abort, { once: true });
     let output = "";
     child.stdout!.setEncoding("utf8");

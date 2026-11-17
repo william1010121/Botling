@@ -1228,7 +1228,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     const turn = t.book("B1").pins[0]!.thread[0]!;
     expect(turn).toMatchObject({ q: "部署那個好了嗎", via: "auto", late: true, msgId: "u1", a: null });
     expect(t.book("B1").pins[1]!.thread).toEqual([]);
-    expect(traces(t)[0]).toMatchObject({ key: `mv-${turn.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", by: "bot" } });
+    expect(traces(t)[0]).toMatchObject({ key: `mv-${turn.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", by: "app" } });
     // the reply is posted: it is filled into the same turn and folds with the line
     replied(t, "b1", "還沒好，還在跑。");
     finished(t, "還沒好，還在跑。");
@@ -1251,15 +1251,36 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", replyId: "b1", a: "好了。", late: true });
     expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"] });
-    // the verdict first, the line shows after
-    const early = withCards(m.ask);
-    const sent = early.hooks[0]!({ bot: { id: "B1", name: "B1", role: "bot", awake: true }, text: "文件那個呢" } as never) as string;
+  });
+
+  it("the sort starts only when the core has shown the line (it was sent): a send that was blocked after beforeSend leaves no job, no model call and no suggestion; an old intent is forgotten", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const hook = (text: string) => t.hooks[0]!({ bot: { id: "B1", name: "B1", role: "bot", awake: true }, text } as never) as string;
+    // blocked: the hook let it go, the chat never showed it
+    const blocked = hook("幫我整理一下整個資料夾的舊報告");
     await flush();
-    m.answers[1]!.resolve(assign("p-0002"));
+    expect(m.ask).not.toHaveBeenCalled();
+    // two minutes later a line with the same words shows (a send that did not pass this hook): nothing was intended for it
+    t.tick(3 * 60_000);
+    t.emit("messagePosted", { botId: "B1", role: "user", text: blocked, id: "u0" });
     await flush();
-    expect(threads(early)).toEqual([[], []]);
-    early.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u9" });
-    expect(early.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u9", late: true, a: null });
+    expect(m.ask).not.toHaveBeenCalled();
+    expect(t.book("B1").suggest).toBeUndefined();
+    // sent for real: the sort starts when it shows, once
+    const sent = hook("部署那個好了嗎");
+    await flush();
+    expect(m.ask).not.toHaveBeenCalled();
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u1" });
+    await flush();
+    expect(m.ask).toHaveBeenCalledTimes(1);
+    t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u1b" });
+    await flush();
+    expect(m.ask).toHaveBeenCalledTimes(1);
+    started(t);
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", late: true });
   });
 
   it("a second line sent before the first one's verdict is its own job: lines answered by one turn move alone (their reply is not guessed), lines answered by their own turns move with their own reply, whatever order the verdicts come in", async () => {
@@ -1282,9 +1303,9 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     const apart = withCards(m.ask);
     send(apart, "部署那個好了嗎", "u1");
     started(apart);
-    send(apart, "文件那個呢", "u2"); // shows while the first turn runs: it waits for the next turn
     replied(apart, "b1", "部署好了");
     finished(apart, "部署好了");
+    send(apart, "文件那個呢", "u2"); // shows after the first turn ended: its own turn
     started(apart);
     replied(apart, "b2", "文件在寫");
     finished(apart, "文件在寫");
@@ -1310,6 +1331,190 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     m.answers[0]!.resolve(assign("p-0001"));
     await flush();
     expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ a: "好了", replyId: "b1" });
+  });
+
+  it("a line written while the bot answers is read into that turn: one reply answers both lines, so neither line's card takes it (the lines move, the reply stays in the chat), and no later, unrelated turn is taken for the second line's answer", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    send(t, "部署那個好了嗎", "u1");
+    started(t);
+    send(t, "順便文件那個呢", "u2"); // read into the running turn: the core starts no turn for it
+    replied(t, "b1", "兩個一起回答");
+    finished(t, "兩個一起回答");
+    await flush();
+    // a later line with no job (under 3 characters) and a turn of its own
+    send(t, "ok", "u3");
+    started(t);
+    replied(t, "b2", "好的，已收到。");
+    finished(t, "好的，已收到。");
+    await flush();
+    m.answers[0]!.resolve(assign("p-0001"));
+    m.answers[1]!.resolve(assign("p-0002"));
+    await flush();
+    // both lines are in their cards, alone; no reply is in a card (the shared reply, and the reply to "ok", stay in the chat)
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", msgId: "u1", late: true, a: null });
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "順便文件那個呢", msgId: "u2", late: true, a: null });
+    expect(t.book("B1").pins[0]!.thread[0]!.replyId).toBeUndefined();
+    expect(t.book("B1").pins[1]!.thread[0]!.replyId).toBeUndefined();
+    expect(traces(t).map((trace) => (trace.fold ?? []).join(",")).sort()).toEqual(["u1", "u2"]);
+    expect(traces(t).every((trace) => trace.data.by === "app")).toBe(true);
+    // the card says where the reply is: the view hands the turn over as a late one with no answer
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.pins.find((pin) => pin.id === "p-0001")!.thread[0]).toMatchObject({ late: true, a: null });
+  });
+
+  it("two lines before one turn begins are answered together too (the reply stays in the chat); a verdict that comes before the reply changes nothing for the reply", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    send(t, "部署那個好了嗎", "u1");
+    send(t, "文件那個呢", "u2");
+    await flush();
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    started(t);
+    replied(t, "b1", "一起回答");
+    finished(t, "一起回答");
+    await flush();
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", a: null });
+    expect(t.book("B1").pins[0]!.thread[0]!.replyId).toBeUndefined();
+  });
+
+  it("lines written while a turn runs are freed with their turn: the 12-job limit is never filled by them, and the next line after is sorted", async () => {
+    const ask = vi.fn(async () => assign("p-0001"));
+    const t = withCards(ask);
+    send(t, "第一個問題", "u0");
+    started(t);
+    for (let n = 1; n <= 14; n++) { send(t, `中途加的第 ${n} 句`, `s${n}`); await flush(); }
+    replied(t, "b1", "都回答了");
+    finished(t, "都回答了");
+    await flush();
+    expect(ask).toHaveBeenCalledTimes(15);
+    send(t, "之後的新問題", "u9");
+    await flush();
+    expect(ask).toHaveBeenCalledTimes(16);
+  });
+
+  it("a turn that ends with no reply (it failed, or was stopped) is over for its line: the next turn's reply is not taken for it, and a line already in a card goes back to the chat", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    // the verdict came while the turn ran: the line is in the card with no reply yet
+    send(t, "部署那個好了嗎", "u1");
+    started(t);
+    await flush();
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    t.emit("turnFinished", { botId: "B1", ok: false, reply: "" });
+    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    expect(traces(t)).toEqual([]);
+    // the next line has its own turn and its own reply
+    send(t, "文件那個呢", "u2");
+    started(t);
+    replied(t, "b2", "文件在寫");
+    finished(t, "文件在寫");
+    await flush();
+    m.answers[1]!.resolve(assign("p-0002"));
+    await flush();
+    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", replyId: "b2", a: "文件在寫" });
+    // the verdict of a line whose turn failed comes after the turn: the line stays where it was sent
+    const late = withCards(m.ask);
+    send(late, "部署那個好了嗎", "u1");
+    started(late);
+    late.emit("turnFinished", { botId: "B1", ok: false, reply: "" });
+    send(late, "文件那個呢", "u2");
+    started(late);
+    replied(late, "b2", "文件在寫");
+    finished(late, "文件在寫");
+    await flush();
+    m.answers[3]!.resolve(assign("p-0002"));
+    m.answers[2]!.resolve(assign("p-0001"));
+    await flush();
+    expect(late.book("B1").pins[0]!.thread).toEqual([]);
+    expect(late.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", replyId: "b2" });
+  });
+
+  it("jobs whose turn is over are forgotten at once, so any number of lines in a row are sorted (a 13th line is not silently left out); jobs whose lines wait for a turn are 12 at most, and old ones expire after 15 minutes", async () => {
+    const ask = vi.fn(async () => assign("p-0001"));
+    const t = withCards(ask);
+    for (let n = 1; n <= 14; n++) {
+      send(t, `第 ${n} 個問題`, `u${n}`);
+      await flush();
+      started(t);
+      replied(t, `b${n}`, `答 ${n}`);
+      finished(t, `答 ${n}`);
+      await flush();
+    }
+    expect(ask).toHaveBeenCalledTimes(14);
+    // lines that show, are sorted into a card, and no turn has begun for them: 12 wait, the 13th is sent and not sorted
+    const u = withCards(ask);
+    ask.mockClear();
+    for (let n = 1; n <= 13; n++) { send(u, `等著的第 ${n} 個問題`, `w${n}`); await flush(); }
+    expect(ask).toHaveBeenCalledTimes(12);
+    // after 15 minutes they are forgotten
+    u.tick(15 * 60_000 + 1);
+    send(u, "十五分鐘後的問題", "w14");
+    await flush();
+    expect(ask).toHaveBeenCalledTimes(13);
+  });
+
+  it("the sorter turned off while the model is thinking: the verdict moves nothing", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    send(t, "部署那個好了嗎", "u1");
+    await flush();
+    t.settings[C.SETTING.enabled] = false;
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    expect(threads(t)).toEqual([[], []]);
+    // a suggestion is not written either
+    const u = withCards(m.ask);
+    send(u, "幫我整理一下整個資料夾的舊報告", "u1");
+    await flush();
+    u.settings[C.SETTING.enabled] = false;
+    m.answers[1]!.resolve({ action: "new", confidence: 0.95 });
+    await flush();
+    expect(u.book("B1").suggest).toBeUndefined();
+  });
+
+  it("the card keeps the whole reply, even a long one (no cut at 4000 characters, the chat's copy is folded away); one too long to keep whole stays in the chat, the line alone moves", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    const long = "長".repeat(9_000);
+    send(t, "部署那個好了嗎", "u1");
+    started(t);
+    replied(t, "b1", long);
+    finished(t, long);
+    await flush();
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ replyId: "b1" });
+    expect(t.book("B1").pins[0]!.thread[0]!.a).toBe(long);
+    expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"] });
+    // over the most a card keeps whole: the reply is not folded, the line moves alone
+    const huge = "大".repeat(M.MAX_LATE_REPLY + 1);
+    const u = withCards(m.ask);
+    send(u, "文件那個呢", "u2");
+    started(u);
+    replied(u, "b2", huge);
+    finished(u, huge);
+    await flush();
+    m.answers[1]!.resolve(assign("p-0002"));
+    await flush();
+    expect(u.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", a: null });
+    expect(u.book("B1").pins[1]!.thread[0]!.replyId).toBeUndefined();
+    expect(traces(u)[0]).toMatchObject({ fold: ["u2"] });
+    // and the same when the line is already in the card before the long reply comes
+    const v = withCards(m.ask);
+    send(v, "文件那個呢", "u3");
+    started(v);
+    await flush();
+    m.answers[2]!.resolve(assign("p-0002"));
+    await flush();
+    replied(v, "b3", huge);
+    finished(v, huge);
+    expect(v.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u3", a: null });
+    expect(traces(v)[0]).toMatchObject({ fold: ["u3"] });
   });
 
   it("the card was taken down before the verdict: nothing moves; taken down after the line moved: line and reply are back in the chat (no trace), and 釘回 folds them again", async () => {
@@ -1369,7 +1574,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(t.send("B1", "@Deploy 好了嗎")).toBe(M.askText(t.book("B1").pins[0]!, "好了嗎"));
     await flush();
     expect(ask).not.toHaveBeenCalled();
-    t.send("B1", "部署那個好了嗎");
+    send(t, "部署那個好了嗎", "u1");
     await flush();
     expect(ask).toHaveBeenCalledTimes(1);
     // a chat with no cards asks nothing
@@ -1384,8 +1589,9 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     const t = withCards(m.ask);
     t.call("pinMessage", { botId: "B2", messageId: "m1", text: "Other" });
     t.tick(5_000);
-    for (const n of [1, 2, 3, 4]) expect(M.hasBriefing(t.send("B1", `第 ${n} 個問題`) as string)).toBe(true);
-    t.send("B2", "別的聊天的問題");
+    for (const n of [1, 2, 3, 4]) expect(M.hasBriefing(send(t, `第 ${n} 個問題`, `u${n}`))).toBe(true);
+    const other = t.send("B2", "別的聊天的問題") as string;
+    t.emit("messagePosted", { botId: "B2", role: "user", text: other, id: "o1" });
     await flush();
     expect(m.ask).toHaveBeenCalledTimes(4);
   });
@@ -1396,8 +1602,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     t.send("B1", "部署那個好了嗎");
     t.emit("messagePosted", { botId: "B1", role: "user", text: M.withBriefing("完全不同的字", "〔Pin 區現況〕\nx"), id: "u1" });
     await flush();
-    m.answers[0]!.resolve(assign("p-0001"));
-    await flush();
+    expect(m.ask).not.toHaveBeenCalled();
     expect(threads(t)).toEqual([[], []]);
   });
 

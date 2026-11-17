@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The pure part of the line classifier (src/classify.ts) and its model call (src/sorter-call.ts): what is asked, how the answer is read and how it is
 // decided, and the isolated `claude -p` call against a fake CLI (a node script). No real model is called.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -198,8 +198,38 @@ describe("the isolated model call", () => {
     await expect(askModel(fake("hang2", `setTimeout(() => {}, 30000);`), "q", call({ signal: gone.signal }))).rejects.toThrow("abort");
     // an engine that is not wired is refused before anything is started
     await expect(askModel(fake("never", `process.exit(0);`), "q", call({ engine: "codex" as never }))).rejects.toThrow("engine");
+    // one that is already aborted spawns nothing at all (its script would have left a file)
+    const marker = join(folder, "spawned-marker");
+    const already = new AbortController();
+    already.abort();
+    await expect(askModel(fake("marks", `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "x");`), "q", call({ signal: already.signal }))).rejects.toThrow("abort");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(existsSync(marker)).toBe(false);
     const started = Date.now();
     await expect(askModel(fake("slow", `process.stdin.resume(); setTimeout(() => {}, 30000);`), "q", call({ timeoutMs: 300 }))).rejects.toThrow("timeout");
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  /** Whether a process is alive (signal 0). */
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  /** Runs a script that writes its pid and hangs; `end` ends the call; the pid comes back once the script is up. */
+  const hang = async (name: string, end: "timeout" | "abort") => {
+    const pidFile = join(folder, `${name}.pid`);
+    const cli = fake(name, `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.stdin.resume(); setTimeout(() => {}, 30000);`);
+    const controller = new AbortController();
+    const running = askModel(cli, "q", call(end === "timeout" ? { timeoutMs: 3_000, signal: controller.signal } : { timeoutMs: 20_000, signal: controller.signal }));
+    const rejected = expect(running).rejects.toThrow(end);
+    for (let n = 0; n < 100 && !existsSync(pidFile); n++) await new Promise((resolve) => setTimeout(resolve, 50));
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(alive(pid)).toBe(true);
+    if (end === "abort") controller.abort();
+    await rejected;
+    for (let n = 0; n < 40 && alive(pid); n++) await new Promise((resolve) => setTimeout(resolve, 50));
+    return pid;
+  };
+
+  it("a call that times out, and a call that is aborted (the host quits), each end the child itself: no process is left running", async () => {
+    expect(alive(await hang("kill-timeout", "timeout"))).toBe(false);
+    expect(alive(await hang("kill-abort", "abort"))).toBe(false);
   });
 });

@@ -151,7 +151,7 @@ function readTurn(raw: unknown): Turn | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
   if (!isRid(t.rid) || typeof t.q !== "string") return null;
-  const a = typeof t.a === "string" ? t.a.slice(0, t.via === "worker" ? MAX_REPORT : MAX_A) : null;
+  const a = typeof t.a === "string" ? t.a.slice(0, t.via === "worker" || (t.via === "auto" && t.late === true) ? MAX_REPORT : MAX_A) : null;
   const wkind = (["final", "failed", "note", "question"] as const).find((kind) => kind === t.wkind);
   const time = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
   return {
@@ -760,9 +760,13 @@ export function takeLate(book: Book, id: string, line: { id: string; text: strin
   if (reply) fillReply(book, turn, reply, now);
   return turn;
 }
+/** The most of a bot's reply a card keeps for a line sorted after its send: the whole reply (it is folded away in the chat, so nothing may be cut); a longer one stays in the chat. */
+export const MAX_LATE_REPLY = MAX_REPORT;
+/** Whether `text` can go into a card whole (`fillReply`); a longer reply is left in the chat. */
+export const fitsLateReply = (text: unknown): boolean => clean(text, MAX_LATE_REPLY + 1).trim().length <= MAX_LATE_REPLY;
 function fillReply(book: Book, turn: Turn, reply: { id: string; text: string }, now: number): boolean {
-  const text = clean(reply.text, MAX_A * 2).trim().slice(0, MAX_A);
-  if (!text || !reply.id || reply.id.length > 200 || lineUsed(book, reply.id)) return false;
+  const text = clean(reply.text, MAX_LATE_REPLY + 1).trim();
+  if (!text || text.length > MAX_LATE_REPLY || !reply.id || reply.id.length > 200 || lineUsed(book, reply.id)) return false;
   turn.a = text;
   turn.aAt = now;
   turn.replyId = reply.id;
@@ -775,6 +779,18 @@ export function attachLateReply(book: Book, rid: string, reply: { id: string; te
     if (!turn) continue;
     if (!turn.late || turn.a !== null || turn.moved || !fillReply(book, turn, reply, now)) return false;
     pin.updatedAt = now;
+    return true;
+  }
+  return false;
+}
+/** The turn that should have answered a line sorted after its send ended with no reply (it failed, or was stopped): the line leaves the card and shows in the chat as it was sent, so the card does not keep a question nobody answers. False: no such open late turn (one that has its reply, or was taken back, stays). */
+export function releaseLate(book: Book, rid: string): boolean {
+  for (const pin of book.pins) {
+    const at = pin.thread.findIndex((candidate) => candidate.rid === rid);
+    if (at < 0) continue;
+    const turn = pin.thread[at]!;
+    if (!turn.late || turn.a !== null || turn.moved) return false;
+    pin.thread.splice(at, 1);
     return true;
   }
   return false;
@@ -857,7 +873,7 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
     const worker = turn.via === "worker";
     const shown = worker ? turn.say ?? turn.a : turn.a;
     const data: TraceData = {
-      kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : "bot",
+      kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : turn.late ? "app" : "bot",
       ...(back && shown ? { a: clean(shown, 600) } : {}), ...(worker ? { worker: true as const } : {}),
     };
     return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: turn.replyId ? [turn.msgId!, turn.replyId] : [turn.msgId!], data };
