@@ -78,6 +78,7 @@ describe("the sleep after a restart's recovery", () => {
     await r.b.sleep({ tidyMs: 0 });
     expect(r.peek.session.started).toBe(false);
     expect(r.peek.briefing).toBe(true);
+    expect(r.peek.headRun.lastModelAt).toBeNull();
     r.b.send("woken by a routine");
     await waitFor("the wake message", () => fixture.heads[1]?.sent.length === 1);
     expect(fixture.heads[1].config.resume).toBe(false);
@@ -156,6 +157,22 @@ describe("a cold cache is never resumed (ensureHead)", () => {
     expect(fixture.heads[1].config.sessionId).toBe(id);
   });
 
+  it("a cold head that a restart was waiting to end starts new once: one briefing, no \"Botling restarted you\" note on top", async () => {
+    const r = rig();
+    await answered(r);
+    const id = r.peek.session.sessionId;
+    expect(fixture.heads[0].running).toBe(true);
+    r.peek.restartFor({ told: "model", shown: "M" });
+    r.peek.headRun.lastModelAt = Date.now() - WARM_WINDOW_MS - 60_000;
+    r.peek.briefing = false;
+    r.b.send("after a long idle");
+    await waitFor("the message to reach a new head", () => fixture.heads[1]?.sent.length === 1);
+    expect(fixture.heads[1].config.resume).toBe(false);
+    expect(fixture.heads[1].config.sessionId).not.toBe(id);
+    expect(fixture.heads[1].sent[0]).not.toContain("Botling restarted you");
+    expect(r.peek.briefing).toBe(false);
+  });
+
   it("no record of a model call (the object is new): nothing is forced", async () => {
     const { r, id } = await restarted(null);
     r.b.send("unknown age");
@@ -166,17 +183,36 @@ describe("a cold cache is never resumed (ensureHead)", () => {
 });
 
 describe("what counts as a model call", () => {
-  it("the coordinator's own assistant lines do; a subagent's, an init and a monitor do not", async () => {
-    const r = rig();
+  const counts: [string, any, boolean][] = [
+    ["delta", { kind: "delta", text: "h" }, true],
+    ["assistantText", { kind: "assistantText", text: "hello" }, true],
+    ["usage", { kind: "usage", totalCost: 0, tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }, true],
+    ["result", { kind: "result", ok: true, text: "", error: "", subtype: "success" }, true],
+    ["the coordinator's own toolUse", { kind: "toolUse", id: "t1", tool: "Bash", title: "x", detail: "x", parent: null, input: {} }, true],
+    ["a subagent's toolUse", { kind: "toolUse", id: "t2", tool: "Bash", title: "x", detail: "x", parent: "sub", input: {} }, false],
+    ["a subagent's text", { kind: "subagentText", parent: "x", text: "worker talking" }, false],
+    ["an init", { kind: "init", sessionId: "s" }, false],
+  ];
+  for (const [name, item, counted] of counts) {
+    it(`${name}: ${counted ? "counts" : "does not count"}`, async () => {
+      const r = rig();
+      r.peek.ensureHead();
+      const head = fixture.heads[0];
+      await flush();
+      r.peek.headRun.lastModelAt = null;
+      const before = Date.now();
+      // What the item does after it is noted is not this test's business; only the stamp is.
+      try { r.peek.onItem(head, item); } catch { /* ignored */ }
+      if (counted) expect(r.peek.headRun.lastModelAt).toBeGreaterThanOrEqual(before);
+      else expect(r.peek.headRun.lastModelAt).toBeNull();
+    });
+  }
+
+  it("Codex never records one (its cache is not this rule's)", async () => {
+    const r = rig("codex");
     r.peek.ensureHead();
-    const head = fixture.heads[0];
     await flush();
-    r.peek.headRun.lastModelAt = null;
-    r.peek.onItem(head, { kind: "init", sessionId: r.peek.session.sessionId });
-    r.peek.onItem(head, { kind: "subagentText", parent: "x", text: "worker talking" });
+    try { r.peek.onItem(fixture.heads[0], { kind: "assistantText", text: "hello" }); } catch { /* ignored */ }
     expect(r.peek.headRun.lastModelAt).toBeNull();
-    const before = Date.now();
-    r.peek.onItem(head, { kind: "assistantText", text: "hello" });
-    expect(r.peek.headRun.lastModelAt).toBeGreaterThanOrEqual(before);
   });
 });
