@@ -1,4 +1,5 @@
 // A question group's answers as the chat page sent them (an `answer` action's `picks`), checked for `chat.answer`.
+import { QUESTION_OPTIONS_MAX } from "../contract/views";
 
 /** One question's answer: the options ticked, typed "Other" words, a note per ticked option (keyed by index), a skip. */
 export interface ActionPick { options: number[]; other?: string; skipped?: boolean; notes?: Record<string, string> }
@@ -8,7 +9,7 @@ export function actionPicks(value: unknown): ActionPick[] | null {
   if (!Array.isArray(value)) return null;
   return (value as unknown[]).slice(0, 5).map((entry) => {
     const pick = entry as { options?: unknown; other?: unknown; skipped?: unknown; notes?: unknown };
-    const options = Array.isArray(pick?.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) <= 5).slice(0, 6) : [];
+    const options = Array.isArray(pick?.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) < QUESTION_OPTIONS_MAX).slice(0, QUESTION_OPTIONS_MAX) : [];
     const notes = pickNotes(pick?.notes, options);
     return {
       options,

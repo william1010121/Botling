@@ -1,7 +1,7 @@
 // Commands: the request schemas (`Command`, `CommandType`) and the views the plugin and machine commands carry (moved out of index.ts, M7-S02c).
 import { z } from "zod";
 import { ContractId, CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
-import { BotId, Engine, AnswerTarget, MESSAGE_TEXT_LIMIT, UploadedFile } from "./views";
+import { BotId, Engine, AnswerTarget, MESSAGE_TEXT_LIMIT, UploadedFile, QUESTION_OPTIONS_MAX, QUESTION_OPTION_INDEX } from "./views";
 import { MachineView, SettingsChange, PluginName, Effort, ModelId } from "./views-settings";
 
 const id = ContractId;
@@ -226,8 +226,8 @@ const BASE_COMMANDS = [
   /** `images`: pictures a component sent with its answer (`{text, images}`), as `{name, base64}`; they go along as attachments. */
   /** `picks`: a question group's answers, one per question in order; the app writes the bot's message from them (`text` is then ignored). */
   z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional(),
-    picks: z.array(z.strictObject({ options: z.array(z.number().int().nonnegative().max(5)).max(6), other: z.string().max(1_000).optional(), skipped: z.boolean().optional(),
-      notes: z.record(z.string().regex(/^[0-5]$/), z.string().max(1_000)).optional() })).min(1).max(5).optional() }),
+    picks: z.array(z.strictObject({ options: z.array(z.number().int().nonnegative().max(QUESTION_OPTIONS_MAX - 1)).max(QUESTION_OPTIONS_MAX), other: z.string().max(1_000).optional(), skipped: z.boolean().optional(),
+      notes: z.record(z.string().regex(QUESTION_OPTION_INDEX), z.string().max(1_000)).optional() })).min(1).max(5).optional() }),
   /** Explicitly dismiss a question as a notification; never dispatches an answer. */
   z.strictObject({ type: z.literal("chat.ignoreQuestion"), botId, messageId: id }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */

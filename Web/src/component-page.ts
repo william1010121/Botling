@@ -367,6 +367,9 @@ export function resizeFrame(frame: HTMLIFrameElement, size: PinSize): void {
   frame.contentWindow?.postMessage({ ccbSize: sizeInfo(size) }, "*");
 }
 
+/** The most options one question carries (the app's `QUESTION_OPTIONS_MAX`, desktop/src/contract/views.ts; the page is its own package). */
+const QUESTION_OPTIONS_MAX = 12;
+
 /**
  * A question group's answers as a template sent them, checked; null when not a group answer. A 「choices」 template
  * that draws groups posts them itself, `parent.postMessage({ccb: "answer", picks}, "*")` (the page script stays as it was).
@@ -375,7 +378,7 @@ export function answerPicks(value: unknown): NonNullable<ComponentAnswer["picks"
   if (!Array.isArray(value) || !value.length || value.length > 5) return null;
   const picks = value.map((entry) => {
     const pick = (entry ?? {}) as { options?: unknown; other?: unknown; skipped?: unknown; notes?: unknown };
-    const options = Array.isArray(pick.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) <= 5).slice(0, 6) : [];
+    const options = Array.isArray(pick.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) < QUESTION_OPTIONS_MAX).slice(0, QUESTION_OPTIONS_MAX) : [];
     // A note the template wrote on a ticked option (its speech bubble), keyed by that option's index.
     const notes: Record<string, string> = {};
     if (pick.notes && typeof pick.notes === "object" && !Array.isArray(pick.notes)) {

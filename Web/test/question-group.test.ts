@@ -108,7 +108,9 @@ describe("question groups", () => {
   });
 
   it("a template's group answer becomes the same action", () => {
-    expect(answerPicks([{ options: [1, 9, "x"], other: " hi " }, { skipped: true }])).toEqual([{ options: [1], other: "hi" }, { options: [], skipped: true }]);
+    expect(answerPicks([{ options: [1, 12, "x"], other: " hi " }, { skipped: true }])).toEqual([{ options: [1], other: "hi" }, { options: [], skipped: true }]);
+    // up to 12 options a question: the 8th and the 12th stay
+    expect(answerPicks([{ options: [7, 11, 12], notes: { 7: "eighth" } }])).toEqual([{ options: [7, 11], notes: { "7": "eighth" } }]);
     expect(answerPicks([])).toBeNull();
     // A note the template wrote on a ticked option goes along (keyed by that option); a note on an unticked one does not.
     expect(answerPicks([{ options: [1], notes: { 1: " check the datastore first ", 0: "stray" } }])).toEqual([{ options: [1], notes: { "1": "check the datastore first" } }]);
