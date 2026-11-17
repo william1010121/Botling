@@ -118,12 +118,9 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
   "botling.component-studio": [
     "api.chat.decorate",
     "api.replyTags.on",
-    "api.settings.app",
     "api.studio.request",
-    "api.ui.takeover",
     "ccb.decorations.register",
-    "ccb.draw.component", "ccb.draw.keepFrames", "ccb.draw.mediaClicks", "ccb.draw.pinButton",
-    "ccb.messages.media",
+    "ccb.draw.pinButton",
   ],
   "botling.deps": [
     "api.plugins.deps",

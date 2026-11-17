@@ -300,7 +300,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,
     // What plugins keep for the page to draw from (botling.board's pins).
     pluginData: chat.pluginData ?? {},
-    // "Make into component" on replies (1.x: every chat but a subagent's).
+    // The "not right" flag on replies (developer mode; every chat but a subagent's).
     feedback,
     decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration)),
   };

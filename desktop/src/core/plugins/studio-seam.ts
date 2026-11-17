@@ -1,5 +1,5 @@
-// The `studio` seam (plugin-extraction.md §3.2 #4): what botling.component-studio, the component studio ("Make into component",
-// <suggest-component>, the spec workspace), asks of the core. Privileged like the `app` seam: the "studio" permission, and
+// The `studio` seam (plugin-extraction.md §3.2 #4): what botling.component-studio, the component studio (a bot's
+// <suggest-component> chip: build, fill, Undo / Restore), asks of the core. Privileged like the `app` seam: the "studio" permission, and
 // only a plugin shipped with Botling. It carries no studio logic of its own. The specs themselves stay where the core always
 // kept them (specs.json beside each chat, 1.x's format, so the import and a restart behave as before): the plugin reads and
 // writes the whole list of a chat (`specs`, `writeSpecs`), and asks for the few things only the core can do: hand Maintainer
@@ -81,7 +81,7 @@ export interface StudioWorld {
   ask(botId: string, text: string, waitMs: number, answerMs: number): Promise<GuestAnswer>;
   /**
    * What a chat's line shows besides itself for the studio (`lineExtras` in bot.ts): the library component a bot's reply already is,
-   * for which the studio's "Make into component" reads "Add to another bot…". The core asks it as it draws a line; no plugin call reaches it.
+   * for which a plugin's quick reply entry reads its `alt` words ("Add to another bot…"). The core asks it as it draws a line; no plugin call reaches it.
    */
   lineExtras(record: { role: string; displays?: unknown }): { component?: string };
   commands: {

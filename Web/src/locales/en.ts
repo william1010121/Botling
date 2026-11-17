@@ -203,6 +203,13 @@ export const en = {
   "feedback.flag": "Not right",
   "feedback.question": "What was not right?",
   "feedback.placeholder": "e.g. it answered only half of what I said. Paste or drop a picture to show it.",
+  // messages.ts: "make it a visual report" on a reply
+  "regather.label": "Make this reply a visual report",
+  "regather.title": "Make a visual report: the bot gathers again and answers with a chart or report",
+  "regather.question": "Anything you would like in the report?",
+  "regather.placeholder": "Optional, e.g. compare by week, or show only the failures.",
+  "regather.message": "Please gather the data behind the reply I am quoting again, then answer it again as a visual report: use an inline-chart or inline-report-block by default (a result page only if it is really long). Ask Maintainer for a component only if none of the existing ones fits.",
+  "regather.suggestion": "My suggestion: ",
   // components.ts: a card that runs a command
   "command.runsIn": "Runs in {folder}",
   "command.everySeconds": "every {n}s",

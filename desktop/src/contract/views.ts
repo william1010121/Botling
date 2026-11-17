@@ -277,8 +277,6 @@ export const SpecChipView = z.strictObject({
   status: z.enum(["draft", "building", "done"]),
   /** A bot suggested it; nothing has run or been built. */
   suggested: z.boolean(),
-  /** It shows in the right panel now. */
-  open: z.boolean(),
   /** The library component it became, drawn under the reply. */
   component: z.string().max(200).nullable(),
   display: DisplayView.nullable(),

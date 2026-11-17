@@ -3,7 +3,6 @@
 import { toSwiftDate } from "../../../src/core/store/records";
 import { LibraryView, type GuestAnswer, type Studio, type StudioChat, type StudioCommandState, type StudioLibrary, type StudioLine } from "../src/studio";
 import { SpecDesk, type ChipDecoration, type DeskDeps } from "../src/desk";
-import type { SpecState } from "../src/types";
 
 export const MAIN = "main";
 export const MAINTAINER = "DEC0DE00-0000-4000-8000-00000000DEC0";
@@ -31,7 +30,6 @@ export class FakeStudio implements Studio {
   asks: { bot: string; text: string }[] = [];
   answer: GuestAnswer | (() => Promise<GuestAnswer>) = { kind: "reply", text: "" } as GuestAnswer;
   maintainerWorking = false;
-  previewsOf = new Map<string, string[]>();
 
   constructor() {
     this.chatsById.set(MAIN, { name: "Main bot", folder: "/p/main", components: [], lines: [], working: false });
@@ -57,7 +55,7 @@ export class FakeStudio implements Studio {
     const at = lines.indexOf(record);
     const first = record.text.split("\n")[0] ?? "";
     return {
-      record: structuredClone(record), asked: lines.slice(0, at).findLast((entry) => entry.role === "user")?.text ?? null, previews: this.previewsOf.get(record.id) ?? null,
+      record: structuredClone(record), asked: lines.slice(0, at).findLast((entry) => entry.role === "user")?.text ?? null, previews: null,
       preview: first, turn: lines.slice(lines.findLastIndex((entry) => entry.role === "user") + 1).map((entry) => entry.id),
     };
   }
@@ -119,21 +117,17 @@ export class FakeStudio implements Studio {
   };
 }
 
-/** A desk over a fake studio, with what it drew and opened kept for the test to look at. */
+/** A desk over a fake studio, with what it drew kept for the test to look at. */
 export function deskOver(studio = new FakeStudio(), more: Partial<DeskDeps> = {}) {
   const drawn = new Map<string, ChipDecoration[]>();
-  const takeovers: { chat: string | null; wide: boolean }[] = [];
-  const states: { chat: string; state: SpecState | null }[] = [];
   const desk = new SpecDesk({
     studio,
     decorate: async (chat, decorations) => { if (decorations.length) drawn.set(chat, decorations); else drawn.delete(chat); },
-    takeover: async (chat, wide) => { takeovers.push({ chat, wide }); },
-    emit: (chat, state) => { states.push({ chat, state }); },
     clock: () => ({ timeZone: "UTC", locale: "en-US", hour12: false }),
     log: () => {},
     timing: { wait: 1000, answer: 1000 },
     ...more,
   });
   const chips = (chat = MAIN, message?: string) => (drawn.get(chat) ?? []).filter((entry) => !message || entry.under === message).flatMap((entry) => entry.data.specs);
-  return { studio, desk, drawn, takeovers, states, chips };
+  return { studio, desk, drawn, chips };
 }

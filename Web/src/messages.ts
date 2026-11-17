@@ -1,6 +1,7 @@
 import { post } from "./bridge";
 import { t } from "./i18n";
-import { acceptPictures } from "./pictures";
+import { acceptPictures, type Picture } from "./pictures";
+import { regatherText } from "./regather";
 import type { ComponentRender } from "./plugins";
 import { attachmentStrip, botBody, chevron, jumpTo } from "./message-body";
 import { taskChips } from "./tasks";
@@ -42,6 +43,8 @@ export const messageMenu: { items: MessageMenuItem[]; previews: MessageMenuItem[
 const quickIcons: Record<string, string> = { cube: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>` };
 export const quickIcon = (name: string | undefined) => (name && quickIcons[name]) || "•";
 
+
+const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
 
 const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
 
@@ -167,7 +170,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "bot":
     case "notice": {
       const body = botBody(message, components, botId);
-      const actions = message.role === "bot" && (feedback.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
+      const actions = message.role === "bot" ? actionColumn(message) : replyButton(message);
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
       if (message.speaker || tasks || message.role === "notice") {
         // The group chat: who said it, above what they said.
@@ -279,15 +282,16 @@ export function avatar(src: string | null): HTMLElement {
 }
 
 /**
- * A bot reply's hover column: Reply, Make into component (or "Add to another bot…" when the reply
- * already is a library component), and in developer mode the "not right" flag.
+ * A bot reply's hover column: Reply, "make it a visual report" (re-gather and answer again, with your suggestion), in
+ * developer mode the "not right" flag, and the plugins' quick entries and "⋯".
  */
 function actionColumn(message: MessageView): HTMLElement {
   const column = document.createElement("div");
   column.className = "message-actions";
   column.append(replyButton(message));
   if (feedback.enabled) column.append(feedbackFlag(message));
-  // Plugins' quick entries are buttons of their own (the component studio's "Make into component"); the rest are rows of "⋯".
+  column.append(regatherButton(message));
+  // A plugin's quick entries are buttons of their own; the rest are rows of "⋯".
   for (const item of messageMenu.items.filter((entry) => entry.quick)) column.append(quickButton(message, item, "message/context"));
   if (messageMenu.items.some((entry) => !entry.quick)) column.append(menuButton(message));
   return column;
@@ -297,7 +301,7 @@ function actionColumn(message: MessageView): HTMLElement {
 function quickButton(message: MessageView, item: MessageMenuItem, menu: "message/context" | "message/preview", preview?: number): HTMLButtonElement {
   const label = message.component ? item.alt ?? item.title : item.title;
   const button = document.createElement("button");
-  button.className = "reply-button make-component";
+  button.className = "reply-button quick-button";
   button.dataset.command = item.command;
   button.setAttribute("aria-label", label);
   button.title = message.component || !item.hint ? label : `${label}: ${item.hint}`;
@@ -370,25 +374,56 @@ function feedbackFlag(message: MessageView): HTMLElement {
  * screenshot of the chat centered on the reply (taken by the app), and pictures pasted or dropped.
  */
 function openFeedback(anchor: HTMLElement, message: MessageView): void {
+  openReportBox(anchor, {
+    question: t("feedback.question"),
+    placeholder: t("feedback.placeholder"),
+    pictures: true,
+    send: (text, images) => {
+      // Out of the way and the reply in the middle first, so the app's screenshot shows the chat
+      // as you saw it around that reply.
+      const row = anchor.closest<HTMLElement>(".row");
+      if (row) {
+        document.dispatchEvent(new CustomEvent("ccb-read-back"));
+        row.scrollIntoView?.({ block: row.offsetHeight > window.innerHeight ? "start" : "center" });
+      }
+      requestAnimationFrame(() => post({ type: "feedback", messageID: message.id, text, images }));
+    },
+  });
+}
+
+/** "Make it a visual report", beside a reply: a small box for what you would like, then the bot is asked to gather again and answer as a report. */
+function regatherButton(message: MessageView): HTMLElement {
+  const button = document.createElement("button");
+  button.className = "reply-button regather-button";
+  button.setAttribute("aria-label", t("regather.label"));
+  button.title = t("regather.title");
+  button.innerHTML = cubeIcon;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openReportBox(button, {
+      question: t("regather.question"),
+      placeholder: t("regather.placeholder"),
+      pictures: false,
+      send: (text) => post({ type: "regather", messageID: message.id, text: regatherText(text) }),
+    });
+  });
+  return button;
+}
+
+/** The small box beside a reply's button where you type a few words (and, if `pictures`, paste or drop pictures), then send. */
+function openReportBox(anchor: HTMLElement, spec: { question: string; placeholder: string; pictures: boolean; send: (text: string, images: Picture[]) => void }): void {
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";
-  box.innerHTML = `<div class="report-title">${escapeHTML(t("feedback.question"))}</div>
-<textarea rows="3" placeholder="${escapeHTML(t("feedback.placeholder"))}"></textarea>
+  box.innerHTML = `<div class="report-title">${escapeHTML(spec.question)}</div>
+<textarea rows="3" placeholder="${escapeHTML(spec.placeholder)}"></textarea>
 <div class="report-images" hidden></div>
 <div class="report-actions"><span></span><button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
   const textarea = box.querySelector("textarea")!;
-  const images = acceptPictures(box, textarea, box.querySelector<HTMLElement>(".report-images")!, () => place());
+  const images = spec.pictures ? acceptPictures(box, textarea, box.querySelector<HTMLElement>(".report-images")!, () => place()) : [];
   box.querySelector(".send")!.addEventListener("click", () => {
-    // Out of the way and the reply in the middle first, so the app's screenshot shows the chat
-    // as you saw it around that reply.
     box.remove();
-    const row = anchor.closest<HTMLElement>(".row");
-    if (row) {
-      document.dispatchEvent(new CustomEvent("ccb-read-back"));
-      row.scrollIntoView?.({ block: row.offsetHeight > window.innerHeight ? "start" : "center" });
-    }
-    requestAnimationFrame(() => post({ type: "feedback", messageID: message.id, text: textarea.value.trim(), images }));
+    spec.send(textarea.value.trim(), images);
   });
   document.body.append(box);
   const rect = anchor.getBoundingClientRect();

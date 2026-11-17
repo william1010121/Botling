@@ -197,49 +197,6 @@
     }
   },
   {
-    "kind": "command",
-    "plugin": "botling.component-studio",
-    "id": "botling.component-studio.make",
-    "title": "Make into component"
-  },
-  {
-    "kind": "view",
-    "plugin": "botling.component-studio",
-    "id": "botling.component-studio.spec",
-    "title": "Component spec",
-    "where": "rightPanel.takeover"
-  },
-  {
-    "kind": "menu",
-    "plugin": "botling.component-studio",
-    "menu": "message/context",
-    "command": "botling.component-studio.make",
-    "locales": {
-      "zh-Hant": {
-        "title": "做成元件",
-        "alt": "加到其他 Bot…",
-        "hint": "Maintainer 會馬上用這則回覆做出來"
-      }
-    },
-    "icon": "cube",
-    "quick": true,
-    "alt": "Add to another bot…",
-    "hint": "Maintainer builds it from this reply right away"
-  },
-  {
-    "kind": "menu",
-    "plugin": "botling.component-studio",
-    "menu": "message/preview",
-    "command": "botling.component-studio.make",
-    "locales": {
-      "zh-Hant": {
-        "title": "做成元件"
-      }
-    },
-    "icon": "cube",
-    "quick": true
-  },
-  {
     "kind": "replyTag",
     "plugin": "botling.component-studio",
     "tag": "suggest-component"

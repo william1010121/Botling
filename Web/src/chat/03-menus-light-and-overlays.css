@@ -14,8 +14,8 @@
    (the panel rises from the input box, so it grows upward). */
 .resize-handle { position: absolute; z-index: 3; opacity: 0; transition: opacity 0.12s; touch-action: none; }
 
-/* Make into component: the reply's hover button, a result card's toolbar, the quiet spec chip. */
-.make-component:hover { color: #C4A8F0; }
+/* The reply's own hover button that asks the bot for a visual report (regather), and a plugin's quick entries (a reply's toolbar, a result card's toolbar). */
+.regather-button:hover, .quick-button:hover { color: #C4A8F0; }
 .bot-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
 /* The chat's background work, under its latest message: up to four icons with counts (subagent, waiting, done, failed); pressed, the list grouped by them; a task pressed, its output. */
 .task-chips {
@@ -102,12 +102,14 @@
 .wide-part.command-card, .wide-part > .command-card { border: 0; border-radius: 0; padding: 0; }
 .wide-part.command-card > :not(.component), .wide-part > .command-card > :not(.component) { padding-left: 0; padding-right: 0; }
 /* The reply's toolbar floats over the row's top-right corner, where a card at the top of the reply
-   has its own bar (pin / ↻ / ⋯ from botling.board, or Make): that bar moves left of the toolbar, by as many buttons
+   has its own bar (pin / ↻ / ⋯ from botling.board, or a plugin's quick entry): that bar moves left of the toolbar, by as many buttons
    as it has (data-actions; a toolbar is 30px a button + 4px, 6px from the edge, the bar 16px in),
    so the two sit side by side instead of one covering the other. */
 .row.wide[data-actions="1"] .preview-holder.wide-part > .preview-bar { right: 32px; }
 .row.wide[data-actions="2"] .preview-holder.wide-part > .preview-bar { right: 62px; }
 .row.wide[data-actions="3"] .preview-holder.wide-part > .preview-bar { right: 92px; }
+.row.wide[data-actions="4"] .preview-holder.wide-part > .preview-bar { right: 122px; }
+.row.wide[data-actions="5"] .preview-holder.wide-part > .preview-bar { right: 152px; }
 .wide-part .component { position: relative; }
 .wide-part .component-frame { min-width: 0; border-radius: 12px; }
 .wide-part .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
@@ -275,7 +277,7 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 
 /* The light look (data-theme="light", set by Botling 2 from Settings → Appearance → App) for what has no token. */
 :root[data-theme="light"] .component-frame { color-scheme: light; }
-:root[data-theme="light"] .make-component:hover { color: #6B4FD8; }
+:root[data-theme="light"] .regather-button:hover, :root[data-theme="light"] .quick-button:hover { color: #6B4FD8; }
 :root[data-theme="light"] .wide-part .component:hover .flag { background: rgba(255, 255, 255, 0.92); }
 :root[data-theme="light"] .mention-file mark { color: #9A5B00; }
 :root[data-theme="light"] .file-preview { border-left-color: var(--border); }

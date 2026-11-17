@@ -166,7 +166,7 @@ export interface TaskChipView {
 
 /**
  * A component made from a reply, under it: a chip while it is a suggestion (pressed: its first
- * version is built) or being built, then the component itself with "Edit spec".
+ * version is built) or being built, then the component itself with Undo / Restore.
  */
 /** A plugin's entry in a reply's menu: a row of "⋯", or (`quick`) a button of its own with the page's icon `icon`; `alt`: its words for a reply that already is a library component. */
 export interface MessageMenuItem { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
@@ -179,8 +179,6 @@ export interface SpecChipView {
   status: SpecStatus;
   /** A bot suggested it; nothing has run or been built. */
   suggested: boolean;
-  /** It shows in the right panel now. */
-  open: boolean;
   /** The library component it became, drawn under the reply (also while a new version builds). */
   component?: string | null;
   /** That component as drawn, with its command's run as for any card. */
@@ -437,6 +435,8 @@ export type Action =
   | { type: "taskOutput"; messageID: string; taskID: string }
   | { type: "closeSubagent" }
   | { type: "feedback"; messageID: string; text: string; images: { name: string; base64: string }[] }
+  /** "Make it a visual report" on a reply: `text` (the whole request, with the user's suggestion) goes to this bot as the user's line, quoting the reply. */
+  | { type: "regather"; messageID: string; text: string }
   | { type: "pickFiles" }
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }

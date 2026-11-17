@@ -121,13 +121,6 @@
     "settings": {}
   },
   {
-    "name": "botling.component-studio",
-    "id": "botling.component-studio.spec",
-    "title": "Component spec",
-    "source": "<source of botling.component-studio>",
-    "settings": {}
-  },
-  {
     "name": "zed.tools",
     "id": "zed.tools.takeover",
     "title": "Zed takeover",

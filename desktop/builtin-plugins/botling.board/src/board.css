@@ -216,10 +216,12 @@ body.pin-resizing { cursor: grabbing; user-select: none; }
 .pin-size-caption { margin-top: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pin-holder.wide-part > .pin-bar { right: 8px; }
 /* The reply's toolbar floats over the row's top-right corner: this bar moves left of it by as many buttons as it has (data-actions; chat.css
-   does the same for Make's bar). */
+   does the same for a result card's bar). */
 .row.wide[data-actions="1"] .pin-holder.wide-part > .pin-bar { right: 32px; }
 .row.wide[data-actions="2"] .pin-holder.wide-part > .pin-bar { right: 62px; }
 .row.wide[data-actions="3"] .pin-holder.wide-part > .pin-bar { right: 92px; }
+.row.wide[data-actions="4"] .pin-holder.wide-part > .pin-bar { right: 122px; }
+.row.wide[data-actions="5"] .pin-holder.wide-part > .pin-bar { right: 152px; }
 /* A card that can be pinned has Report in its ⋯ menu: no flag of its own over its bottom-right
    corner (it covered the content, and was a second flag beside the reply's own). */
 .pin-holder.wide-part .component-side > .flag { display: none; }

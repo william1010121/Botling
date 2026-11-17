@@ -11,9 +11,9 @@ import { slashLists } from "../../src/renderer/payload";
 import { problemReport } from "../../src/core/maintainer";
 import { reportWords, type PinRecord } from "../../builtin-plugins/botling.board/src/pin-data";
 import {
-  COMPONENT_ACTIONS, actionHeader, answerOpenQuestions, answerQuestion, boardCommandRequest, buildRequest, changeRequest, draftRequest, draftSpec, editSpecValue,
-  fieldsFromJSON, filledData, fillRequest, firstBuildRequest, lastCommand, outputMatches, pageText, parseFields, purposeLine, replyPages, sayRequest, shortTime, slug,
-  specSummary, tagNote, updateSpec, type ComponentSpec,
+  COMPONENT_ACTIONS, actionHeader, answerOpenQuestions, answerQuestion, boardCommandRequest, draftSpec,
+  fieldsFromJSON, filledData, fillRequest, firstBuildRequest, lastCommand, outputMatches, pageText, parseFields, purposeLine, replyPages, shortTime, slug,
+  specSummary, updateSpec, type ComponentSpec,
 } from "../../builtin-plugins/botling.component-studio/src/specs";
 import { tempDir } from "../helpers";
 
@@ -76,7 +76,7 @@ describe("reports and change requests (Workspace+ComponentReport.swift, requestC
   });
 });
 
-describe("component specs (ComponentSpec.swift): drafts, edits, Maintainer's updates and every request", () => {
+describe("component specs (ComponentSpec.swift): drafts, Maintainer's updates and the requests a suggestion chip still makes", () => {
   const S = golden.more.specs;
   const components = library();
   const strip = (spec: any) => { const { id: _id, createdAt: _at, ...rest } = spec; return rest; };
@@ -95,30 +95,28 @@ describe("component specs (ComponentSpec.swift): drafts, edits, Maintainer's upd
     for (const { output, matches } of S.matches) expect([output, outputMatches(output, [{ name: "total", type: "int", by: "app" }, { name: "failures", type: "[…]", by: "app" }])]).toEqual([output, matches]);
   });
 
-  it("the user's edits, Maintainer's <component-spec> and the answers, step by step", () => {
+  it("Maintainer's <component-spec> and the answers, step by step (the spec panel's own edits are gone; the golden's steps start from the state after them)", () => {
     const spec = draftSpec(S.drafts[1].message, "Shop", S.folder, components, 0);
     spec.purpose = "see the tests at a glance";
+    // The golden's steps 0-6 were the panel's edits; the spec as they left it is where Maintainer's update comes in.
+    const first = S.steps.findIndex((step: { what: string }) => step.what === "update");
+    expect(first).toBe(7);
+    Object.assign(spec, structuredClone(S.steps[first - 1].spec));
     const doing: [string, () => boolean][] = [
-      ["edit name", () => editSpecValue("name", "Test Board!", spec)],
-      ["edit refresh", () => editSpecValue("refresh", "interval", spec)],
-      ["edit minutes", () => editSpecValue("minutes", "5000", spec)],
-      ["edit bots", () => editSpecValue("bots", "Shop, main bot, shop,", spec)],
-      ["edit reuse", () => editSpecValue("reuse", "yes", spec)],
-      ["edit fields", () => editSpecValue("fields", "total: int, failures: [suite, test], extra", spec)],
-      ["edit same", () => editSpecValue("about", "", spec)],
       ["update", () => updateSpec(spec, `{"about": "Test results at a glance", "fields": [{"name": "total", "type": "int"}, "passed: int", {"name": ""}], "minutes": 10, "reuse": false, "similar": "test-status", "samples": [{"label": "Failing run", "data": {"total": 0}}, {"label": "Empty", "data": "{}"}], "questions": [{"key": "refresh", "text": "How often?", "options": [{"label": "When shown", "value": "shown"}, "Only by hand"], "suggested": 0}, {"id": "live", "key": "reuse", "text": "Reuse it?", "options": [{"label": "Yes", "value": true}, {"label": "No", "value": false}], "suggested": 5}, {"text": "no options", "options": []}]}`)],
       ["update same", () => updateSpec(spec, `{"about": "Test results at a glance"}`)],
       ["answer", () => answerQuestion("q1", 0, spec)],
       ["answer open", () => { answerOpenQuestions(spec); return true; }],
     ];
-    doing.forEach(([what, act], index) => {
+    doing.forEach(([what, act], offset) => {
+      const index = first + offset;
       const changed = act();
       expect([what, changed, strip(withoutUndefined(spec))]).toEqual([S.steps[index].what, S.steps[index].changed, strip(S.steps[index].spec)]);
     });
     expect(specSummary(spec)).toBe(S.summary);
   });
 
-  it("what Maintainer is told: the draft, the first build, words, a change, Build it, the Board, the fill", () => {
+  it("what Maintainer is told: the first build, the Board, the fill", () => {
     const R = S.requests;
     // The ids differ from the Swift run's: they are put back for the check.
     const spec = draftSpec(S.drafts[1].message, "Shop", S.folder, components, 0);
@@ -129,7 +127,6 @@ describe("component specs (ComponentSpec.swift): drafts, edits, Maintainer's upd
     const swap = (text: string, from: string) => text.replaceAll(from, "ID");
     const built = { ...structuredClone(spec), built: "test-board", version: 2, testRun: { command: "npm test --json", folder: S.folder, output: "x".repeat(700), matches: false } };
     expect(specSummary(built as ComponentSpec)).toBe(R.summaryBuilt);
-    expect(tagNote(spec)).toBe(R.tagNote);
     // The linked page: the same page, written where this run can read it.
     const root = tempDir("phase5-pages");
     const artifacts = join(root, "work", "Shop", ".bot", "artifacts");
@@ -142,26 +139,22 @@ describe("component specs (ComponentSpec.swift): drafts, edits, Maintainer's upd
     expect(pages).toEqual([{ path: join(artifacts, "report.html"), text: S.pageText }]);
     const golden = (text: string) => text.replaceAll(S.page, join(artifacts, "report.html"));
     const reply = S.drafts[1].message.text;
-    expect(swap(draftRequest(spec, reply, pages, "cat x", "Shop"), id)).toBe(swap(golden(R.draft), S.steps.at(-1).spec.id));
-    expect(swap(draftRequest(plain, S.drafts[0].message.text, [], null, "Shop"), plain.id)).toBe(swap(R.draftPlain, S.drafts[0].spec.id === undefined ? "" : R.draftPlain.match(/Component spec ([0-9A-F-]{36})/)![1]));
     const sid = S.steps.at(-1).spec.id;
     expect(swap(firstBuildRequest(spec, { reply, pages, asked: "  show me the tests  ", brief: " The brief. ", bot: "Shop" }), id)).toBe(swap(golden(R.firstBuildLive), sid));
+    // The Swift run's fallback for a spec with no words of its own named the button ("the user pressed Make into component and said nothing more"); that button no longer starts a spec.
+    const NO_WORDS = ' (the user pressed "Make into component" and said nothing more)';
+    expect(R.firstBuildFilled).toContain(NO_WORDS);
     const plainId = R.firstBuildFilled.match(/Component spec ([0-9A-F-]{36})/)![1];
-    expect(swap(firstBuildRequest(plain, { reply: S.drafts[0].message.text, ran: "npm test", bot: "Main bot" }), plain.id)).toBe(swap(R.firstBuildFilled, plainId));
-    expect(swap(sayRequest(spec, "make it red"), id)).toBe(swap(R.say, sid));
-    expect(swap(sayRequest(spec, ""), id)).toBe(swap(R.sayEmpty, sid));
-    expect(swap(changeRequest(built as ComponentSpec, [], 3), id)).toBe(swap(R.change0, sid));
-    expect(swap(changeRequest(built as ComponentSpec, [" bigger "], 3), id)).toBe(swap(R.change1, sid));
-    expect(swap(changeRequest(built as ComponentSpec, ["bigger", "", "green"], 3), id)).toBe(swap(R.change2, sid));
-    expect(swap(buildRequest(spec), id)).toBe(swap(R.build, sid));
-    expect(swap(buildRequest(plain), plain.id)).toBe(swap(R.buildFilled, R.buildFilled.match(/Component spec ([0-9A-F-]{36})/)![1]));
+    expect(swap(firstBuildRequest(plain, { reply: S.drafts[0].message.text, ran: "npm test", bot: "Main bot" }), plain.id)).toBe(swap(R.firstBuildFilled, plainId).replace(NO_WORDS, ""));
     expect(boardCommandRequest("test-board", "npm test --json", S.folder, "Shop", "brief")).toBe(R.board);
     expect(boardCommandRequest("test-board", "npm test --json", S.folder, "Shop")).toBe(R.boardNoBrief);
     const message = S.drafts[1].message;
     const when = shortTime(message.date, { timeZone: "UTC", locale: "en-GB", hour12: true });
     expect(fillRequest(spec, "test-board", { text: message.text, when, preview: "Here:" }, [S.page], "- test-board: shows tests")).toBe(R.fill);
     expect(fillRequest(plain, "x", null, [], "")).toBe(R.fillNoReply);
-    expect(purposeLine(plain, "Shop")).toBe(R.purposeNone);
+    // No words to go on (a suggestion with an empty draft): no more "Make into component" in it, the button no longer starts a spec.
+    expect(purposeLine(plain, "Shop")).toBe("What it is for: Shop's reply below, shown as a component instead of text.");
+    expect(COMPONENT_ACTIONS).toEqual(["build-first", "live-on-board"]);
     expect(COMPONENT_ACTIONS.map((action) => actionHeader(action, "ID"))).toEqual(R.headers);
     for (const { answer, data, problem } of S.fills) expect([answer, filledData(answer, "test-board")]).toEqual([answer, data !== undefined ? { data } : { problem }]);
   });

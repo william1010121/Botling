@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /// <reference types="node" />
 // botling.component-studio's web part in the chat page, run by the page's own PluginHost (so `ccb.draw`, the decorations, `ccb.call` and
-// `ccb.requestApproval` are the real ones): the chips under a reply, the built component with Edit spec and Undo / Restore, a command that
-// asks for your OK, and the spec panel of the page's panel mode, fed by what the program part pushes.
+// `ccb.requestApproval` are the real ones): the chips under a reply, the built component with Undo / Restore, a command that
+// asks for your OK. There is no spec panel (nor an Edit spec button) any more: the per-message button of the chat page sends a message to the bot.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,8 +12,7 @@ import { extensions, messageElement } from "../../../../Web/src/messages";
 import { PluginHost, studioSeam, type PluginSpec } from "../../../../Web/src/plugins";
 import type { ChatState, ComponentInfo, DisplayView, MessageView, SpecChipView } from "../../../../Web/src/types";
 import { readChatCss } from "../../../../Web/test/helpers/chat-css";
-import { activate, VIEW } from "../src/web";
-import type { SpecState } from "../src/types";
+import { activate } from "../src/web";
 
 globalThis.CSS ??= { escape: (value: string) => value } as unknown as typeof CSS;
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -23,7 +22,7 @@ const components: Record<string, ComponentInfo> = {
   "test-summary": { template: "<div>tests</div>", version: 1, working: false, updated: false, hasPrevious: false },
 };
 const display = (more: Partial<DisplayView> = {}): DisplayView => ({ name: "test-summary", data: '{"total":382}', at: null, ...more });
-const chip = (more: Partial<SpecChipView> = {}): SpecChipView => ({ id: "S1", name: "test-summary", status: "draft", suggested: false, open: false, ...more });
+const chip = (more: Partial<SpecChipView> = {}): SpecChipView => ({ id: "S1", name: "test-summary", status: "draft", suggested: false, ...more });
 
 function message(id: string, more: Partial<MessageView> = {}): MessageView {
   return {
@@ -114,19 +113,18 @@ describe("the chips under a reply", () => {
     expect(sent).toEqual([]);
   });
 
-  it("once built, the component itself shows under the reply with Edit spec and Undo, and takes the whole column", () => {
+  it("once built, the component itself shows under the reply with Undo (no Edit spec), and takes the whole column", () => {
     const page = draw({ m1: [chip({ status: "done", component: "test-summary", display: display(), undo: "undo" })] });
     expect(page.querySelector(".spec-chip")).toBeNull();
     const built = page.querySelector<HTMLElement>(".spec-built")!;
     expect(built.textContent).toContain("Component · test-summary");
     expect(built.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain("<div>tests</div>");
-    expect([...built.querySelectorAll(".spec-built-head button")].map((b) => b.textContent)).toEqual(["Edit spec", "Undo"]);
+    expect([...built.querySelectorAll(".spec-built-head button")].map((b) => b.textContent)).toEqual(["Undo"]);
     const row = page.querySelector<HTMLElement>(".row[data-id='m1']")!;
     expect(row.classList.contains("wide")).toBe(true);
     expect(row.querySelector(".bot-column")!.classList.contains("tiled")).toBe(true);
-    built.querySelector<HTMLButtonElement>(".spec-edit:not(.spec-undo)")!.click();
     built.querySelector<HTMLButtonElement>(".spec-undo")!.click();
-    expect(sent.map((action) => (action as { method?: string }).method)).toEqual(["open", "undo"]);
+    expect(sent.map((action) => (action as { method?: string }).method)).toEqual(["undo"]);
   });
 
   it("an undone one offers Restore beside its chip", () => {
@@ -138,10 +136,10 @@ describe("the chips under a reply", () => {
   });
 
   it("a new version being built keeps the component, saying so", () => {
-    const page = draw({ m1: [chip({ status: "building", open: true, component: "test-summary", display: display() })] });
+    const page = draw({ m1: [chip({ status: "building", component: "test-summary", display: display() })] });
     const built = page.querySelector(".spec-built")!;
     expect(built.textContent).toContain("Building a new version");
-    expect(built.querySelector(".spec-edit")?.getAttribute("aria-expanded")).toBe("true");
+    expect(built.querySelector("button")).toBeNull();
   });
 
   it("the Board's pin button joins the head of a built component, when that plugin is on", () => {
@@ -203,64 +201,22 @@ describe("a built component's command", () => {
   });
 });
 
-describe("the spec panel (the chat page's panel mode)", () => {
-  function state(more: Partial<SpecState> = {}): SpecState {
-    return {
-      id: "S1", name: "test-summary", about: "Test results", status: "draft", draft: 1, chat: "Main bot", from: "from Main bot's reply", suggestedBy: null, existing: null,
-      fields: [], command: null, folder: "/p", refresh: "manual", minutes: 15, bots: [{ name: "Main bot", on: true }], similar: null, similarAbout: null, reuse: false,
-      samples: [{ label: "This reply", kind: "reply", data: '{"total":1}' }], preferredSample: 0, questions: [], conversation: [], origins: {}, preview: null, components: {},
-      testRun: null, steps: null, wide: false, ...more,
-    };
-  }
-
-  it("registers its view, draws the spec the program part pushes, and asks for it when the page opens after the spec did", async () => {
-    const key = `${NAME}/${VIEW}`;
-    expect(extensions.panels.has(key)).toBe(true);
-    document.body.innerHTML = `<div id="panel-root"></div>`;
-    const root = document.getElementById("panel-root")!;
-    // Asked for on open: the program part says what is open.
-    const program = answerCalls({ state: { chat: "main", lang: "zh-Hant", state: state({ name: "disk-usage" }) } });
-    extensions.panels.get(key)!.render(root);
-    program.pump();
-    await settle();
-    expect(program.asked.map((entry) => entry.method)).toEqual(["state"]);
-    expect(document.documentElement.lang).toBe("zh-Hant");
-    expect(root.querySelector(".spec-panel")).not.toBeNull();
-    expect(root.querySelector(".spec-name-tag")?.textContent).toBe("disk-usage");
-    // Pushed (ui.emit): the panel follows.
-    host.pluginEvent(NAME, "spec", { chat: "main", lang: "en", state: state({ name: "tests", status: "done", preview: null }) });
-    expect(root.querySelector(".spec-title")?.textContent).toBe("tests");
-    // Another plugin's push is not heard.
-    host.pluginEvent("someone.else", "spec", { chat: "main", state: state({ name: "stolen", status: "done" }) });
-    expect(root.querySelector(".spec-title")?.textContent).toBe("tests");
-    // Collapse asks the program part to close it; a test run waits for the sheet, with the bot whose chat it is.
-    root.querySelector<HTMLButtonElement>("[aria-label='Collapse to the chip']")!.click();
-    expect(sent.at(-1)).toMatchObject({ type: "hostCall", method: "close" });
-  });
-
-  it("Test run asks the program part, then the sheet for that chat's bot, then runs it", async () => {
-    const key = `${NAME}/${VIEW}`;
-    document.body.innerHTML = `<div id="panel-root"></div>`;
-    const root = document.getElementById("panel-root")!;
-    const program = answerCalls({
-      state: { chat: "B1", state: state({ command: "df -h", folder: "/p/site" }) },
-      testRun: (() => { let first = true; return () => { const answer = first ? { accepted: false, needsApproval: { command: "df -h", folder: "/p/site", detail: null, card: "test-summary" } } : { accepted: true }; first = false; return answer; }; })(),
-      approval: { allowed: true },
-    });
-    extensions.panels.get(key)!.render(root);
-    program.pump();
-    await settle();
-    root.querySelector<HTMLButtonElement>(".spec-test-run")!.click();
-    for (let i = 0; i < 3; i++) { program.pump(); await settle(); }
-    expect(program.asked.map((entry) => entry.method)).toEqual(["state", "testRun", "approval", "testRun"]);
-    expect(program.asked[2]!.params).toMatchObject({ botId: "B1", command: "df -h", folder: "/p/site" });
+describe("no spec panel", () => {
+  it("registers no right-panel view and no panel-mode renderer, and no 'Component spec' words", () => {
+    expect(extensions.panels.has(`${NAME}/${NAME}.spec`)).toBe(false);
+    expect([...extensions.panels.keys()].filter((key) => key.startsWith(`${NAME}/`))).toEqual([]);
+    const manifest = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf8"));
+    expect(manifest.contributes?.views).toBeUndefined();
+    expect(manifest.contributes?.commands ?? []).toEqual([]);
+    expect(manifest.contributes?.menus ?? {}).toEqual({});
+    expect(readFileSync(resolve(__dirname, "../studio.css"), "utf8")).not.toMatch(/\.spec-panel|\.spec-test-run|\.spec-title/);
   });
 });
 
 describe("the stylesheet", () => {
-  it("draws the chips and the panel with the plugin's own rules (moved out of chat.css)", () => {
+  it("draws the chips with the plugin's own rules (moved out of chat.css)", () => {
     const css = readFileSync(resolve(__dirname, "../studio.css"), "utf8");
-    for (const selector of [".spec-chip", ".spec-built", ".spec-panel", ".spec-block", ".bot-column.tiled"]) expect(css).toContain(selector);
-    expect(readChatCss()).not.toMatch(/\.spec-(chip|built|panel|block)\b/);
+    for (const selector of [".spec-chip", ".spec-built", ".bot-column.tiled"]) expect(css).toContain(selector);
+    expect(readChatCss()).not.toMatch(/\.spec-(chip|built)\b/);
   });
 });

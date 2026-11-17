@@ -95,17 +95,17 @@ it("the plugin set is the built-ins plus the two fixtures, with their real contr
 
 /** The step-1 goldens' sha256: first recorded on the unchanged code (commit de71d3a0) before any kernel change, and updated whenever a golden is re-recorded on purpose (see test/kernel-goldens.ts). */
 const GOLDENS: Record<string, string> = {
-  "contributions-after-disable.json": "fea6218eab308217ead8aaaa717c0fe833a794d25104786c1d97fd845d563ded",
-  "contributions-with-keys.json": "a7733dfba95aee4c5fae4d5d2cc8e48c99a07b1fb41c9936eda33b1868de4f9a",
-  "contributions.json": "1300c822b43c153cbe4a55c8288fa21c531bc5366f3312b86d4da8b458cbe312",
+  "contributions-after-disable.json": "708aa5afa090693ffeb3db009c3d57fb3483ba5494fd4859fc29c2fc5ff1d0b6",
+  "contributions-with-keys.json": "3990cfaef589a45eaf538e8e20c86b5cff2079eebe306405ac518e0a538e95d2",
+  "contributions.json": "b57fc29368efa4a28df2656948bba631de3a909df3bfc55b5ff32fc13792a7af",
   "frame-broker.json": "f67f7ec2d79045d56ed018b5f03b663da140217a2982942daa3f5afb0656e37d",
   "host-session.json": "8ac71e51dbc22cfbad46f5bc39ee8fa224488944a82e40f57f0a4901470ff02b",
-  "plugins-list.json": "53cb41fa05331d839065bbba72bbbb6315686600fad239c8273d917bf5a422df",
-  "plugins-panel.json": "39e47e75107595072f392d137dc610f36219ed36ff602848c28f48464a0dfa66",
-  "plugins-web.json": "36b0616c1168a223e0aced38f11ab51d87d37d861bdff33bdcc3a5fa8dce18f3",
+  "plugins-list.json": "2bde0bf7b1d65ae74e172cb7bc8ceb2276be1875fb1097b7c25cc17c4d8e8bc6",
+  "plugins-panel.json": "9c8613a8f1151a46dfa20b19beadd72da284b70d7da2de76c04b09451dbfac63",
+  "plugins-web.json": "52bb33633ebf9a7ec94efe62b77cee6d86ae60be325a59aa069a954f7714e039",
   "registry-plugins.json": "c10ae4efe15b4a6c89bf9d1bcef7894e1589c8fdf6003bb98f219daaadb0aa84",
-  "view-surfaces-after-disable.json": "38bf50ab0eb92ddfd3dd36a7b1fdaa54b37346de10f8d9924080ad746701a8d7",
-  "view-surfaces.json": "ffb4909260f33b17770ef8380c839961e1f4971e4800b8a8b6d21f47cc94a695",
+  "view-surfaces-after-disable.json": "978ba4e5efe831c4fb377ab7dc8d33cca8ee73f9be6970ce5fabd135abf6f4d8",
+  "view-surfaces.json": "55a346933afb0318fb1864722bca40a5a32e4817b44a9470db2ca711fedbe7d4",
 };
 
 describe("check 1: no visible change", () => {

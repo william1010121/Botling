@@ -488,6 +488,16 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
           void client.request({ type: "chat.feedback", botId: chat.botId, messageId: action.messageID, text: action.text.slice(0, 20_000), images, rect }).catch(onError);
           return;
         }
+        // "Make it a visual report" on a reply: the page's words (with your suggestion) go to this bot as your own line, quoting that reply.
+        case "regather": {
+          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || !action.text.trim() || !paced("regather")) return;
+          const botId = chat.botId;
+          void client.request({ type: "chat.send", botId, text: action.text.slice(0, 20_000), replyTo: action.messageID }).then((result) => {
+            if (result.stoppedBy) { onError(new Error(`Plugin ${result.stoppedBy} stopped the message.`)); return; }
+            onSent();
+          }).catch(onError);
+          return;
+        }
         case "componentRevert":
           if (typeof action.name === "string") void client.request({ type: "component.revert", name: action.name.slice(0, 200) }).catch(onError);
           return;

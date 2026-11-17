@@ -202,6 +202,13 @@ export const zhHant: Dictionary = {
   "feedback.flag": "不對",
   "feedback.question": "哪裡不對？",
   "feedback.placeholder": "例如：我說的只回答了一半。可以貼上或拖入圖片說明。",
+  // messages.ts: "make it a visual report" on a reply
+  "regather.label": "把這則回覆做成圖表報告",
+  "regather.title": "做成圖表報告：Bot 重新收集資料，用圖表或報告再回答一次",
+  "regather.question": "報告想要怎麼呈現？",
+  "regather.placeholder": "可不填，例如：改成按週比較，或只看失敗的。",
+  "regather.message": "請重新收集我引用的那則回覆背後的資料，然後用圖表報告再回答一次：預設用 inline-chart 或 inline-report-block（內容真的很長才用結果頁）。只有現有元件都不適合時，才向 Maintainer 要新元件。",
+  "regather.suggestion": "我的建議：",
   // components.ts: a card that runs a command
   "command.runsIn": "在 {folder} 執行",
   "command.everySeconds": "每 {n} 秒",

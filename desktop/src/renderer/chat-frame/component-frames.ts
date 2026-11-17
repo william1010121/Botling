@@ -67,7 +67,7 @@ Object.defineProperty(HTMLIFrameElement.prototype, "srcdoc", {
 });
 
 // A component frame is a page of its own (another process): the pointer over it does not make the chat page's
-// holder around it :hover, so a hover bar over a frame (a preview card's "Make into component", a pinned card's
+// holder around it :hover, so a hover bar over a frame (a preview card's quick entry, a pinned card's
 // tools) would never show. The component page says when the pointer enters and leaves it (`ccb: "hover"`): the
 // holder gets `.hovered` then, which frame.css treats as :hover (Phase 5c).
 window.addEventListener("message", (event: MessageEvent) => {
