@@ -59,6 +59,9 @@ export interface WorkerCardRecord {
   /** The component its latest report asked Maintainer for, and whether that was passed on (once per ask). */
   wants?: CardWant;
   asked?: boolean;
+  /** Why a script command of its latest report was not kept (also written into `text`), and whether the worker was told (once per streak of rejected reports, so a redo that fails again does not loop). */
+  rejected?: string;
+  rejectedTold?: boolean;
 }
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -95,6 +98,7 @@ export function readCards(value: unknown): WorkerCardRecord[] {
       ...(shows.length ? { shows } : {}),
       ...(typeof each.error === "string" && each.error ? { error: each.error } : {}),
       ...(wants ? { wants, ...(each.asked === true ? { asked: true } : {}) } : {}),
+      ...(typeof each.rejected === "string" && each.rejected ? { rejected: each.rejected.slice(0, 2_000), ...(each.rejectedTold === true ? { rejectedTold: true } : {}) } : {}),
     });
   }
   return cards;
@@ -123,8 +127,8 @@ export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt"
   return `${head}
 
 (App: You are a card worker; you gather the data and choose how it is shown. Work like this:
-1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${brief.scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything.
-2. Pick the component that fits from the list below, and end your report with exactly one <show name="component">JSON as its usage says</show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${brief.scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
+1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${brief.scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything. Every script a card command runs must live in ${brief.scriptsDir}/<short-name>/ (a script elsewhere, such as a helper already in the repo, is not run: copy it into that folder, or write it there, and point the command at the copy; arguments such as a row count are fine).
+2. Pick the component that fits from the list below, and end your report with exactly one <show name="component">JSON as its usage says</show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${brief.scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (a command whose script is outside that folder is rejected and you are told; the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
 3. If none fits and a new one is not worth it, draw a matplotlib picture saved in the project and put ![caption](file:///full/path.png) in your words.
 4. If a new component is worth it, end with <component name="short-english-name">what it shows, its data format, where the data comes from</component> instead of a <show>, and stop: the app tells you when it is built (or why not), and then you fill the card. Ask for one at most.
 5. Your words: one or two sentences on what the card shows, in the user's language.
@@ -168,11 +172,14 @@ export function cardScriptCommand(command: string, rules: Pick<CardRules, "scrip
 }
 
 /** A report as the card keeps it: its words, its components with their JSON (and a script command, see `cardScriptCommand`), and the component it asks for. Never another command or request. */
-export function cardContent(report: string, rules?: CardRules): { text: string; shows: CardShow[]; want?: CardWant } {
+export function cardContent(report: string, rules?: CardRules): { text: string; shows: CardShow[]; rejected: string[]; want?: CardWant } {
   const parsed = parseReply(report, []);
   const shows: CardShow[] = [];
+  const rejected: string[] = [];
   for (const display of parsed.displays) {
     const command = display.command && rules ? cardScriptCommand(display.command, rules) : null;
+    // A command that is not kept is said, never dropped silently (the component would otherwise draw its default and nobody would know).
+    if (display.command && rules && !command) rejected.push(rejectedMessage(display.name, display.command, rules.scriptsDir));
     // No data and nothing to fill it from: nothing to draw. A component with a Command: of its own fills itself.
     if (display.data === "null" && !command && !rules?.hasCommand(display.name)) continue;
     shows.push({
@@ -183,7 +190,19 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
   }
   const asked = parsed.requests.find((request) => request.kind === "component");
   const want = asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) } : undefined;
-  return { text: parsed.body.slice(0, CARD_TEXT_MAX), shows, ...(want ? { want } : {}) };
+  return { text: parsed.body.slice(0, CARD_TEXT_MAX), shows, rejected, ...(want ? { want } : {}) };
+}
+
+/** One line (the command is the worker's text: quoted and cut) on why a command was not kept and what to do. */
+function rejectedMessage(name: string, command: string, scriptsDir: string): string {
+  return `the command ${JSON.stringify(command.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 300))} of component ${JSON.stringify(name.slice(0, 100))} was not kept: it must be python3, node or bash on a script under ${scriptsDir}/<short-name>/ with plain arguments (no pipes or redirects), so the card shows the component's default instead. Copy or write the script there and redo the card.`;
+}
+
+/** The rejection to tell the card's worker, once (null when there is none or it was told); the worker then fixes the command and redoes the card. */
+export function takeRejection(card: WorkerCardRecord): string | null {
+  if (!card.rejected || card.rejectedTold) return null;
+  card.rejectedTold = true;
+  return `(App: ${card.rejected})`;
 }
 
 const ENDED_BADLY: Partial<Record<WorkerCardStatus, string>> = { failed: "The worker failed without a report.", stopped: "The worker was stopped.", interrupted: "The app went away while the worker was at work." };
@@ -204,11 +223,20 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
     if (report) {
       const content = cardContent(report, rules);
       card.text = content.text;
+      // A rejected command is shown on the card itself, in its words, so the user and the head see it.
+      if (content.rejected.length) {
+        // The warning goes last and is never the part that is cut: the words give way to it.
+        const warning = `⚠ ${content.rejected.join("\n⚠ ")}`.slice(0, 4_000);
+        card.text = `${card.text.slice(0, CARD_TEXT_MAX - warning.length - 2)}${card.text ? "\n\n" : ""}${warning}`;
+        // Told once per streak of rejected reports: a redo that is rejected again, even for another command, is shown but not told again (no loop). A clean report ends the streak.
+        const joined = content.rejected.join(" ").slice(0, 2_000);
+        if (card.rejected !== joined) card.rejected = joined;
+      } else { delete card.rejected; delete card.rejectedTold; }
       if (content.shows.length) card.shows = content.shows; else delete card.shows;
       // A component asked for is passed on once; the same ask again (the next run repeats it) is not.
       if (!content.want) { delete card.wants; delete card.asked; }
       else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; }
-    } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; }
+    } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; delete card.rejected; delete card.rejectedTold; }
     // A run that ended badly and left no words says so on the card.
     const failure = report ? undefined : ENDED_BADLY[status];
     if (failure) card.error = failure; else delete card.error;
