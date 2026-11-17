@@ -40,11 +40,16 @@ export function prime(state: BoardState): void {
 
 /**
  * Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned).
- * Only a card with a Command can be pinned; one that is pinned already (a snapshot pin from before) keeps its bar, to open or undo it.
+ * Every card of a library component has the bar (its ⋯ menu carries "Report a problem…"); `pinBar` leaves the pin button out for
+ * a card with no Command (`canPin`), because only a Command component can be pinned (a snapshot pin from before keeps its bar).
  */
-export function barFor(name: string, command?: string | null): { offered: boolean; pinned: boolean } {
-  const pinned = current.pins.some((pin) => pin.name === name);
-  return { offered: current.enabled && !!current.components[name] && (!!command || pinned), pinned };
+export function barFor(name: string): { offered: boolean; pinned: boolean } {
+  return { offered: current.enabled && !!current.components[name], pinned: current.pins.some((pin) => pin.name === name) };
+}
+
+/** A card can be pinned when it has a Command, or when it is pinned already (a snapshot pin from before: to open or undo it). */
+export function canPin(command: string | null | undefined, pinned: boolean): boolean {
+  return !!command || pinned;
 }
 
 export const icons = {
@@ -93,13 +98,14 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   });
   const pinnedHere = barFor(display.name).pinned;
+  const pinnable = canPin(display.command, pinnedHere);
   if (pinnedHere) bar.dataset.holder = "pinned";
   if (pinnedHere) {
     const badge = button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: display.name }));
     });
     bar.append(badge);
-  } else {
+  } else if (pinnable) {
     const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => pinIt(pin));
     bar.append(pin);
   }
@@ -111,9 +117,9 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
   const more = button("pin-tool", t("pins.more"), icons.more, () => {
     const pinned = current.pins.find((p) => p.name === display.name);
     openMenu(more, [
-      pinned
-        ? { label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }
-        : { label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) },
+      ...(pinned
+        ? [{ label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }]
+        : pinnable ? [{ label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) }] : []),
       reportItem(more, display.name, current.components[display.name], more.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null, pinned?.id)
         ?? { label: t("pins.report"), disabled: true, run: () => {} },
     ]);

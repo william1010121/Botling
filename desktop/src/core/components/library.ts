@@ -98,6 +98,8 @@ export interface ComponentInfoData {
   sizes: string[];
   icon: string | null;
   title: string | null;
+  /** A pin-only component (`pinOnly`): the pin strip offers it, the bots and the composer's / menu do not. */
+  pinOnly: boolean;
 }
 
 export class ComponentLibrary {
@@ -195,7 +197,7 @@ export class ComponentLibrary {
     if (template === null) return null;
     return {
       template, version: this.versions.get(name) ?? 0, updated: this.updated.has(name), working: this.working.has(name), hasPrevious: this.hasPrevious(name),
-      sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name),
+      sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name), pinOnly: this.pinOnly(name),
     };
   }
 

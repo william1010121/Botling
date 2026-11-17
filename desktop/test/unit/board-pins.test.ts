@@ -3,7 +3,7 @@
 // (`plugins.approvalAsk`, `plugins.approve` with the component); what the page draws arrives as `pluginData` with the chat; the core's
 // pins.json is imported once and left as it was; a pin's author gates the links its card opens; a problem report says how it refreshes.
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until, sleep } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
@@ -32,20 +32,26 @@ const data = async (c: CoreHarness) => ((await c.chat()).pluginData ?? {})[BOARD
 const ready = (c: CoreHarness) => until(async () => (await c.call({ type: "plugins.list" })).plugins.find((p: any) => p.name === BOARD)?.enabled && (await c.call({ type: "plugins.list" })).host.running && (await data(c)), { timeout: 20_000 });
 
 describe("pins through botling.board", () => {
-  it("pin from a card or the picker; resize, lay out, save, set its chip; a pinned command runs only once allowed", async () => {
+  it("a snapshot pin from before still resizes, saves, floats and unpins; a new pin needs a Command (from the picker); a pinned command runs only once allowed", async () => {
     const dir = tempDir("board-pins");
     writeLibrary(dir);
+    // A snapshot pin (a component with no Command, its data kept) comes from the legacy pins.json: no new one can be made.
+    mkdirSync(join(dir, "main"), { recursive: true });
+    const pinId = "AAAAAAAA-0000-4000-8000-000000000001";
+    const legacy = JSON.stringify([{ id: pinId, name: "todo", data: `{"items":["milk"]}`, refresh: "manual", minutes: 15, size: "2x2", makingLive: false }]);
+    writeFileSync(join(dir, "main", "pins.json"), legacy);
     const c = core(dir);
     await ready(c);
     const id = await turn(c, `/say <show name="todo">{"items":["milk"]}</show>`);
-    const pinId = "AAAAAAAA-0000-4000-8000-000000000001";
-    expect(await act(c, { type: "pin", id: pinId, messageID: id, index: 0, refresh: "shown", minutes: 15 })).toEqual({ pinned: true });
-    // The same component again is not pinned twice.
+    // Cards with no Command are not pinned: the same component again (it is pinned already) or another one (status).
     expect(await act(c, { type: "pin", id: "AAAAAAAA-0000-4000-8000-000000000009", messageID: id, index: 0, refresh: "shown", minutes: 15 })).toEqual({ pinned: false });
+    const plain = await turn(c, `/say <show name="status">{"ok":true}</show>`);
+    expect(await act(c, { type: "pin", id: "AAAAAAAA-0000-4000-8000-000000000008", messageID: plain, index: 0, refresh: "shown", minutes: 15 })).toEqual({ pinned: false });
+    expect(await act(c, { type: "pin", id: "AAAAAAAA-0000-4000-8000-000000000007", name: "status", refresh: "shown", minutes: 15 })).toEqual({ pinned: false });
     let view = (await until(async () => { const d = await data(c); return d?.pins.length ? d : null; }))!;
     expect(view.pins).toEqual([expect.objectContaining({ id: pinId, name: "todo", size: "2x2", refresh: "manual", headline: "milk", chip: { text: "milk", tone: "neutral" }, floatMenu: "float" })]);
-    // What it drew, then its own others with a Command (none yet: gitlog is not its own).
-    expect(view.pinChoices.map((choice: any) => [choice.name, choice.pinned])).toEqual([["todo", true]]);
+    // The picker lists only components with a Command: none of what it drew has one (gitlog is not its own).
+    expect(view.pinChoices.map((choice: any) => [choice.name, choice.pinned])).toEqual([]);
     for (const action of [{ type: "resizePin", id: pinId, size: "4x2" }, { type: "pinStatus", id: pinId, text: "3 open and more", tone: "ok" }, { type: "pinSave", id: pinId, data: `{"items":["milk","tea"]}` },
       { type: "floatPin", id: pinId, floating: true }, { type: "setPinFloat", id: pinId, corner: "bottomLeft", width: 9999 }]) {
       expect(await act(c, action)).toEqual({ changed: true });
@@ -54,8 +60,8 @@ describe("pins through botling.board", () => {
     view = (await until(async () => { const d = await data(c); return d?.pins[0]?.size === "3x2" ? d : null; }))!;
     expect(view.pins[0]).toMatchObject({ size: "3x2", place: { col: 1, row: 2 }, chip: { text: "3 open and mo…", tone: "good" }, float: { corner: "bottomLeft", width: 640, height: null, collapsed: false }, floatMenu: "stop" });
     expect(view.floating).toHaveLength(1);
-    // The core's pins.json is not the pins' home any more: it was never written.
-    expect(existsSync(join(dir, "main", "pins.json"))).toBe(false);
+    // The core's pins.json is not the pins' home any more: it was only read, and is as it was.
+    expect(readFileSync(join(dir, "main", "pins.json"), "utf8")).toBe(legacy);
     expect(c.of("chat.pluginData").length).toBeGreaterThan(5);
     // From the picker, a component with a Command: it asks before it runs, then keeps what it printed.
     const live = "AAAAAAAA-0000-4000-8000-000000000002";

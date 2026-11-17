@@ -141,8 +141,9 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
 export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; look?: Look }
 
 
-/** A bot's own components first in the / menu; a chat without a list (a group) has them all. */
-export function slashLists(bot: BotView, names: string[]): { slashComponents: string[]; slashLibrary: string[] } {
+/** A bot's own components first in the / menu; a chat without a list (a group) has them all. A pin-only component (`pinOnly`) is in neither: only the pin strip offers it. */
+export function slashLists(bot: BotView, allNames: string[], pinOnly: readonly string[] = []): { slashComponents: string[]; slashLibrary: string[] } {
+  const names = allNames.filter((name) => !pinOnly.includes(name));
   const list = bot.components;
   if (!list) return { slashComponents: names, slashLibrary: [] };
   const own = new Set(list);
@@ -293,7 +294,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     messageMenu: menuItems(plugins, "message/context", lang),
     previewMenu: menuItems(plugins, "message/preview", lang),
     linkMenu: chatLinkMenu(plugins, lang),
-    ...slashLists(bot, Object.keys(components).sort()),
+    ...slashLists(bot, Object.keys(components).sort(), Object.keys(components).filter((name) => components[name]!.pinOnly)),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
     seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,

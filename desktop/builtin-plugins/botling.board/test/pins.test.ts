@@ -101,17 +101,31 @@ describe("pinning from the chat", () => {
     expect(sent[1]).toEqual({ type: "unpin", id: action.id });
   });
 
-  it("a component without a command has no pin bar at all (there are no snapshot pins); one pinned already keeps its badge", () => {
+  it("a component without a command keeps its bar and the ⋯ menu with Report a problem, but has no pin button and no Pin item; one pinned already keeps its badge", () => {
     setUp().update(state());
     const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
-    expect(row.querySelector(".pin-bar")).toBeNull();
-    expect(row.querySelector("[aria-label='Pin to this bot']")).toBeNull();
-    // The same component drawn with a command (or its Command line) is pinnable.
+    const bar = row.querySelector(".pin-bar")!;
+    expect(bar).not.toBeNull();
+    expect(bar.querySelector("[aria-label='Pin to this bot']")).toBeNull();
+    expect(bar.querySelector("[aria-label='Run the command again']")).toBeNull();
+    click(bar.querySelector("[aria-label='More']"));
+    const items = [...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent);
+    expect(items).toContain("Report a problem…");
+    expect(items.some((label) => /^Pin to /.test(label ?? ""))).toBe(false);
+    document.body.innerHTML = "";
+    // The same component drawn with a command (or its Command line) is pinnable: the button and the menu item.
+    setUp().update(state());
     const withCommand = messageElement(message([{ name: "天氣卡片", data: "{}", command: "curl wttr.in", folder: "/p", status: "done" }]), components);
     expect(withCommand.querySelector(".pin-bar [aria-label='Pin to this bot']")).not.toBeNull();
-    // A snapshot pin from before stays reachable from the reply: the badge opens it.
+    click(withCommand.querySelector("[aria-label='More']"));
+    expect([...document.querySelectorAll(".pin-menu button")].some((b) => /^Pin to /.test(b.textContent ?? ""))).toBe(true);
+    document.body.innerHTML = "";
+    // A snapshot pin from before stays reachable from the reply: the badge opens it, and ⋯ has Unpin.
     setUp().update(state({ pins: [pin({ id: "P9", name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
-    expect(messageElement(message([{ name: "天氣卡片", data: "{}" }]), components).querySelector(".pin-bar .pin-badge")).not.toBeNull();
+    const pinned = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
+    expect(pinned.querySelector(".pin-bar .pin-badge")).not.toBeNull();
+    click(pinned.querySelector("[aria-label='More']"));
+    expect([...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent)).toContain("Unpin");
   });
 });
 

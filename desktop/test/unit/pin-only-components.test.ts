@@ -5,7 +5,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BotCards } from "../../src/core/bot/cards";
+import { BotWorkers } from "../../src/core/bot/workers";
 import { ComponentLibrary, componentKnowledgeFor, knowledgeFull } from "../../src/core/components/library";
+import { MaintainerDesk } from "../../src/core/maintainer";
+import { slashLists } from "../../src/renderer/payload";
 import { tempDir } from "../helpers";
 
 function library(): ComponentLibrary {
@@ -79,7 +82,7 @@ describe("a bot's cards: what the picker gets and what the bot is offered", () =
     expect(cards(null).bot.cardLibrary()!.offered).toEqual(["clock", "lone", "off", "table"]);
   });
 
-  it("a pin-only component never goes on a bot's list: not drawn into it, not given first; the note's insert menu does not call it the bot's", () => {
+  it("a pin-only component never goes on a bot's list: not drawn into it, not given first", () => {
     const { bot, saved } = cards(["table"]);
     bot.drewComponents(["cpu", "clock"]);
     expect(bot.componentList).toEqual(["table", "clock"]);
@@ -89,8 +92,84 @@ describe("a bot's cards: what the picker gets and what the bot is offered", () =
     first.bot.giveFirstComponents();
     expect(first.bot.componentList).not.toContain("cpu");
     expect(first.bot.componentList).toContain("table");
+  });
+
+  it("the note's insert menu keeps pin-only components (the Note is the user's own) but never calls one the bot's: even a bot.json from before the flag that lists it", () => {
+    const { bot } = cards(["table", "cpu"]);
     const menu = bot.noteComponents()!;
-    expect(menu.components.find((entry) => entry.name === "cpu")).toMatchObject({ offered: false });
+    expect(menu.components.find((entry) => entry.name === "cpu")).toMatchObject({ offered: false, command: "python3 cpu.py" });
     expect(menu.components.find((entry) => entry.name === "table")).toMatchObject({ offered: true });
+    expect(menu.components.map((entry) => entry.name)).toContain("mem");
+    // The bot's own come first, then the rest of the library (pin-only ones among it).
+    expect(menu.components[0]!.name).toBe("table");
+  });
+});
+
+describe("the bot's other doors", () => {
+  it("app_component_usage answers nothing for a pin-only name and does not list it in 'The library has'", () => {
+    const lib = library();
+    const workers = new BotWorkers({ cards: { context: { library: lib }, ownComponents: () => ["table"] } } as never, {} as never);
+    const usage = (name: string) => (workers as any).componentUsage({ name }, "coordinator");
+    expect(usage("clock")).toMatchObject({ name: "clock" });
+    for (const name of ["cpu", "CPU", "mem"]) expect(() => usage(name)).toThrow(/No component named/);
+    let said = "";
+    try { usage("cpu"); } catch (error) { said = (error as Error).message; }
+    expect(said).toContain("The library has: ");
+    expect(said).toContain("clock");
+    expect(said).not.toMatch(/\b(cpu|mem)\b/);
+  });
+
+  function desk() {
+    const root = tempDir("pin-only-desk");
+    const lib = library();
+    let list: string[] = ["table"];
+    const sent: string[] = [];
+    const bot = {
+      id: "bot-1", profile: { name: "Main bot" },
+      get components() { return list; },
+      get ownComponentNames() { return lib.names.filter((name) => list.includes(name)); },
+      lastAsked: "",
+      setComponentList(names: string[]) { list = names; },
+      queueNote(text: string) { sent.push(text); },
+      appMessage(text: string) { sent.push(text); },
+      appNotice(text: string) { sent.push(`notice: ${text}`); return "n"; },
+    } as never;
+    const maintainer = { queueNote: (text: string) => { sent.push(`maintainer: ${text}`); } };
+    const maintainerDesk = new MaintainerDesk({ root, maintainer: () => maintainer as never, mainBot: () => bot, bots: () => [bot], library: lib, plugins: () => null, log: () => {} });
+    return { maintainerDesk, bot, sent, list: () => list };
+  }
+
+  it("Maintainer does not give a pin-only component to a bot: giveComponent refuses, <give-component> says why, an ask is changed as asked and nothing is added", () => {
+    const { maintainerDesk, bot, sent, list } = desk();
+    expect(maintainerDesk.giveComponent("cpu", bot)).toBe(false);
+    expect(maintainerDesk.giveComponent("clock", bot)).toBe(true);
+    expect(list()).toEqual(["table", "clock"]);
+    sent.length = 0;
+    maintainerDesk.changeList(true, "mem", "Main bot");
+    expect(list()).toEqual(["table", "clock"]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("pin-only");
+    expect(sent[0]).not.toContain("/ 20");
+    sent.length = 0;
+    const note = maintainerDesk.askNote("cpu", "make the gauge bigger", true, bot);
+    expect(note).toContain("pin-only");
+    expect(list()).toEqual(["table", "clock"]);
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("the composer's / menu", () => {
+  it("lists no pin-only component, in the bot's own part or the library part", () => {
+    const names = ["clock", "cpu", "mem", "table"];
+    const bot = { components: ["table", "cpu"] } as Parameters<typeof slashLists>[0];
+    expect(slashLists(bot, names, ["cpu", "mem"])).toEqual({ slashComponents: ["table"], slashLibrary: ["clock"] });
+    expect(slashLists({ ...bot, components: null }, names, ["cpu", "mem"])).toEqual({ slashComponents: ["clock", "table"], slashLibrary: [] });
+    // Without the list of pin-only names nothing is left out (a chat of an older page).
+    expect(slashLists(bot, names)).toEqual({ slashComponents: ["table", "cpu"], slashLibrary: ["clock", "mem"] });
+  });
+
+  it("the library says which components are pin-only (`info().pinOnly`) so the page can leave them out", () => {
+    const lib = library();
+    expect(lib.names.filter((name) => lib.info(name)!.pinOnly)).toEqual(["cpu", "mem"]);
   });
 });

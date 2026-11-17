@@ -264,6 +264,8 @@ export const ComponentInfoView = z.strictObject({
   sizes: z.array(z.string().max(10)).max(16),
   icon: z.string().max(64).nullable(),
   title: z.string().max(200).nullable(),
+  /** About.md's `Pin only: yes` (with a Command): only the pin strip offers it; the composer's / menu leaves it out. */
+  pinOnly: z.boolean().optional(),
 });
 export type ComponentInfoView = z.infer<typeof ComponentInfoView>;
 
