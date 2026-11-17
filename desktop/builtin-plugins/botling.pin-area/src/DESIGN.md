@@ -1,5 +1,8 @@
 # botling.pin-area (Pin 區), design note
 
+> **v7 (the page part of phases 1–3 is redrawn; the program part is unchanged).** The strip's faded two-line rows and the floating panel with its
+> own input box are gone. See "Page part, v7" below; "Page part" under Phase 1 is what it replaced.
+
 Phase 1 of the Pin area: a strip of cards above the chat, a floating panel per card, `@card` routing. Phases 2 and 3 are built on
 the seams listed at the end; they needed no rework of what is here (phase 3 is below).
 
@@ -59,11 +62,36 @@ The page draws `viewOf(book)` (order wait, run, done), published with `chat.setD
 
 ## Page part (`src/ui.ts`, `src/web.ts`, `src/pin-area.css`)
 
-The strip: one row per card, faded (`.pt-fd`, opacity .36) until hover or keyboard focus; waiting rows always clear with an orange
-left border and dot; hover grows a second line. The panel: floating, right, 420 px, slides in 0.2 s / out 0.14 s, the chat yields
-(`body.pt-panel-open`, ≥ 900 px); status rewritten in place with 原本, step bars with 剩 N 步, source tag, the thread with receipts, a folded
-"N 則更新", its own input. Esc / outside click close; ⌘1–3 toggle the first three cards. All text goes in with `textContent`. Motion honours
+(Phase 1's look, replaced in v7: faded rows and a floating right-hand panel with its own input.) ⌘1–3 toggle the first three cards, Esc closes. All text goes in with `textContent`. Motion honours
 `prefers-reduced-motion`. Colours are the chat page's tokens. Classes are prefixed `pt-` (`botling.board` also uses `#pin-area`).
+
+## Page part, v7 (A 細清單, the card opens in place)
+
+Settled by the user (2026-11-17): plain chat organised into cards; **no input box in the card** (the chat's own box is used); the pill row and the
+「問這件事」 entry with its three questions are gone; worker progress lives only in the card's 過程 log (no extra line in the chat).
+
+- **The list** (`#top-area`, above the message list): one thin row per card (40 px): dot of its state, title, one-line status, when it changed
+  (「剛更新」 while unread), a chevron. A card that waits has an orange edge and tint. More than `MAX_ROWS` (4) cards: the first four rows (the program part
+  orders waiting, running, done) and one 「還有 N 件」 row; a tap shows the rest, the same row then says 「只看前 4 件」. Opening a card that is behind the fold
+  (a digest row, the 釘選 button) shows every row.
+- **The card**: a click opens the row *in place* into the card (it counts as one of the rows): title, who says so, 「HH:MM 更新」, 取消釘選, a chevron that
+  folds it back; the status (large, rewritten in place with 原本 struck through, a 「剛更新」 mark if it was unread when opened), the step bars, the
+  thread (your lines and the bot's answers with receipts), and a folded **過程 · N 則更新** (the newest line on its row; worker and sub-bot news lands here only).
+  The strip sits above the scroller, so **the card stays at the top while the chat scrolls below it**; a tall card (more than 62 vh) scrolls inside itself.
+- **Replying**: opening a card puts the chip **「回覆到 <card> ✕」** in the chat's input box (`ccb.composer.chips.add` with the new `standing` flag) and
+  the caret there. What is typed goes into that card: the chip puts `@p-0001 ` before the words and the program part's `beforeSend` does what it
+  always did for `@card words` (thread turn, header for the bot, the answer lands in the card). The chip stays across sends; ✕, Esc, the chevron, ⌘1–3 on the same card,
+  another chat or a click on the chat's empty space take it away.
+- **Closing on a click**: a plain primary-button press on the chat's empty space (the list, a message row's own space, a stamp line; not a bubble, a link, a button, the
+  input box, the scrollbar or a right-click; a touch counts on its tap, not on its first contact) folds the card back into a row. Esc folds it only when nothing took the Esc first
+  (the input box's @ list and the model menu close on it and the card stays), and does not move the caret out of the box. The caret is not put in the box on a phone.
+  A message that starts with an @ or a / is not given the chip's prefix (the card the user chose wins). Closing a done card unpins it (with 釘回) as before.
+- **Core hook added for this (general, tested in `test/standing-chip.test.ts`)**: `ComposerChip.standing` / `prefix()`: a chip that is not sent, is no reason
+  to send an empty box, stays after a send, and puts `prefix()` before the words (never before a slash command, never with no words). A plugin's chip passes
+  through `PluginHost` with `standing` and `prefix` guarded.
+- **Removed**: the floating panel (`.pt-panel`, `body.pt-panel-open`, the page yielding 452 px), the panel's input and its send guard (the chat's box has its own),
+  `Deps.send`, `Deps.reduceMotion` (the card only fades in; `prefers-reduced-motion` is in the CSS), the row's second line and the ⌘ key badge (the head still
+  says ⌘1–3), the 「N 則更新 · last」 toggle text (now 「過程 · N 則更新」).
 
 ## Phase 2 (worker news, automatic routing, the cards briefing)
 

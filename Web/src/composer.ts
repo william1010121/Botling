@@ -574,6 +574,12 @@ export interface ComposerChip {
   preview?(): Node | null;
   /** What goes after your words when you send (a blank line between). */
   serialize(): string;
+  /**
+   * A standing chip (a "reply to this card" mark): it is not sent and not a reason to send an empty box, it stays after a send, and
+   * `prefix()` goes before your words (not before a slash command or words that start with an @, not with no words) so the message goes where the chip says.
+   */
+  standing?: boolean;
+  prefix?(): string;
   /** Sent, or removed. */
   onRemove?(): void;
 }

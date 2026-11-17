@@ -497,6 +497,7 @@ export class PluginHost {
               render: () => this.guard(name, () => chip.render()) ?? document.createTextNode(""),
               preview: () => this.guard(name, () => chip.preview?.() ?? null) ?? null,
               serialize: () => this.guard(name, () => chip.serialize()) ?? "",
+              ...(chip.standing ? { standing: true, prefix: () => this.guard(name, () => chip.prefix?.() ?? "") ?? "" } : {}),
               onRemove: () => { chips.delete(handle); this.guard(name, () => chip.onRemove?.()); },
             });
             chips.add(handle);
