@@ -45,11 +45,14 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
 /** What its undelivered words wait for: "background command: Write deploy record…". */
 export function waitingWhat(on: SubagentWaitingOn): string {
   if (on.kind === "apiRetry") return on.title;
+  if (on.kind === "monitorRunning") return t("subagent.wait.monitor", { title: on.title });
   return on.kind === "process" ? t("subagent.wait.process") : t(`subagent.wait.${on.kind}` as Key, { title: on.title });
 }
 
 /** The status line or hint for it: words not delivered yet, or (apiRetry) the retry line itself. */
 export function waitingNote(on: SubagentWaitingOn): string {
+  // Its own Monitor runs: the run is at work, no words wait for anything.
+  if (on.kind === "monitorRunning") return t("subagent.monitorRunningNote");
   return on.kind === "apiRetry" ? on.title : t("subagent.notDeliveredOn", { what: waitingWhat(on) });
 }
 
@@ -64,6 +67,7 @@ export function waitedFor(on: SubagentWaitingOn, now = Date.now()): string {
 export function waitingLine(on: SubagentWaitingOn, now = Date.now()): string {
   // Waiting to try again after an API error: the core's own line ("API 暫時擋住，30 秒後重試（1/3）"), nothing undelivered.
   if (on.kind === "apiRetry") return on.title;
+  if (on.kind === "monitorRunning") return `${t("subagent.monitorRunning", { title: on.title })} · ${waitedFor(on, now)}`;
   return `${t("subagent.waitingOn", { what: waitingWhat(on) })} · ${waitedFor(on, now)}`;
 }
 

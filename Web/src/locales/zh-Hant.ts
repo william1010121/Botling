@@ -148,6 +148,8 @@ export const zhHant: Dictionary = {
   "subagent.wait.agent": "背景 agent：{title}",
   "subagent.wait.process": "它先前的行程結束",
   "subagent.waitingOn": "等{what}",
+  "subagent.monitorRunning": "Monitor 執行中：{title}",
+  "subagent.monitorRunningNote": "它的 Monitor 還在跑，結束後 worker 才會回報。",
   "subagent.notDelivered": "尚未送達",
   "subagent.notDeliveredOn": "尚未送達：在等{what}",
   "subagent.minutes": "{n} 分鐘",

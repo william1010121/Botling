@@ -38,7 +38,7 @@ describe("a Claude worker's run", () => {
     const r: any = await h.workers.tool("app_handoff", { name: "Research", instructions: "Look up the API" });
     expect(r).toMatchObject({ accepted: true, run: 1 });
     const head = h.heads[0]!;
-    expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", monitorWorker: true, persistSession: true });
+    expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", persistSession: true });
     expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
     expect(head.config.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(head.config.sessionId).not.toBe("coordinator");
@@ -643,6 +643,94 @@ describe("background work its process left running", () => {
     const on = waits(h).at(-1)!.on;
     expect(on).toMatchObject({ kind: "command", title: "Write deploy record and update TODO", queued: 1 });
     expect(on.since).toBeLessThanOrEqual(before);
+  });
+});
+
+describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the row says so while it runs)", () => {
+  const used = { kind: "toolUse", id: "mon1", tool: "Monitor", title: "Monitor", detail: "tail -f deploy.log", parent: null, input: { command: "tail -f deploy.log" } };
+  const started = { kind: "backgroundStarted", id: "mon1", description: "watch the deploy log", monitor: false };
+  const ended = { kind: "subagentEnded", id: "mon1", status: "completed", summary: null };
+  const waits = (h: ReturnType<typeof harness>) => h.items.filter((i) => i.kind === "subagentWaitingOn");
+  const open = async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Watch the deploy" }) as any;
+    return { h, task_id, head: h.heads[0]! };
+  };
+
+  it("keeps the run at work while its Monitor lives, says Monitor running, and reports once the Monitor's wake turn is done", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; waiting for the deploy.");
+    await wait(30);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ id: task_id, on: { kind: "monitorRunning", title: "watch the deploy log", queued: 0 } });
+    expect(head.finished).toBe(false);
+    // The Monitor ends; its wake turn is the run's own and ends it, with both turns' words.
+    h.say(head, ended);
+    expect(waits(h).at(-1)).toEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+    h.result(head, "The deploy finished: ok.");
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; waiting for the deploy.");
+    expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+  });
+
+  it("a background command that is not a Monitor still ends the run at its first result", async () => {
+    const { h, head } = await open();
+    h.say(head, { kind: "toolUse", id: "bg1", tool: "Bash", title: "Bash", detail: "sleep 30", parent: null, input: {} });
+    h.say(head, { kind: "backgroundStarted", id: "bg1", description: "sleep", monitor: false });
+    h.result(head, "Started it in the background.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    expect(waits(h)).toEqual([]);
+  });
+
+  it("a Monitor on a socket or an MCP server (monitor: true) holds the run too", async () => {
+    const { h, head } = await open();
+    h.say(head, { kind: "backgroundStarted", id: "ws1", description: "watch the socket", monitor: true });
+    h.result(head, "Watching.");
+    await wait(20);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the socket" } });
+  });
+
+  it("a failed turn is not held back for its Monitor", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "It broke.", false);
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+  });
+
+  it("a Monitor past the 50-minute cap and a minute no longer holds the report", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    const task = (h.workers as any).adapter.procs.get(task_id).background.get("mon1");
+    task.since = Date.now() - 52 * 60_000;
+    h.result(head, "Monitor started.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+  });
+
+  it("its process ending while the Monitor lives delivers the held report instead of an error", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the log shows nothing yet.");
+    await wait(20);
+    expect(h.reports).toEqual([]);
+    head.exit(0, true);
+    await wait(30);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; the log shows nothing yet.");
+  });
+
+  it("a steer while the Monitor runs goes into the run as usual", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started.");
+    await wait(20);
+    expect(h.workers.sendToWorker(task_id, "Also check the disk")).toEqual({ ok: true, how: "steered", run: 1 });
+    expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy", "Also check the disk"]);
   });
 });
 

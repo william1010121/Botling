@@ -1,5 +1,4 @@
 import { ClaudeRequestTracker } from "../token-speed";
-import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { BACKGROUND_CAP_HOOK, backgroundCapDecision } from "./background-cap";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
 import { specGuardDecision } from "../spec-guard";
@@ -39,8 +38,6 @@ export interface HeadConfig {
   allowedTools: string[];
   /** Explicit tool inventory for an app execution role; omitted for ordinary heads. */
   tools?: string[];
-  /** Only an app-owned coordinator sets false. Missing ownership denies Monitor. */
-  monitorWorker?: boolean;
   /** Appended to claude's system prompt. */
   systemPrompt?: string | null;
   /**
@@ -235,17 +232,16 @@ export class ClaudeHead {
     // The SDK control hook runs before execution, including auto/bypass mode.
     // Unsupported CLIs fail closed before any queued user input is sent.
     // The app's tools and the native-subagent guard register in the same initialize, before any input.
-    const monitor = !this.config.harmless && (!this.config.tools || this.config.tools.includes("Monitor"));
     const guard = !this.config.harmless && !!this.config.agentGuard;
     const app = !this.config.harmless && this.config.appMcp ? this.config.appMcp : null;
     const spec = !this.config.harmless && !!this.config.specGuard;
     const siteTools = !this.config.harmless && !!this.config.siteToolsGuard;
     const bgCap = !this.config.harmless; // background waits stay within 50 minutes (background-cap.ts)
-    if (monitor || guard || app || spec || siteTools || bgCap) {
+    if (guard || app || spec || siteTools || bgCap) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
       this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), POLICY_INIT_TIMEOUT_MS);
       this.monitorInitTimer.unref();
-      const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
+      const hooks = [...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
         ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : []),
         ...(siteTools ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SITE_TOOLS_GUARD_HOOK] }] : []),
         ...(bgCap ? [{ matcher: "^(Bash|Monitor)$", hookCallbackIds: [BACKGROUND_CAP_HOOK] }] : [])];
@@ -270,7 +266,7 @@ export class ClaudeHead {
     this.monitorPolicyFailed = true;
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
     this.queuedMessages = [];
-    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the spec/ guard, the background wait cap, the app tools); no queued user input was sent.";
+    this.stderrTail += "\nBotling could not register its tool policy (the native subagent guard, the spec/ guard, the background wait cap, the app tools); no queued user input was sent.";
     void this.process?.terminate({ graceMs: 0 });
   }
 
@@ -290,11 +286,6 @@ export class ClaudeHead {
       this.controls.delete(message.response.request_id);
       clearTimeout(control.timer);
       control.resolve(message.response.subtype === "success");
-      return;
-    }
-    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === MONITOR_HOOK) {
-      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
-        response: claudeMonitorDecision(message.request.input, this.config.monitorWorker !== false) } });
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === AGENT_GUARD_HOOK) {

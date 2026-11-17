@@ -83,3 +83,26 @@ describe("a worker whose words wait for its background work", () => {
     expect(railStateWord(item, "zh-Hant")).toBe("等背景指令：Write deploy record and update TODO");
   });
 });
+
+describe("a worker whose own Monitor runs", () => {
+  const monitoring: WaitingOnView = { kind: "monitorRunning", title: "watch the deploy log", since: NOW - 12 * 60_000, queued: 0 };
+
+  it("says Monitor running in the header, instead of Running and with no undelivered words", () => {
+    const { view } = render(monitoring);
+    expect(view.waitingOn).toEqual(monitoring);
+    const meta = document.querySelector("#subagent-bar .meta")!.textContent!;
+    expect(meta).not.toContain("Running");
+    expect(document.querySelector("#subagent-bar .waiting-on")!.textContent).toBe("Monitor running: watch the deploy log · 12 min");
+    expect(document.querySelectorAll("#messages .queued-badge")).toHaveLength(0);
+    expect(document.querySelector("#messages .sub-waiting")?.textContent).toBe("Its Monitor is still running; the worker reports when it ends.");
+  });
+
+  it("its left-column row says Monitor running, in both languages", () => {
+    const row: SubagentRowView = { id: "w", title: "deploy-watch", status: "running", head: "claude", startedAt: NOW - 40 * 60_000, endedAt: null, unsettledAt: null, settled: false, prompt: "Watch", waitingOn: monitoring } as SubagentRowView;
+    const item = railWorkerItems({ ...bot, subagentRows: [row] }, NOW, { viewed: new Set(), since: 0, watching: null, folded: new Set(), all: new Set() })[0]!;
+    expect(railStateWord(item, "en")).toBe("Monitor running: watch the deploy log");
+    expect(railStateWord(item, "zh-Hant")).toBe("Monitor 執行中：watch the deploy log");
+    expect(railWorkerTime(item, NOW, "en")).toBe("12m");
+  });
+});
+

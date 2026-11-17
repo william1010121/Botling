@@ -47,7 +47,7 @@ export function maintainerEditorBinding(owner: BotProfile, root: string, headCon
     const tools = (fields.tools ?? "").split(",").map(tool => tool.trim()).filter(Boolean);
     if (!tools.length || tools.some(tool => !["Read", "Write", "Edit", "Bash"].includes(tool))) return { error: "The component-editor definition requests tools outside its existing Read/Write/Edit/Bash boundary; no tools or settings were changed." };
     return { launch: {
-      monitorWorker: true, command: parent.command, prefixArgs: parent.prefixArgs, cwd: library, env: parent.env,
+      command: parent.command, prefixArgs: parent.prefixArgs, cwd: library, env: parent.env,
       sessionId: session.sessionId, resume: false, model: fields.model, systemPrompt: role,
       allowedTools: tools, tools, disallowedTools: [...new Set([...(parent.disallowedTools ?? []), "Agent", "Task", "SendMessage"])],
       addDirs: parent.addDirs, effort: parent.effort, autoMode: parent.autoMode, bypassPermissions: parent.bypassPermissions, allowRules: parent.allowRules,
@@ -131,7 +131,7 @@ export class EditorTransport {
       return;
     }
     if (current) { this.editors.delete(action.task); this.retire(action.task, current.head); }
-    const head = new ClaudeHead({ ...action.config, monitorWorker: true }, {
+    const head = new ClaudeHead({ ...action.config }, {
       onItem: (item) => {
         const live = this.editors.get(action.task);
         if (live?.head === head) this.events.item(action.task, live.run, item);
@@ -264,7 +264,7 @@ export class ComponentEditorAdapter implements WorkerAdapter {
     s.session = session;
     run.setEngineData({ thread: session, ...(continuing ? {} : { editorCheckpoint: undefined, ownershipInstructions: run.run > 1 ? words : undefined }) });
     this.host.item({ kind: "subagentExecution", id: record.id, execution: { run: run.run, ownerSessionId: this.host.ownerSessionId(), threadId: session, turnId: null } });
-    this.host.act({ kind: "start", task: record.id, run: run.run, config: { ...route.launch, monitorWorker: true, sessionId: session, resume: !!thread }, text: words });
+    this.host.act({ kind: "start", task: record.id, run: run.run, config: { ...route.launch, sessionId: session, resume: !!thread }, text: words });
   }
 
   steer(record: Readonly<WorkerLedgerRecord>, words: string): boolean {

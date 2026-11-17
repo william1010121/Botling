@@ -32,6 +32,7 @@ import { CLAUDE_MODEL_HINT, isClaudeModel } from "../../contract/claude-model";
 import { WORKER_NOTIFY_RULE, shotWorkerRule } from "../prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
 import { ADMITTED, PLUGIN_STARTED } from "../orchestration/plugin-workers";
+import { BACKGROUND_WAIT_CAP_MS } from "./background-cap";
 import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
@@ -216,6 +217,14 @@ interface Proc {
   opening?: { run: number; base: HeadConfig | null };
   /** What its process left running in the background (a command, a Monitor, an agent), by tool call. */
   background: Map<string, { kind: "command" | "monitor" | "agent"; title: string; since: number }>;
+  /** The tool calls of its Monitor tool: a Monitor on a command starts a background shell task, told apart by its call. */
+  monitorCalls?: Set<string>;
+  /**
+   * Its turn's report, kept back while its Monitor lives (2026-11-18): the run stays at work, its row says "Monitor running",
+   * and the Monitor's wake turn goes on in the same run. The run ends with its next report once no Monitor lives, or when
+   * the Monitor runs past its 50-minute cap, or its process ends.
+   */
+  monitorHold?: { result: Extract<StreamItem, { kind: "result" }>; timer?: ReturnType<typeof setTimeout> };
   /** Its head once the app closed its input (`finish`): nothing more can be written to it; it ends after its background work. */
   finishing?: ClaudeWorkerHead;
   finishingSince?: number;
@@ -227,6 +236,12 @@ interface Proc {
   apiRetry?: ReturnType<typeof setTimeout>;
 }
 
+/** The report kept back for a Monitor is let go (the run ended or was stopped). */
+function clearHold(proc: Proc) {
+  if (proc.monitorHold?.timer) clearTimeout(proc.monitorHold.timer);
+  proc.monitorHold = undefined;
+}
+
 /** No try waits any more (the run ended, was stopped, or other words go on with it). */
 function clearApiRetry(proc: Proc) {
   if (proc.apiRetry) { clearTimeout(proc.apiRetry); proc.apiRetry = undefined; }
@@ -235,6 +250,10 @@ function clearApiRetry(proc: Proc) {
 
 /** Background work started longer ago than this no longer keeps a worker's process past its keep-alive (the bots' rule). */
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
+/** A Monitor holds its worker's report back no longer than the background cap (background-cap.ts) and a minute. */
+const MONITOR_HOLD_MS = BACKGROUND_WAIT_CAP_MS + 60_000;
+/** After its last Monitor ended, the model is woken by it: the report waits this long for that turn's result. */
+const MONITOR_WAKE_GRACE_MS = 30_000;
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
 export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "rules" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "extraDirs" | "siteToolsFolder" | "browser" | "remote" | "defaultMachine" | "shotCommand">;
@@ -361,7 +380,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const extra = nonEmpty(r.engineData.machine) ? [] : this.existingDirs(this.options.extraDirs?.() ?? []);
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
-      model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
+      model: this.model(r, base), effort: this.effort(r, base), appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: r.engineData.pluginStarted === true ? [] : this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
       systemPrompt: [claudeWorkerPolicy(this.options.rules?.(), r.engineData.pluginStarted === true && (!def?.tools || def.tools.includes("Bash")) ? this.options.shotCommand?.() ?? null : null), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
@@ -392,6 +411,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     head.start();
     Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, finishing: undefined, finishingSince: undefined });
     proc.background.clear();
+    proc.monitorCalls?.clear();
     proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });
@@ -416,6 +436,38 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.queued.add(uuid);
     proc.head.send(words, uuid);
     return true;
+  }
+
+  /** Its Monitors that still hold its report back (started less than the cap and a minute ago), the oldest first. */
+  private liveMonitors(proc: Proc) {
+    const now = Date.now();
+    return [...proc.background.values()].filter((task) => task.kind === "monitor" && now - task.since < MONITOR_HOLD_MS).sort((a, b) => a.since - b.since);
+  }
+
+  /** The turn's report is kept back: the run stays at work and its row says "Monitor running". */
+  private holdForMonitor(proc: Proc, result: Extract<StreamItem, { kind: "result" }>) {
+    proc.queued.clear();
+    proc.apiRetries = 0;
+    const hold = proc.monitorHold ?? (proc.monitorHold = { result });
+    hold.result = result;
+    this.monitorChanged(proc);
+  }
+
+  /** A Monitor started or ended while a report waits for it: say so, and arm what lets the report go. */
+  private monitorChanged(proc: Proc) {
+    const hold = proc.monitorHold, run = proc.run;
+    if (!hold || !run) return;
+    if (hold.timer) clearTimeout(hold.timer);
+    const live = this.liveMonitors(proc)[0];
+    // A Monitor lives: its row says so, and the report goes out at the latest when the cap runs out. None lives: the
+    // Monitor's wake turn is on its way; if its result never comes, the report goes out after the grace.
+    const wait = live ? Math.max(0, live.since + MONITOR_HOLD_MS - Date.now()) : MONITOR_WAKE_GRACE_MS;
+    hold.timer = setTimeout(() => {
+      if (proc.run !== run || !proc.monitorHold) return;
+      this.end(proc, run, proc.monitorHold.result, true);
+    }, wait);
+    hold.timer.unref?.();
+    run.emit({ type: "waitingOn", on: live ? { kind: "monitorRunning", title: live.title, since: live.since, queued: 0 } : null });
   }
 
   /** What a held run waits for: the background work its finishing process still runs (the oldest first), else its end. */
@@ -443,9 +495,20 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const proc = this.procs.get(id);
     if (!proc || proc.head !== head || this.closed) return;
     // What it leaves running in the background, between runs too (it keeps the process awake; a held run names it).
-    if (item.kind === "backgroundStarted") proc.background.set(item.id, { kind: item.monitor ? "monitor" : "command", title: item.description, since: Date.now() });
+    if (item.kind === "toolUse" && item.tool === "Monitor" && !item.parent) (proc.monitorCalls ??= new Set()).add(item.id);
+    if (item.kind === "backgroundStarted") {
+      const monitor = item.monitor || proc.monitorCalls?.has(item.id) === true;
+      proc.background.set(item.id, { kind: monitor ? "monitor" : "command", title: item.description, since: Date.now() });
+      if (monitor) this.monitorChanged(proc);
+    }
     else if (item.kind === "subagentStarted" && item.background) proc.background.set(item.id, { kind: "agent", title: item.description, since: Date.now() });
-    else if (item.kind === "subagentEnded" && proc.background.delete(item.id) && proc.held) proc.held.run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
+    else if (item.kind === "subagentEnded") {
+      const gone = proc.background.get(item.id);
+      if (proc.background.delete(item.id)) {
+        if (proc.held) proc.held.run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
+        if (gone?.kind === "monitor") this.monitorChanged(proc);
+      }
+    }
     const run = proc.run;
     if (item.kind === "init") {
       // Its session exists now (later runs resume it); claude may name it differently.
@@ -492,9 +555,18 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   }
 
   /** The run's turn is over: the core classifies it. The process stays a while for a quick follow-up, then sleeps. */
-  private end(proc: Proc, run: RunHandle, result: Extract<StreamItem, { kind: "result" }>) {
+  private end(proc: Proc, run: RunHandle, result: Extract<StreamItem, { kind: "result" }>, release = false) {
     if (proc.run !== run) return;
     const head = proc.head;
+    // A report kept back for its Monitor goes out with this one (the words of both, once).
+    const before = proc.monitorHold?.result;
+    if (result.ok && before?.ok && before !== result && before.text && before.text !== result.text) result = { ...result, text: result.text ? `${before.text}\n\n${result.text}` : before.text };
+    // Its Monitor still lives: the turn's report waits for it (an error ends the run at once).
+    if (result.ok && !release && head?.running && proc.finishing !== head && !this.closed && this.liveMonitors(proc).length) {
+      this.holdForMonitor(proc, result);
+      return;
+    }
+    if (proc.monitorHold) { clearHold(proc); run.emit({ type: "waitingOn", on: null }); }
     let error = result.ok ? null : result.error || result.text || null;
     if (!result.ok && result.apiPassing) {
       // An API error that passes (a Cloudflare block, an overload): the same session goes on after a wait, the run
@@ -534,6 +606,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.head = undefined;
     proc.finishing = undefined;
     proc.background.clear();
+    proc.monitorCalls?.clear();
     // Its leader exited; the tree it led is kept until it is confirmed gone (children may outlive it). A held run then
     // goes into a new process on the same session, with every word that waited.
     void endTree(head, 1_500).then((gone) => {
@@ -561,6 +634,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (result && run) { this.end(proc, run, result); return; }
     }
     if (!run || this.closed) return;
+    // Its process ended while its report waited for a Monitor: the report is good, the Monitor ended with the process.
+    if (proc.monitorHold) { this.end(proc, run, proc.monitorHold.result, true); return; }
     proc.run = undefined;
     run.emit({ type: "end", end: {
       how: "exited", finalText: null, detail: exit.signal ?? `exit ${exit.code}`,
@@ -576,6 +651,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.held = undefined;
     proc.queued.clear();
     clearApiRetry(proc);
+    clearHold(proc);
     if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const tree = proc.tree ?? proc.head;
@@ -626,6 +702,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (proc.settle) clearTimeout(proc.settle);
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
       clearApiRetry(proc);
+      clearHold(proc);
       Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined });
       const tree = proc.tree ?? proc.head;
       proc.head = undefined;

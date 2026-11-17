@@ -33,7 +33,7 @@ function create(fixture: HeadFixture, sink: HeadSink): HeadTransport {
   } as ProcessTreeAdapter;
   const config: HeadConfig = {
     command: "claude", cwd: tmpdir(), sessionId: SESSION, resume: false, allowedTools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-    model: "opus", effort: "high", autoMode: true, monitorWorker: true,
+    model: "opus", effort: "high", autoMode: true,
     appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD,
   };
   const head = new ClaudeHead(config, { onItem: (item) => sink.item(item), onExit: (exit) => sink.exit(exit) }, tree);

@@ -34,9 +34,8 @@ it.each([undefined, "", "launch-value"])("enforces Claude identity after overrid
 });
 
 it.each([
-  { resume: false, monitorWorker: false }, { resume: true, monitorWorker: false },
-  { resume: false, monitorWorker: true }, { resume: true, monitorWorker: true },
-])("sets spawned Claude env: resume=$resume worker=$monitorWorker", async options => {
+  { resume: false }, { resume: true },
+])("sets spawned Claude env: resume=$resume", async options => {
   const f = fixture("claude"), items: any[] = [];
   const head = new ClaudeHead({ ...f.config, ...options, allowedTools: [], harmless: true },
     { onItem: item => items.push(item), onExit() {} });

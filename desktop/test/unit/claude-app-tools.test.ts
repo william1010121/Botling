@@ -51,7 +51,7 @@ describe("the coordinator's initialize", () => {
     t.head.send("work", "u1");
     expect(t.writes).toHaveLength(1);
     expect(t.writes[0].request).toMatchObject({ subtype: "initialize", sdkMcpServers: ["botling"],
-      hooks: { PreToolUse: [{ matcher: "^Monitor$" }, { matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }, { matcher: "^(Bash|Monitor)$", hookCallbackIds: ["botling-background-cap"] }] } });
+      hooks: { PreToolUse: [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }, { matcher: "^(Bash|Monitor)$", hookCallbackIds: ["botling-background-cap"] }] } });
     t.receive({ type: "control_response", response: { subtype: "success", request_id: t.writes[0].request_id, response: {} } });
     expect(t.writes[1]).toMatchObject({ type: "user", uuid: "u1" });
   });

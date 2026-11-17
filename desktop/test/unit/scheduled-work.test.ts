@@ -18,18 +18,18 @@ async function send(c: CoreHarness, frames: object[]) {
   const ended = await until(() => c.of("turn.finished").find((e: any) => e.event.turnId === turnId));
   expect(ended.event).toMatchObject({ status: "done", text: "Schedule checked." });
 }
-function start(probeMonitor = false) {
+function start(traced = false) {
   const dir = tempDir("schedules");
   const traceFile = join(dir, "schedule-protocol.jsonl");
   const c = new CoreHarness(dir, { BOTLING_FAKE_CLI: join(desktop, "test/fixtures/fake-schedules.mjs"),
-    ...(probeMonitor ? { FAKE_SCHEDULES_PROBE_MONITOR: "1", FAKE_SCHEDULES_TRACE: traceFile } : {}) });
+    ...(traced ? { FAKE_SCHEDULES_TRACE: traceFile } : {}) });
   harnesses.push(c);
   const tasks = () => JSON.parse(readFileSync(join(dir, "main/chat.json"), "utf8")).flatMap((r: any) => r.backgroundTasks ?? []);
   return { c, tasks, trace: () => readFileSync(traceFile, "utf8").trim().split("\n").map(line => JSON.parse(line)) };
 }
 
 describe("session schedules (1.x ScheduleWakeup / CronCreate)", () => {
-  it("registers enforcement before the real schedule owner runs, retaining coordinator eligibility and child denial", async () => {
+  it("registers enforcement before the real schedule owner runs, and registers no Monitor deny", async () => {
     const { c, tasks, trace } = start(true);
     await send(c, [use("owner-wake", "ScheduleWakeup", { prompt: "Retry" }), result("owner-wake", { scheduledFor: Date.now() + 3600_000 })]);
     const frames = trace();
@@ -39,15 +39,10 @@ describe("session schedules (1.x ScheduleWakeup / CronCreate)", () => {
     expect(initialize).toBeGreaterThanOrEqual(0);
     expect(acknowledged).toBeGreaterThan(initialize);
     expect(user).toBeGreaterThan(acknowledged);
-    const reply = (id: string) => frames.find(f => f.direction === "in" && f.type === "control_response" && f.requestId === id);
-    // Empty means normal permissions still decide; it must never become an automatic allow.
-    expect(reply("schedule-owner-monitor")?.response).toEqual({});
-    const child = reply("schedule-child-monitor")?.response;
-    expect(child).toMatchObject({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny" } });
-    expect(JSON.parse(child.hookSpecificOutput.permissionDecisionReason)).toMatchObject({ code: "coordinator_only_monitor", executed: false,
-      handback: { tool: "Monitor", input: { command: "fixture-only; never executed" }, requester_agent_id: "schedule-child" } });
+    // The Monitor tool is open to every Claude process (workers too, 2026-11-18): no hook is registered to deny it.
+    expect(JSON.stringify(frames[initialize])).not.toContain("botling-monitor-owner");
     expect(tasks()).toMatchObject([{ id: "owner-wake", kind: "wakeup", status: "running" }]);
-    expect(tasks()).toHaveLength(1); // Protocol probes never launch monitors or create task records.
+    expect(tasks()).toHaveLength(1);
   });
 
   it("persists successful schedules and carries their absolute times and cron fields into the reused Web task row", async () => {
