@@ -138,7 +138,7 @@ describe("the guidance in the prompt", () => {
   it("chart rule: decide what the figure must show first, inline-chart only if it shows that clearly, else a matplotlib PNG shown inline; never a page for a chart", () => {
     expect(INLINE_BLOCK_GUIDANCE).toContain('<show name="inline-chart">{chart}</show>');
     expect(INLINE_BLOCK_GUIDANCE).toContain("Charts: first decide what the figure must show (groups side by side, time axis, error bars, measured vs estimated).");
-    expect(INLINE_BLOCK_GUIDANCE).toContain("(kind bars, dumbbell or waterfall) only if it shows that clearly; otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path)");
+    expect(INLINE_BLOCK_GUIDANCE).toContain("(kind bars, dumbbell, waterfall or line) only if it shows that clearly; otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path)");
     expect(INLINE_BLOCK_GUIDANCE).toContain("read-only in .bot/card-scripts/<name>/ when numbers need gathering; never a page for a chart");
     expect(INLINE_BLOCK_GUIDANCE).not.toContain("a few numbers never need a page");
     // It no longer sends a data chart to a page.
