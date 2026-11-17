@@ -123,6 +123,43 @@ it("preserves all mixed source targets beyond model limits in loading/ready/fail
   expect(sent.at(-1)).toEqual({ type: "openURL", url: "file:///tmp/final%20report.html", label: "Report · Alternate report" });
 });
 
+// A component in a folded row is never laid out, so the chat never builds its frame: the viewer draws it live itself.
+it("shows the components of folded messages as real, live, read-only components in the viewer (no raw data)", () => {
+  const info = { template: "<p id=card>chart</p>", version: 1, working: false, updated: false, hasPrevious: false };
+  const shown = { name: "inline-chart", data: '{"title":"Weekly installs"}', command: "touch /tmp/never-run", folder: "/tmp", detail: "touch /tmp/never-detail", card: "c1", every: 1 };
+  const withCard = (m: MessageView) => m.id === "c" ? { ...m, displays: [shown], previews: [{ name: "inline-chart", data: '{"title":"Preview"}' }] } : m;
+  const base = state(view());
+  window.ccb.setState({ ...base, components: { "inline-chart": info }, messages: base.messages.map(withCard) });
+  const folded = document.querySelector<HTMLElement>('#messages [data-id="c"]')!;
+  expect(folded.classList.contains("decoration-folded")).toBe(true);
+  const before = sent.length;
+  document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  const dialog = document.querySelector<HTMLElement>(".summary-source-viewer")!;
+  const frames = [...dialog.querySelectorAll<HTMLIFrameElement>('[data-source-id="c"] .source-live iframe.component-frame')];
+  expect(frames).toHaveLength(2);
+  // Built at once (not lazy), from the stored data, in the viewer's own frames.
+  expect(frames.map((frame) => frame.srcdoc.includes("Weekly installs") || frame.srcdoc.includes("Preview"))).toEqual([true, true]);
+  expect(frames[0].classList.contains("pending")).toBe(false);
+  expect(frames[0].getAttribute("sandbox")).toBe("allow-scripts");
+  // Never the raw-data fallback, never a snapshot of the folded chat frame, never a command or a call to the app.
+  expect(dialog.querySelector(".source-card pre")).toBeNull();
+  expect(dialog.querySelector(".source-static-frame")).toBeNull();
+  expect(sent.length).toBe(before);
+  document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
+  window.ccb.setState(state(null));
+});
+
+it("a component that shows nothing (status empty) is left out of the viewer like in the chat", () => {
+  const info = { template: "<p>x</p>", version: 1, working: false, updated: false, hasPrevious: false };
+  const base = state(view());
+  window.ccb.setState({ ...base, components: { "inline-chart": info },
+    messages: base.messages.map((m) => m.id === "c" ? { ...m, displays: [{ name: "inline-chart", data: "", status: "empty" as const }] } : m) });
+  document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  expect(document.querySelector('.summary-source-viewer [data-source-id="c"] .source-card')).toBeNull();
+  document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
+  window.ccb.setState(state(null));
+});
+
 it("puts exact interval triggers only on each last bot footer, never beside Send", () => {
   window.ccb.setState(state(null, { messages: [line("u1", "user"), line("b1"), line("n", "notice"), line("b2"), line("u2", "user"), line("b3")] }));
   expect(document.querySelector(".composer-tools .catchup-button, .composer-tools .interval-summary-trigger")).toBeNull();

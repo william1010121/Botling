@@ -1,7 +1,7 @@
 // The summary's sources in one dialog (the "Show N messages" button and each bullet's source chips): the
 // original messages of the range, read only, with the cited passage marked; "Show in chat" and "Answer
 // in chat" reveal the message in place (the page's decoration context does that).
-import type { ChatState, MessageView } from "../../../../Web/src/types";
+import type { ChatState, DisplayView, MessageView } from "../../../../Web/src/types";
 import { requestSourceSnapshot, staticSourcePage } from "../../../../Web/src/source-snapshot";
 import { escapeHTML } from "../../../../Web/src/util";
 import { sourceLinks, clickableSourceURL } from "./links";
@@ -140,11 +140,15 @@ export class SummaryViewer {
         const anchor=document.createElement("a");anchor.className="chip";anchor.href="#";anchor.dataset.url=link.url;anchor.textContent=link.labels.join(" · ")||link.url;column.append(anchor);
       }
       if (message.choices?.length) this.choices(column,message,selected);
-      // Capture only already-running frames; never call componentElement/commandCard here.
-      const frames = [...this.find?.(message.id)?.querySelectorAll<HTMLIFrameElement>("iframe.component-frame") ?? []];
-      const genericFrames = frames.filter(frame=>(frame as HTMLIFrameElement & {ccbKey?:string}).ccbKey !== `${message.id}/choices`);
+      // The components are drawn here again, live and read only, from the message's stored data (nothing
+      // runs): the chat's own frame may be in a folded row, which is never laid out and so never built.
+      const drawn = this.components(column,message,state);
+      // What the page could not draw live (no library entry, no page): capture only already-running frames; never call componentElement/commandCard here.
+      const displays = (message.displays ?? (message.display?[message.display]:[])).filter(display=>!drawn.displays.has(display));
+      const frames = displays.length || !drawn.keys.size ? [...this.find?.(message.id)?.querySelectorAll<HTMLIFrameElement>("iframe.component-frame") ?? []] : [];
+      const genericFrames = frames.filter(frame=>{const key=(frame as HTMLIFrameElement & {ccbKey?:string}).ccbKey;return key !== `${message.id}/choices` && !(key && drawn.keys.has(key));});
       for (const frame of genericFrames) this.snapshot(column,frame,message,selected?.messageID===message.id?selected.quote:undefined,epoch);
-      if (!genericFrames.length) for (const display of message.displays ?? (message.display?[message.display]:[])) {
+      if (!genericFrames.length) for (const display of displays) {
         const fallback=document.createElement("section");fallback.className="source-card";
         fallback.innerHTML=`<div class="source-meta">${escapeHTML(display.name)} · ${escapeHTML(t("source.snapshotUnavailable"))}</div><pre></pre>`;
         fallback.querySelector("pre")!.textContent=display.data;this.cardStatus(fallback,message);column.append(fallback);this.clip(fallback);
@@ -155,6 +159,8 @@ export class SummaryViewer {
         if(selected.part==="answer") quoteRoot=message.answer?.includes(selected.quote) ? column.querySelector(".source-note>div:last-child") : column.querySelector(".source-picked");
         else if(message.text.includes(selected.quote)) quoteRoot=column.querySelector(".source-prose");
         else quoteRoot=[...column.querySelectorAll(".source-option")].find(option=>option.textContent?.includes(selected.quote!))??null;
+        // A passage inside a live component cannot be marked in its frame: the quote is shown marked above the card.
+        if(!quoteRoot && selected.part!=="answer"){const live=column.querySelector<HTMLElement>(".source-live");if(live){const note=document.createElement("div");note.className="source-note";note.textContent=selected.quote;live.prepend(note);quoteRoot=note;}}
         if(quoteRoot)markQuote(quoteRoot,selected.quote);
       }
     }
@@ -167,6 +173,26 @@ export class SummaryViewer {
     const row=[...this.dialog.querySelectorAll<HTMLElement>("[data-source-id]")].find(row=>row.dataset.sourceId===selected.messageID);
     const passage=row?.querySelector<HTMLElement>("mark") ?? row?.querySelector<HTMLElement>(".source-answer-cited") ?? row?.querySelector<HTMLElement>(".source-answer-in-chat") ?? (selected.quote ? row?.querySelector<HTMLElement>(".source-snapshot") : null) ?? row;
     passage?.scrollIntoView?.({block:"center",behavior:"auto"});
+  }
+
+  /**
+   * The message's components (its `<show>` cards and page previews) drawn live in the dialog, as wide as the dialog, from their stored data.
+   * Returns which displays and frame keys it drew, so the snapshot fallback leaves them alone.
+   */
+  private components(column: HTMLElement,message: MessageView,state: ChatState): {displays:Set<DisplayView>;keys:Set<string>} {
+    const displays=new Set<DisplayView>(),keys=new Set<string>();
+    const add=(display:DisplayView,chatKey:string,viewKey:string)=>{
+      // "empty": nothing to show and nothing fills it, so the chat draws nothing either.
+      if(display.status==="empty"){displays.add(display);keys.add(`${chatKey}/${display.name}`);return;}
+      let card:HTMLElement|null=null;
+      try{card=page.component(display.name,state.components?.[display.name],display,viewKey);}catch{card=null;}
+      if(!card)return;
+      const holder=document.createElement("section");holder.className="source-card source-live";holder.append(card);
+      column.append(holder);displays.add(display);keys.add(`${chatKey}/${display.name}`);
+    };
+    (message.displays??(message.display?[message.display]:[])).forEach((display,index)=>add(display,index===0?message.id:`${message.id}/show-${index}`,`${message.id}/source-${index}`));
+    (message.previews??[]).forEach((preview,index)=>add(preview as DisplayView,`${message.id}/preview-${index}`,`${message.id}/source-preview-${index}`));
+    return {displays,keys};
   }
 
   private choices(column: HTMLElement,message: MessageView,selected?: SourceReference): void {

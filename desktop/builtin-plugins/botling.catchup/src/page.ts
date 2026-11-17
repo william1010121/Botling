@@ -1,9 +1,12 @@
 // What the web part borrows from the chat page it runs in (`ccb` at activate; tests set their own): the
-// chat's own Markdown and media drawing, and its call to this plugin's program part.
+// chat's own Markdown, media and component drawing, and its call to this plugin's program part.
+import type { ComponentInfo, DisplayView } from "../../../../Web/src/types";
 
 export interface Page {
   render(text: string): string;
   media(url: string, label: string): string;
+  /** A component drawn live from its data (never its command), built at once; null when the page cannot draw it. */
+  component(name: string, info: ComponentInfo | undefined, display: DisplayView, key: string): HTMLElement | null;
   call(method: string, params?: unknown): Promise<unknown>;
 }
 
@@ -12,6 +15,7 @@ const escape = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCode
 export const page: Page = {
   render: (text) => `<p>${escape(text)}</p>`,
   media: (url, label) => `<img class="media" src="${escape(url)}" alt="${escape(label)}">`,
+  component: () => null,
   call: () => Promise.reject(new Error("Not in the chat page.")),
 };
 

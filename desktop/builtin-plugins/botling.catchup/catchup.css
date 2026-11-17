@@ -89,7 +89,7 @@
 .interval-summary-trigger:hover { color: var(--text); }
 .interval-summary-trigger:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .interval-summary-head { margin-top: 0; }
-/* Approved source viewer: original Catch-up surfaces/tokens, centered 720px dialog. */
+/* Approved source viewer: original Catch-up surfaces/tokens, centered dialog, up to 960px so a chart or report block has room. */
 .source-cite { display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;margin-left:4px;border:1px solid var(--border);border-radius:10px;background:var(--catchup-cite-bg);color:var(--muted);font:inherit;font-size:11px;vertical-align:2px;cursor:pointer;max-width:100%; }
 .source-cite:hover,.source-cite:focus-visible { border-color:var(--blue);color:var(--text);background:var(--catchup-accent-soft); }
 .source-head-dot { width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none; }
@@ -98,7 +98,7 @@
 .source-cite.you .source-head-dot,.source-dot.you { background:var(--text); }
 .source-hover { position:fixed;z-index:2000;width:min(340px,calc(100vw - 16px));box-sizing:border-box;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:0 10px 28px rgb(0 0 0 / calc(.47 * var(--shade)));font-size:12px;pointer-events:none;overflow-wrap:anywhere; }
 .source-hover > span { color:var(--faint); }.source-hover > div { font-size:13px;line-height:1.5;margin:6px 0;color:var(--soft-text); }.source-hover small { color:var(--link); }
-.summary-source-viewer { position:fixed;inset:0;margin:auto;width:min(720px,calc(100vw - 24px));height:min(760px,calc(100dvh - 32px));max-width:none;max-height:none;padding:0;box-sizing:border-box;border:1px solid var(--catchup-viewer-line);border-radius:18px;background:var(--ground);color:var(--text);box-shadow:0 24px 64px rgb(0 0 0 / calc(.6 * var(--shade)));overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif; }
+.summary-source-viewer { position:fixed;inset:0;margin:auto;width:min(960px,calc(100vw - 24px));height:min(760px,calc(100dvh - 32px));max-width:none;max-height:none;padding:0;box-sizing:border-box;border:1px solid var(--catchup-viewer-line);border-radius:18px;background:var(--ground);color:var(--text);box-shadow:0 24px 64px rgb(0 0 0 / calc(.6 * var(--shade)));overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif; }
 .summary-source-viewer[open] { display:flex;flex-direction:column; }
 .summary-source-viewer::backdrop { background:rgb(0 0 0 / calc(.55 * var(--shade))); }
 .source-header { display:flex;align-items:center;gap:10px;padding:14px 16px 12px 20px;border-bottom:1px solid var(--line);flex:none; }
@@ -134,3 +134,9 @@
 
 /* 2.x has no "Summarize N replies" button under replies (the desktop's frame.css hid it). */
 .interval-summary-trigger { display: none; }
+
+/* A component drawn live in the viewer: the whole width of the card, no report flag, nothing to answer. */
+.source-live { padding: 6px; }
+.source-live .component { margin-top: 0; }
+.source-live .component-frame { min-width: 0; width: 100%; border-radius: 10px; }
+.source-live .component-side { display: none; }
