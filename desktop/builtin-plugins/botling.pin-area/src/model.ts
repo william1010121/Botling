@@ -49,9 +49,18 @@ export interface Pin {
   updatedAt: number;
   /** When the user last had the card open: anything newer than this is unread. */
   seenAt?: number;
+  /** When it became done (the hour after which it takes itself down); older books have none: its last change then. */
+  doneAt?: number;
+  /** Workers the app bound to it that have not ended yet (`bind`); with none and one end seen (`endedAt`), the card waits on nobody. */
+  live?: string[];
+  endedAt?: number;
+  /** Marked 可能已過時 when its workers all ended and it said nothing for STALE_MS: the value is its `updatedAt` then, so any later change clears the mark. */
+  stale?: number;
+  /** Its workers all reported and it is still running: the bot is asked (next briefing) to mark it done or say what is left. Cleared by the bot's own word or done. */
+  nudge?: true;
 }
 /** A card taken off the strip, kept briefly so 釘回 puts it back. */
-export interface Removed { pin: Pin; at: number; by: "user" | "seen" | "bot" }
+export interface Removed { pin: Pin; at: number; by: "user" | "seen" | "bot" | "auto" }
 /** A guess of the automatic routing the user corrected (the bot is told, so it guesses better). `from`/`to`: a card id, or "chat". */
 export interface Fix { text: string; from: string; to: string; at: number }
 export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[] }
@@ -67,6 +76,12 @@ export const MAX_FROM = 4;
 export const MAX_LINKED = 12;
 /** Longest worker report kept in a card's thread (the bot got all of it; a card shows this much). */
 export const MAX_REPORT = 12_000;
+/** A card whose workers all ended and that said nothing for this long is marked 可能已過時. */
+export const STALE_MS = 20 * 60_000;
+/** A card done for this long takes itself down (釘回 puts it back). */
+export const DONE_CLOSE_MS = 60 * 60_000;
+/** How long a card taken down by itself is still offered back on the strip. */
+export const CLOSED_SHOW_MS = 24 * 3_600_000;
 export const MAX_FIXES = 3;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
@@ -146,6 +161,8 @@ export function readPin(raw: unknown): Pin | null {
   const step = readStep(p.step);
   const from = (Array.isArray(p.from) ? p.from : []).filter(isFrom).slice(0, MAX_LINKED);
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
+  const at = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined);
+  const live = (Array.isArray(p.live) ? p.live : []).filter(isFrom).slice(0, MAX_LINKED);
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
     source, ...(step ? { step } : {}), ...(state === "wait" ? { waitingSince: num(p.waitingSince) } : {}),
@@ -153,6 +170,8 @@ export function readPin(raw: unknown): Pin | null {
     updates: (Array.isArray(p.updates) ? p.updates.slice(-MAX_UPDATES) : []).map(readUpdate).filter((x): x is Update => !!x),
     ...(typeof p.msgRef === "string" && p.msgRef ? { msgRef: p.msgRef.slice(0, 200) } : {}), createdAt: num(p.createdAt), updatedAt: num(p.updatedAt), ...seenSeen,
     ...(from.length ? { from } : {}),
+    ...(state === "done" && at(p.doneAt) ? { doneAt: at(p.doneAt)! } : {}), ...(live.length ? { live } : {}), ...(at(p.endedAt) ? { endedAt: at(p.endedAt)! } : {}),
+    ...(state !== "done" && at(p.stale) ? { stale: at(p.stale)! } : {}), ...(state === "run" && p.nudge === true ? { nudge: true as const } : {}),
   };
 }
 /** What storage holds, trimmed to a book: anything that is not a pin of the shape above is dropped (a hand-edited or older file). */
@@ -174,7 +193,7 @@ export function readBook(raw: unknown): Book {
     const entry = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const pin = entry ? take(entry.pin) : null;
     if (!entry || !pin) continue;
-    book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" ? entry.by : "user" });
+    book.removed.push({ pin, at: num(entry.at), by: entry.by === "seen" || entry.by === "bot" || entry.by === "auto" ? entry.by : "user" });
   }
   const fixes = (Array.isArray(r.fixes) ? r.fixes : []).flatMap((item): Fix[] => {
     const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
@@ -237,6 +256,10 @@ export function applyUpdate(pin: Pin, input: UpdateInput, now: number): boolean 
   if (pin.prev === undefined) delete pin.prev;
   if (state === "wait" && pin.state !== "wait") pin.waitingSince = now;
   if (state !== "wait") delete pin.waitingSince;
+  if (state === "done" && pin.state !== "done") pin.doneAt = now;
+  if (state !== "done") delete pin.doneAt;
+  // the bot's own word on a card (or its being done) answers the nudge
+  if (input.source === "bot" || state !== "run") delete pin.nudge;
   pin.state = state;
   pin.status = status;
   pin.source = input.source;
@@ -271,7 +294,7 @@ export function addPin(book: Book, input: NewPin, now: number): { pin: Pin } | {
   const pin: Pin = {
     id, ...(input.botKey ? { botKey: input.botKey } : {}), origin: input.origin, title, handle: uniqueHandle(book, title), state: input.state,
     status: oneLine(input.status, MAX_STATUS), source: input.source, ...(input.step ? { step: input.step } : {}), ...(input.state === "wait" ? { waitingSince: now } : {}),
-    thread: [], updates: [], ...(input.msgRef ? { msgRef: input.msgRef.slice(0, 200) } : {}), createdAt: now, updatedAt: now,
+    thread: [], updates: [], ...(input.msgRef ? { msgRef: input.msgRef.slice(0, 200) } : {}), createdAt: now, updatedAt: now, ...(input.state === "done" ? { doneAt: now } : {}),
   };
   pin.updates.push({ at: now, state: pin.state, status: pin.status, source: pin.source });
   book.pins.push(pin);
@@ -296,6 +319,8 @@ export function restore(book: Book, id: string, now: number): Pin | null {
   const pin = entry.pin;
   pin.handle = uniqueHandle(book, pin.title, pin.id);
   pin.updatedAt = now;
+  // put back, a done card has its hour again (it would go away at once otherwise)
+  if (pin.state === "done") pin.doneAt = now;
   book.pins.push(pin);
   return pin;
 }
@@ -392,6 +417,44 @@ export function cardForGroup(book: Book, group: string): Pin | null {
   const top = ranked.filter((item) => item.rank === best);
   return top.length === 1 ? top[0]!.pin : null;
 }
+/** A worker the app bound to a card is now at work: the card is not waiting on nobody. */
+export function workerLive(pin: Pin, workerId: string): void {
+  if (!isFrom(workerId) || (pin.live ?? []).includes(workerId)) return;
+  pin.live = [...(pin.live ?? []), workerId].slice(-MAX_LINKED);
+}
+/**
+ * A worker this card follows ended a run (a note is not an end). When no bound worker is left at work, the card is waiting on nobody: a running card whose
+ * last worker reported completed is nudged (the bot is asked to mark it done or say what is left, `briefing`). Does not touch `updatedAt`.
+ */
+export function workerEnded(pin: Pin, workerId: string, kind: NewsKind, now: number): boolean {
+  let changed = false;
+  if (pin.live?.includes(workerId)) { pin.live = pin.live.filter((id) => id !== workerId); if (!pin.live.length) delete pin.live; changed = true; }
+  if (pin.endedAt === undefined) { pin.endedAt = now; changed = true; }
+  if (kind === "completed" && pin.state === "run" && !pin.live?.length && !pin.nudge) { pin.nudge = true; changed = true; }
+  return changed;
+}
+/** Whether a card shows 可能已過時 now: marked, and not changed since. */
+export const isStale = (pin: Pin): boolean => pin.state !== "done" && pin.stale !== undefined && pin.updatedAt <= pin.stale;
+
+/**
+ * What time does to the cards: a card done for DONE_CLOSE_MS takes itself down (by "auto", 釘回 puts it back; a card the user pinned too);
+ * a card that is not done, has seen a worker end, has none at work and has said nothing for STALE_MS is marked stale (so the strip says 可能已過時
+ * and the next briefing tells the bot). Returns the ids taken down, and whether anything changed (the book must be saved then).
+ */
+export function sweep(book: Book, now: number): { changed: boolean; closed: string[] } {
+  let changed = false;
+  const closed: string[] = [];
+  for (const pin of [...book.pins]) {
+    if (pin.state === "done") {
+      if (now - (pin.doneAt ?? pin.updatedAt) >= DONE_CLOSE_MS && remove(book, pin.id, now, "auto")) { closed.push(pin.id); changed = true; }
+    } else if (pin.endedAt !== undefined && !pin.live?.length && now - pin.updatedAt >= STALE_MS && !isStale(pin)) {
+      pin.stale = pin.updatedAt;
+      changed = true;
+    }
+  }
+  return { changed, closed };
+}
+
 /** The card that follows `workerId`, if any. */
 export const cardOfWorker = (book: Book, workerId: string): Pin | null => book.pins.find((pin) => pin.from?.includes(workerId)) ?? null;
 
@@ -579,7 +642,7 @@ const FIX_WORD = (book: Book, id: string): string => (id === "chat" ? "聊天" :
 /** The briefing for a bot's next plain message: one line per card (id, title, state, status), the last guesses the user corrected, and how to answer. "" with no cards. */
 export function briefing(book: Book, now: number): string {
   if (!book.pins.length) return "";
-  const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}`);
+  const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}${pin.stale ? ` · 可能已過時（它的 worker 都結束了，${Math.max(1, Math.floor((now - pin.updatedAt) / 60_000))} 分鐘沒更新）` : ""}${pin.nudge ? " · worker 都回報完了但卡片還在進行中：做完請標 state=\"done\"，沒做完請寫還差什麼" : ""}`);
   const fixes = (book.fixes ?? []).filter((fix) => now - fix.at < 86_400_000);
   const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
   // the note goes out inside the user's message, which the core reads for @Name call-ins: a title like "@DAFAWU 看一下" must not call that bot in
@@ -716,12 +779,20 @@ export function tracesOf(book: Book): { key: string; fold?: string[]; after?: st
 export interface PinView {
   id: string; title: string; handle: string; origin: "user" | "bot"; state: State; status: string; prev?: string; source: Source; step?: Step;
   waitingSince?: number; unread: boolean; thread: Turn[]; updates: Update[]; createdAt: number; updatedAt: number;
+  /** 可能已過時 (`isStale`), and the bot being asked to close the card (`nudge`). */
+  stale?: true; nudge?: true;
 }
-export interface BookView { v: 1; pins: PinView[] }
+export interface ClosedView { id: string; title: string; at: number }
+/** `closed`: cards the app took down by itself lately (the strip offers 釘回). */
+export interface BookView { v: 1; pins: PinView[]; closed?: ClosedView[] }
 const ORDER: Record<State, number> = { wait: 0, run: 1, done: 2 };
 
+/** The cards the app took down by itself in the last day (newest last): the strip offers them back. */
+export const closedOf = (book: Book, now: number): ClosedView[] =>
+  book.removed.filter((entry) => entry.by === "auto" && now - entry.at < CLOSED_SHOW_MS).map((entry) => ({ id: entry.pin.id, title: entry.pin.title, at: entry.at }));
+
 /** The cards in the order the strip shows them: waiting, then running, then done (each oldest first so a row keeps its place). */
-export function viewOf(book: Book): BookView {
+export function viewOf(book: Book, now?: number): BookView {
   const pins = [...book.pins].sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.createdAt - b.createdAt);
   return {
     v: 1,
@@ -729,7 +800,9 @@ export function viewOf(book: Book): BookView {
       id: pin.id, title: pin.title, handle: pin.handle, origin: pin.origin, state: pin.state, status: pin.status, ...(pin.prev ? { prev: pin.prev } : {}), source: pin.source,
       ...(pin.step ? { step: pin.step } : {}), ...(pin.waitingSince !== undefined ? { waitingSince: pin.waitingSince } : {}),
       unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread.filter((turn) => !turn.moved), updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
+      ...(isStale(pin) ? { stale: true as const } : {}), ...(pin.nudge ? { nudge: true as const } : {}),
     })),
+    ...(now !== undefined && closedOf(book, now).length ? { closed: closedOf(book, now) } : {}),
   };
 }
 

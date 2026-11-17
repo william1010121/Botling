@@ -75,8 +75,10 @@ export class PinUi {
   private readonly below = el("div", "pt-below");
   private readonly more = el("button", "pt-more");
   private readonly toastLine = el("div", "pt-toast");
+  /** Cards the app put away by itself (done for an hour): one line each, with 釘回. */
+  private readonly closedLines = el("div", "pt-closed");
   private panel: HTMLElement | null = null;
-  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
+  private panelParts: { title: HTMLElement; tag: HTMLElement; dot: HTMLElement; at: HTMLElement; note: HTMLElement; fresh: HTMLElement; stale: HTMLElement; status: HTMLElement; before: HTMLElement; bars: HTMLElement; thread: HTMLElement; updates: HTMLElement } | null = null;
   private toast: { text: string; undo?: { id: string }; until: number } | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private updatesOpen = false;
@@ -99,7 +101,7 @@ export class PinUi {
     this.more.type = "button";
     this.more.addEventListener("click", () => { this.showAll = !this.showAll; this.draw(); });
     this.rows.append(this.above, this.below, this.more);
-    this.section.append(this.head, this.rows, this.toastLine);
+    this.section.append(this.head, this.rows, this.closedLines, this.toastLine);
     this.top.append(this.digest, this.section);
     const { signal } = this.listeners;
     // A plain primary-button press on the chat's empty space leaves the open card (not a press on a message, a button, the input box or the
@@ -187,7 +189,8 @@ export class PinUi {
     const { words } = this.deps;
     const pins = this.data.pins;
     this.drawDigest();
-    this.section.hidden = pins.length === 0 && !this.toast;
+    const closed = this.closed();
+    this.section.hidden = pins.length === 0 && !this.toast && closed.length === 0;
     const waiting = pins.filter((pin) => pin.state === "wait").length;
     this.head.replaceChildren();
     if (pins.length) {
@@ -213,6 +216,7 @@ export class PinUi {
     const focusId = this.lastFocusId ?? active;
     this.lastFocusId = null;
     if (focusId) (Array.from(this.rows.querySelectorAll<HTMLElement>(".pt-row"))).find((row) => row.dataset.pin === focusId)?.focus({ preventScroll: true });
+    this.drawClosed(closed);
     this.drawToast();
     this.drawChip();
     if (this.openId) this.drawPanel();
@@ -231,6 +235,7 @@ export class PinUi {
       el("span", `pt-dot pt-dot-${pin.state}`),
       el("b", "pt-title", pin.title),
       el("span", "pt-short", pin.status),
+      ...(pin.stale ? [el("span", "pt-stale", words("row.stale"))] : []),
       el("span", `pt-meta${pin.unread ? " fresh" : ""}`, pin.unread ? `${when} ${words("row.fresh")}` : when),
       icon(["M6 9l6 6 6-6"], 14),
     );
@@ -364,6 +369,30 @@ export class PinUi {
     this.draw();
   }
 
+  /** The cards the program part says it took down by itself in the last day: three at most, each shaped and checked. */
+  private closed(): { id: string; title: string }[] {
+    const list = Array.isArray(this.data.closed) ? this.data.closed : [];
+    const day = 24 * 3_600_000;
+    return list.flatMap((item) => (item && typeof item.id === "string" && /^p-\d{4,}$/.test(item.id) && typeof item.title === "string" && typeof item.at === "number" && this.deps.now() - item.at < day ? [{ id: item.id, title: item.title.slice(0, 40) }] : [])).slice(-3);
+  }
+  private drawClosed(closed: { id: string; title: string }[]): void {
+    this.closedLines.replaceChildren();
+    this.closedLines.hidden = closed.length === 0;
+    for (const item of closed) {
+      const line = el("div", "pt-closed-line");
+      const back = el("button", "pt-toast-act", this.deps.words("toast.undo"));
+      back.type = "button";
+      back.dataset.pin = item.id;
+      back.addEventListener("click", () => {
+        if (this.moving.has(item.id)) return;
+        this.moving.add(item.id);
+        void this.deps.call("repin", { botId: this.botId, id: item.id }).then(() => this.open(item.id), (error) => this.failed(error)).finally(() => this.moving.delete(item.id));
+      });
+      line.append(el("span", "pt-toast-text", this.deps.words("closed.line", { title: item.title })), back);
+      this.closedLines.append(line);
+    }
+  }
+
   private drawToast(): void {
     this.toastLine.replaceChildren();
     this.toastLine.hidden = !this.toast;
@@ -457,9 +486,10 @@ export class PinUi {
     parts.tag.className = `pt-ptag pt-ptag-${pin.source}`;
     parts.at.textContent = words("card.at", { time: this.when(pin.updatedAt) });
     parts.fresh.hidden = !this.fresh.has(pin.id);
+    parts.stale.hidden = !pin.stale;
     parts.status.textContent = pin.status;
     parts.before.hidden = !pin.prev;
-    parts.note.hidden = parts.fresh.hidden && !pin.prev;
+    parts.note.hidden = parts.fresh.hidden && !pin.prev && !pin.stale;
     parts.before.replaceChildren();
     if (pin.prev) { parts.before.append(document.createTextNode(words("panel.before")), el("s", "", pin.prev)); }
     parts.bars.replaceChildren();
@@ -496,10 +526,12 @@ export class PinUi {
     head.append(dot, title, tag, el("span", "pt-grow"), at, unpin, close);
     const status = el("span", "pt-pstatus");
     const fresh = el("span", "pt-pill", words("row.fresh"));
+    const stale = el("span", "pt-pill pt-stale", words("row.stale"));
+    stale.hidden = true;
     const before = el("span", "pt-pbefore");
     const bars = el("div", "pt-pbars");
     const note = el("div", "pt-pnote");
-    note.append(fresh, before);
+    note.append(fresh, stale, before);
     const summary = el("div", "pt-psummary");
     summary.append(note, status, bars);
     const thread = el("div", "pt-thread");
@@ -507,7 +539,7 @@ export class PinUi {
     const updates = el("div", "pt-updates");
     panel.append(head, summary, thread, updates);
     this.panel = panel;
-    this.panelParts = { title, tag, dot, at, note, fresh, status, before, bars, thread, updates };
+    this.panelParts = { title, tag, dot, at, note, fresh, stale, status, before, bars, thread, updates };
   }
 
   private drawThread(pin: PinView, parts: NonNullable<PinUi["panelParts"]>): void {

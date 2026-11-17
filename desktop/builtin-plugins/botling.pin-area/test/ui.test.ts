@@ -770,6 +770,40 @@ describe("what a worker said, in the card's thread and as a trace in the chat", 
   });
 });
 
+describe("a card that may be outdated, and a card the app put away", () => {
+  it("a stale card says 可能已過時 on its row and in its open card; one that is not does not", () => {
+    ui.update("B1", view(pin("p-0001", { stale: true }), pin("p-0002")));
+    expect(rows().map((row) => row.querySelector(".pt-stale")?.textContent ?? null)).toEqual(["可能已過時", null]);
+    ui.open("p-0001");
+    expect(panel()!.querySelector<HTMLElement>(".pt-stale")!.hidden).toBe(false);
+    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
+    expect(panel()!.querySelector<HTMLElement>(".pt-stale")!.hidden).toBe(true);
+  });
+
+  it("a card put away by itself in the last day is offered back with 釘回 (also when it was the only card); a malformed or old entry is not drawn", async () => {
+    const hidden = () => top.querySelector<HTMLElement>(".pt-strip")!.hidden;
+    const lines = () => [...top.querySelectorAll<HTMLElement>(".pt-closed-line")];
+    const closed = [
+      { id: "p-0007", title: "做完的卡", at: clock - 3_600_000 },
+      { id: "p-0008", title: "太舊", at: clock - 25 * 3_600_000 },
+      { id: "../x", title: "壞 id", at: clock },
+      { id: "p-0009", title: 5, at: clock },
+      null,
+    ] as unknown as { id: string; title: string; at: number }[];
+    ui.update("B1", { ...view(), closed });
+    expect(hidden()).toBe(false);
+    expect(lines().map((line) => line.querySelector(".pt-toast-text")!.textContent)).toEqual(["「做完的卡」完成超過 1 小時，已自動收起"]);
+    lines()[0]!.querySelector<HTMLButtonElement>("button")!.click();
+    lines()[0]!.querySelector<HTMLButtonElement>("button")!.click(); // a double tap asks once
+    expect(call.mock.calls.filter(([method]) => method === "repin")).toEqual([["repin", { botId: "B1", id: "p-0007" }]]);
+    await flush();
+    ui.update("B1", view(pin("p-0007", { state: "done" })));
+    expect(lines()).toHaveLength(0);
+    ui.update("B1", view());
+    expect(hidden()).toBe(true);
+  });
+});
+
 describe("「你不在時」: the digest above the strip", () => {
   const H = 3_600_000;
   beforeEach(() => { clock = 20_000_000; });

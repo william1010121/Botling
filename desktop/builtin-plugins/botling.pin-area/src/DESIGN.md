@@ -142,6 +142,19 @@ Rules (`model.ts` `cardForGroup`, `pins.ts` `bind`):
 - The bot's prompt section says: give `group` the card's title / key / id when a worker is for a card; its reply to the report is one sentence.
 Bounds: a book is still `MAX_BOOK_BYTES`; `fit()` drops the oldest answered turns first, which may be old reports.
 
+### 4b. Cards close or go stale by themselves
+
+The user's decision: 「卡片自動收：worker 結束、標完成或久沒更新時提示或收起」. Time is judged by `M.sweep(book, now)` (pure; `pins.ts` `sweepBook` saves only what changed).
+It runs when the page asks (`view`, `touch`), before a briefing (`beforeSend`), and once a minute for every bot that has cards (`setInterval`, `unref`, cleared with the subscriptions).
+- **Done for an hour → taken down** (`Removed.by: "auto"`, a card the user pinned too). The hour counts from `Pin.doneAt` (set when the state turns done; a card of an older book counts from its
+  last change; 釘回 gives a done card its hour again). The view carries `closed` (cards put away by themselves in the last day, 3 shown): the strip draws 「X 完成超過 1 小時，已自動收起 · 釘回」.
+- **Workers all ended, nothing said for 20 minutes → 可能已過時.** Only for a card that has seen a worker end (`endedAt`) and has no bound worker at work (`Pin.live`, filled by `bind`, emptied by `workerEnded`).
+  A worker a bot linked with `worker=` is not in `live` (the app never saw it start), so it never keeps a card from going stale: that is the known imprecision. The mark is `Pin.stale` = the card's `updatedAt`
+  when marked, so any later change clears it without code; a done card is never stale. The row and the open card say 可能已過時; the next briefing says it to the bot too.
+- **Last worker reported completed while the card is still running → nudge** (`Pin.nudge`): the next briefing asks the bot to mark `state="done"` or write what is left. Cleared by the bot's own word on the card
+  (`applyUpdate` with source bot) or by a state other than run; a worker's news (source app) does not clear it. A failed / stopped worker makes no nudge (it already turned the card to 等你).
+Nothing here changes a card's words or state by itself: the program only closes (hour) and marks / tells (stale, nudge).
+
 ## Phase 3 (「你不在時」: what happened while you were away)
 
 **The rule.** The user is *away* after **30 minutes** (`AWAY_MS`) with no sign of them: a message they sent in any chat (`messagePosted`, role `user`), or

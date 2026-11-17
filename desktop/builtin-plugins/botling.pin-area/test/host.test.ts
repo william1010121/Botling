@@ -1054,3 +1054,69 @@ describe("a worker bound to a card by its job name", () => {
     expect(second.book("B1").pins[0]!.thread[0]!.a).toBe("重開機後的報告");
   });
 });
+
+// ---- Step 2: what time does to the cards ----
+describe("cards that close or go stale by themselves", () => {
+  const MIN = 60_000;
+  const withWorker = () => {
+    const t = setup();
+    t.tag("B1", "pin-card", { id: "job", title: "Build 報告", state: "run", min: "30" }, "進行中");
+    t.emit("workerStarted", { botId: "B1", workerId: "t-1", group: "build 報告", title: "w" });
+    return t;
+  };
+
+  it("workers all ended and 20 minutes of silence: the card is marked stale when the page asks (view), and the next briefing says so", () => {
+    const t = withWorker();
+    t.tick(5 * MIN);
+    t.emit("workerDone", ended("B1", "t-1", "報告\n細節"));
+    expect(t.book("B1").pins[0]!.nudge).toBe(true);
+    t.tick(19 * MIN);
+    (t.call("view", { botId: "B1" }) as M.BookView);
+    expect(t.book("B1").pins[0]!.stale).toBeUndefined();
+    t.tick(2 * MIN);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.pins[0]!.stale).toBe(true);
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).pins[0]!.stale).toBe(true);
+    const sent = t.send("B1", "進度如何");
+    expect(sent).toContain("可能已過時（它的 worker 都結束了，21 分鐘沒更新）");
+    expect(sent).toContain("做完請標 state=\"done\"");
+    // the bot answers by marking it done: the nudge and the mark are gone
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    const done = t.call("view", { botId: "B1" }) as M.BookView;
+    expect([done.pins[0]!.stale, done.pins[0]!.nudge]).toEqual([undefined, undefined]);
+  });
+
+  it("a worker still at work keeps the card from going stale, however long it is quiet", () => {
+    const t = withWorker();
+    t.tick(120 * MIN);
+    const view = t.call("view", { botId: "B1" }) as M.BookView;
+    expect(view.pins[0]!.stale).toBeUndefined();
+  });
+
+  it("a card done for an hour is put away by the minute timer's sweep (here by the page's touch), is offered back, and 釘回 restores it", async () => {
+    const t = setup();
+    t.call("pinMessage", { botId: "B1", messageId: "m1", text: "My own task" });
+    t.tag("B1", "pin-card", { id: "p-0001", state: "done" }, "做完");
+    t.tick(59 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect(t.book("B1").pins).toHaveLength(1);
+    t.tick(2 * MIN);
+    await t.call("touch", { botId: "B1" });
+    expect(t.book("B1").pins).toHaveLength(0);
+    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
+    expect(view.pins).toEqual([]);
+    expect(view.closed).toEqual([{ id: "p-0001", title: "My own task", at: t.now() }]);
+    expect(t.call("repin", { botId: "B1", id: "p-0001" })).toEqual({ id: "p-0001" });
+    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).closed).toBeUndefined();
+  });
+
+  it("a plain message sweeps first, so what it carries is up to date; a message to a bot with no cards is left alone", () => {
+    const t = setup();
+    t.tag("B1", "pin-card", { id: "job", title: "Job", state: "run", min: "30" }, "進行");
+    t.tag("B1", "pin-card", { id: "job", state: "done" }, "完成");
+    t.tick(61 * MIN);
+    expect(t.send("B1", "嗨")).toBeUndefined();
+    expect(t.book("B1").pins).toHaveLength(0);
+    expect(t.send("B3", "嗨")).toBeUndefined();
+  });
+});

@@ -75,7 +75,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   /** What the chat draws for a bot: its cards, and the digest while one is open. */
   const viewFor = (botId: string, book: M.Book): D.PinsView => {
     const away = digestFor(botId, book);
-    return { ...M.viewOf(book), ...(away ? { away } : {}) };
+    return { ...M.viewOf(book, now()), ...(away ? { away } : {}) };
   };
 
   /** What the chat of `botId` draws from now on. A chat the app does not know (a bot that was removed) just takes nothing. */
@@ -99,6 +99,22 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     publish(botId, book);
   };
 
+  /**
+   * What time does to the cards (`M.sweep`): done for an hour takes itself down, workers all ended and 20 minutes of silence marks 可能已過時.
+   * Run when the page asks, before a briefing, and once a minute for every bot that has cards. Saves (and so draws) only what changed.
+   */
+  const sweepBook = (botId: string): boolean => {
+    try {
+      const book = load(botId);
+      const swept = M.sweep(book, now());
+      if (swept.changed) save(botId, book);
+      return swept.changed;
+    } catch (error) {
+      console.error("botling.pin-area: sweep", error);
+      return false;
+    }
+  };
+
   // ---- what a card follows: a worker's task id (its end is `workerDone`) or a sub bot's id (its replies), by the bot whose card follows it ----
   const followers = new Map<string, string>();
   const reindex = (botId: string, book: M.Book) => {
@@ -116,6 +132,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (M.applyNews(pin, item, now())) any = true;
       // a worker's own report goes into the card in full (even a card already done keeps it), not only its first line
       if (item.from === "worker" && M.addWorkerTurn(pin, id, M.workerKindOf(item.kind), item.text, now())) any = true;
+      // its end: the card is not waiting on that worker any more (a card whose last worker reported is nudged to be closed)
+      if (item.from === "worker" && M.workerEnded(pin, id, item.kind, now())) any = true;
     }
     if (any) save(botId, book);
     return any;
@@ -127,6 +145,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     const pin = M.cardForGroup(book, group);
     if (!pin) return;
     M.linkFrom(pin, [workerId], M.MAX_LINKED);
+    M.workerLive(pin, workerId);
     M.logLine(pin, `worker 開工：${group}`, now());
     save(botId, book);
     // it may have ended before this was heard (the events of one run come close together)
@@ -306,6 +325,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.hooks.beforeSend((message) => {
       const botId = message.bot.id;
       if (!bots.has(botId)) return;
+      sweepBook(botId);
       const book = load(botId);
       const hit = M.route(book, message.text);
       // a plain message of a chat that has cards: the bot gets the cards as they stand, and may move the line into one
@@ -347,6 +367,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     // a chat with no data yet asks for it (the page does, once)
     expose("view", (params) => {
       const botId = botOf(params);
+      sweepBook(botId);
       const book = load(botId);
       publish(botId, book);
       return viewFor(botId, book);
@@ -354,6 +375,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     // the page was used (it says so at most once a minute): after a gap of 30 minutes or more the digest opens, for every chat
     expose("touch", async (params) => {
       const botId = botOf(params);
+      for (const other of bots) sweepBook(other);
       const seen = D.present(presence, now());
       presence = seen.presence;
       savePresence(seen.started);
@@ -439,5 +461,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       return { seen: true };
     }),
   ];
-  return [...subs, ...methods];
+  // once a minute, for the bots that have cards (the clock is the host's; a minute is as fine as the 20 minutes and the hour it counts)
+  const timer = setInterval(() => { for (const botId of [...bots]) sweepBook(botId); }, 60_000);
+  (timer as { unref?: () => void }).unref?.();
+  return [...subs, ...methods, () => clearInterval(timer)];
 }
