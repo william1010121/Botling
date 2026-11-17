@@ -79,6 +79,9 @@ describe("the guidance in the prompt", () => {
       if (role !== "main") {
         // Inline is the default and comes first; a page is for screenshots, previews, really long content or a page the user asks for.
         expect(text).toContain(`${RESULTS_LIST_INLINE} go into one `);
+        // The wording itself, not only the constant by value (review mutants M7, M9 survived): inline by default, and what still goes to a page.
+        expect(RESULTS_LIST_INLINE).toContain("go inline in the chat by default");
+        for (const page of ["screenshots", "previews", "really long content", "pages the user asks for"]) expect(RESULTS_LIST_INLINE).toContain(page);
         expect(text).not.toContain("Results meant for the user (reports");
         expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
       }
