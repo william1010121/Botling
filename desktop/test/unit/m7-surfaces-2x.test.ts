@@ -220,11 +220,11 @@ async function markupOf(node: ReturnType<typeof createElement>): Promise<string>
   element.remove();
   return html;
 }
-const stubClient = (): Client => ({ request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.web" ? { specs: [] } : command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/1" } : { result: null })), onEvent: () => () => {} }) as unknown as Client;
+const stubClient = (): Client => ({ request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.list" ? { plugins: [] } : command.type === "plugins.web" ? { specs: [] } : command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/1" } : { result: null })), onEvent: () => () => {} }) as unknown as Client;
 /** A client whose `card.page` answers one new page address per call, as the chat-header goldens were recorded. */
 function countingClient(): Client {
   let pages = 0;
-  return { request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: `botling-card://page/${++pages}` } : { result: null })), onEvent: () => () => {} } as unknown as Client;
+  return { request: vi.fn(async (command: { type: string; name?: string }) => (command.type === "plugins.list" ? { plugins: [] } : command.type === "plugins.panel" ? { title: command.name, source: "", settings: {} } : command.type === "card.page" ? { url: `botling-card://page/${++pages}` } : { result: null })), onEvent: () => () => {} } as unknown as Client;
 }
 const golden = (dir: string, file: string, markup: string) => expect(`<!-- ${file.replace(/\.html$/, "")} -->\n${ids(markup)}\n`).toBe(read(dir, file));
 
