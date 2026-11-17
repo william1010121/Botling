@@ -338,9 +338,17 @@ export class BotWorkers {
 
   /** Whether worker `id` is the one a `<card>` of this chat started (all of the chat's lines, not only the recent ones: a card is followed up on for as long as it stands). */
   private isCardWorker(id: string): boolean {
-    for (let i = this.records.length - 1; i >= 0; i--) if (this.records[i]!.workerCards?.some((card) => card.taskId === id)) return true;
+    if (this.cardWorkerIds.has(id)) return true;
+    for (let i = this.records.length - 1; i >= 0; i--) {
+      if (!this.records[i]!.workerCards?.some((card) => card.taskId === id)) continue;
+      // A worker that is a card's stays so (its id is never given to another): found once, then a lookup, however long the chat.
+      this.cardWorkerIds.add(id);
+      return true;
+    }
     return false;
   }
+
+  private readonly cardWorkerIds = new Set<string>();
 
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
   workerReport(text: string, workerId?: string): boolean {
@@ -389,6 +397,8 @@ export class BotWorkers {
   workerNote(note: Pick<WorkerNote, "kind" | "name" | "message" | "files"> & { id?: string }, text: string): boolean {
     const bot = this.options.primary ?? this.host;
     if (this.shuttingDown || this.problem || this.profile.problem || bot.shuttingDown) return false;
+    // A card's worker at work (an interim note) says nothing to the head, as its report does not: the card is where the user follows it. Its question still reaches the head.
+    if (note.kind === "report" && note.id && this.isCardWorker(note.id)) return true;
     try {
       bot.add({ id: newId(), role: "relay", text: workerNoteLine(note), date: toSwiftDate() });
       this.owner.options.workerNoted?.({ ...(note.id ? { id: note.id } : {}), kind: note.kind, message: note.message });

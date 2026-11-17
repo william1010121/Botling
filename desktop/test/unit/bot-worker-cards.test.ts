@@ -203,6 +203,30 @@ describe("a card's worker reports to its card, never to the head", () => {
   });
 });
 
+describe("a card's worker's notes", () => {
+  it("an interim note (kind report) of a card's worker neither draws a relay line nor wakes the head; its question still does, and another worker's note is unchanged", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Prices">Go.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const sent = () => fixture.heads.reduce((n, head) => n + head.sent.length, 0);
+    const relays = () => r.peek.records.filter((line: any) => line.role === "relay").length;
+    const before = sent(), relaysBefore = relays();
+    const note = (id: string, kind: "report" | "question") => r.peek.workers.workerNote({ id, kind, name: "Prices", message: "halfway", files: [] }, `<app_worker_note task_id="${id}" run="1" kind="${kind}">\nhalfway\n</app_worker_note>`);
+    expect(note("T1", "report")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent()).toBe(before);
+    expect(relays()).toBe(relaysBefore);
+    // Controls: the card worker's question, and another worker's report note, reach the head as before.
+    expect(note("T1", "question")).toBe(true);
+    await waitFor("the question to reach the head", () => sent() > before);
+    expect(relays()).toBe(relaysBefore + 1);
+    const afterQuestion = sent();
+    expect(note("OTHER", "report")).toBe(true);
+    await waitFor("the other note to reach the head", () => sent() > afterQuestion || relays() === relaysBefore + 2);
+    expect(relays()).toBe(relaysBefore + 2);
+  });
+});
+
 describe("a card follows its worker", () => {
   it("a card bound to a worker the ledger does not have at the next start shows as interrupted, not at work for ever", async () => {
     const r = rig();
