@@ -3,6 +3,7 @@ import { openMedia } from "./lightbox";
 import { mediaSrc } from "./markdown";
 import { frameOf } from "./frame-protocol";
 import type { Action, ComponentInfo, PinSize } from "./types";
+import { componentTokensCss, onComponentTokens } from "./component-tokens";
 import { chatSize, resizeFrame, answerPicks, saveLimit, componentPage, type Surface, type AnswerImage, type ComponentAnswer, type AnswerHandler, type SaveHandler, type ComponentFrame, type DetailTarget } from "./component-page";
 // drawBehind and reportControl are still in components.ts (M7-S30c moves them); both are used only when called, not at import.
 import { drawBehind, reportControl } from "./components";
@@ -147,6 +148,27 @@ export function buildNear(): void {
     work();
   }
 }
+
+/**
+ * The tokens changed (component-tokens.ts): every component frame on this page that was built with tokens is told the new
+ * stylesheet (it keeps what it shows); one built without (no plugin had set any then) is built again with them, as a frame
+ * that was not built yet is. A frame that is not on the page is left alone.
+ */
+export function applyTokens(root: ParentNode = document): void {
+  const css = componentTokensCss();
+  for (const frame of root.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
+    // Not built yet: its page is made again, so it is built with the tokens of the time it comes near.
+    if (frame.ccbPending != null) {
+      if (frame.ccbBuild) { frame.ccbPending = frame.ccbBuild(); frame.ccbTokens = css !== ""; }
+      continue;
+    }
+    if (frame.ccbTokens) { frame.contentWindow?.postMessage({ ccbTokens: css }, "*"); continue; }
+    if (!frame.ccbBuild || css === "") continue;
+    frame.ccbTokens = true;
+    frame.srcdoc = frame.ccbBuild();
+  }
+}
+onComponentTokens(() => applyTokens());
 
 /** Stops waiting for the frames and cards in `root` to come near: they are gone from the page. */
 export function releaseFrames(root: Element): void {
@@ -328,6 +350,9 @@ export function componentElement(
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
   const page = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave);
+  // Built with tokens, it takes later changes live; built without, a first set rebuilds it (`applyTokens`). It is rebuilt from what it shows now.
+  frame.ccbTokens = componentTokensCss() !== "";
+  frame.ccbBuild = () => componentPage(info.template, frame.ccbData ?? data, frame.ccbImages ?? {}, frame.ccbSize ?? drawnSize, surface, fill, !!onSave);
   if (lazy && whenNear(frame, () => buildFrame(frame))) {
     // A placeholder until it comes near, as tall as it will be (or a guess, kept from then on).
     frame.ccbPending = page;

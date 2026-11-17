@@ -149,6 +149,8 @@ export const PluginsView = z.strictObject({
   /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional(), locales: z.record(z.string().max(20), z.strictObject({ title: z.string().max(400).optional(), alt: z.string().max(400).optional(), hint: z.string().max(400).optional() })).optional(), when: TabWhenView.optional() })).max(200).optional(),
+  /** The component tokens plugins set (`contributes.componentTokens`, the choice of their own setting): CSS variables for every component frame, merged and cleaned; absent when none. */
+  componentTokens: z.record(z.string().max(64), z.string().max(100)).refine((tokens) => Object.keys(tokens).length <= 64).optional(),
   /** Plugin views that are tabs beside Chat / Storage (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
   // forRole "marked": only the bots in `bots` (the plugin's `ui.showTab`); chat "float": the bot's chat floats over the tab (as the Note tab's).
   mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any", "marked"]),

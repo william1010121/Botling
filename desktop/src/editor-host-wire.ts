@@ -79,6 +79,9 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(direction==='down'&&value.botling==='runCommand')return keys(value,['botling','id'])&&typeof value.id==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test(value.id);
  // How the app page's ApprovalSheet ended for a web part's ask (botling.board's pin commands: App.tsx approvalRequest).
  if(direction==='down'&&value.botling==='approvalReply')return keys(value,['botling','requestId','allowed'])&&Number.isSafeInteger(value.requestId)&&value.requestId>=0&&typeof value.allowed==='boolean';
+ // The component tokens plugins set (chat-frame/entry.ts, Web/src/component-tokens.ts): down, the whole set, at most 64 names and short values.
+ if(direction==='down'&&value.botling==='componentTokens')return keys(value,['botling','tokens'])&&object(value.tokens)&&Object.keys(value.tokens).length<=64
+  &&Object.entries(value.tokens).every(([name,token])=>name.length<=64&&typeof token==='string'&&token.length<=100);
  if(direction==='down')return ['shortcuts','state','stateDelta','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);

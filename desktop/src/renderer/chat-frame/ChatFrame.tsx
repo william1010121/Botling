@@ -26,6 +26,7 @@ import { asksUser, cardApprove, cardRun } from "../card-approval";
 import { FloatingChat, floatChatMessage, resendFloatChrome } from "../FloatingChat";
 import { focusComposer, runPluginCommand } from "../rail-parts";
 import { leaveMarks, pinnedNumber } from "../app-shared";
+import { setComponentTokens } from "../../../../Web/src/component-tokens";
 
 /** The reused chat page, in a frame. */
 export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, askAbout = null, onAskDone, bubbleBot = null, look = "original", stripLine = "" }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
@@ -130,6 +131,11 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
     }, () => {});
   }, [client]);
   useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, plugins]);
+  // The component tokens plugins set: this page's own pages (the Note tab's cards) are built with them from now on, and the chat page, which
+  // draws the chat's, Board's and pins' frames, is told the whole set (again when it reloads), so frames on screen change at once.
+  const tokenText = JSON.stringify(plugins?.componentTokens ?? {});
+  const pushTokens = useCallback(() => postToChat({ botling: "componentTokens", tokens: store.getView().plugins?.componentTokens ?? {} }), [store]);
+  useEffect(() => { setComponentTokens(JSON.parse(tokenText)); if (ready.current) pushTokens(); }, [pushTokens, tokenText]);
   // The chat page relays the app's keys too, so it is told which they are (again when it reloads).
   const savedShortcuts = useSyncExternalStore(store.subscribe, () => store.getView().settings?.shortcuts);
   const shortcutBindings = useMemo(() => bindingsFor(savedShortcuts), [savedShortcuts]);
@@ -336,6 +342,7 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
           // A page that (re)loaded has no plugins yet.
           lastSpecs.current = "";
           pushPlugins();
+          pushTokens();
           pushShortcuts();
           return;
         case "resync":
@@ -603,7 +610,7 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
     const bridge = nativeEditor();
     if (bridge) return bridge.subscribe(packet => {
       if ("unbound" in packet) { ready.current = false; lastSpecs.current = ""; channel.reset(); }
-      else if ("bound" in packet) { ready.current = true; lastSpecs.current = ""; push(); pushPlugins(); }
+      else if ("bound" in packet) { ready.current = true; lastSpecs.current = ""; push(); pushPlugins(); pushTokens(); }
       else if ("snapshot" in packet) setSnapshot(packet.snapshot ? {image:packet.snapshot,revision:packet.revision} : null);
       else receive(packet.message as FrameMessage);
     });
@@ -612,7 +619,7 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, push, pushPlugins, store, channel]);
+  }, [client, push, pushPlugins, pushTokens, store, channel]);
 
   const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)}
     bubble={bubble ? { bot: bubble, look, on: reportChat, onOpen: setReportChat, line: stripLine } : undefined} /> : null;

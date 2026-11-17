@@ -117,6 +117,16 @@ it('passes a plugin command the shell asks the chat page to run, and how a page 
  expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:3,allowed:'yes'})).toBe(false);
  expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:-1,allowed:false})).toBe(false);
  expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:3,allowed:true,extra:1})).toBe(false);
+ // The component tokens plugins set (ChatFrame.pushTokens → chat-frame/entry.ts setComponentTokens): the whole set, down only.
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{}})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{'--ccb-density-space':'4px'}})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{'--ccb-a':4}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{['--ccb-'+'a'.repeat(60)]:'1px'}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{'--ccb-a':'x'.repeat(101)}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:Object.fromEntries(Array.from({length:65},(_,i)=>['--ccb-n'+i,'1px']))})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:['--ccb-a']})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'componentTokens',tokens:{},extra:1})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'componentTokens',tokens:{}})).toBe(false);
  // Sent only to an iframe chat page (the takeover's), never across this wire: still refused.
  expect(editorMessageAllowed('down',{botling:'pluginEvent',plugin:'x',name:'y',data:null})).toBe(false);
 });

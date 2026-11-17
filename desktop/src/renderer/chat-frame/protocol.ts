@@ -86,6 +86,8 @@ export type ShellMessage =
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
   /** Where a component frame's page is served (null: refused). */
   | { botling: "page"; id: number; url: string | null }
+  /** The component tokens plugins set (`contributes.componentTokens`), the whole set: every component frame takes them, live (Web/src/component-tokens.ts). */
+  | { botling: "componentTokens"; tokens: Record<string, string> }
   /** Plugins' web parts to run in the page (`ccb.setPlugins`), the built-in ones (ccb-latex) among them. */
   | { botling: "plugins"; specs: WebPluginSpecView[] }
   /** A web part's `ccb.host.call` was answered (`ccb.hostReply`). */
