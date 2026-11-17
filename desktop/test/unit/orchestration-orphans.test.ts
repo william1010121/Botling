@@ -415,6 +415,21 @@ describe("the book keeps the truth when things go wrong", () => {
     expect(kept).toContain("OLD999");
   });
 
+  it("B2 (no cap since 2026-11-17): past 1000 rows the closed rows of the last day go too, oldest first; a row at work or owed stays", async () => {
+    const now = Date.now();
+    const row = (task: string, at: number, extra: Record<string, unknown> = {}) => ({ plugin: "p", bot: "main", task, at, open: false, reported: 1, stopped: false, hash: H1, ...extra });
+    const rows = [
+      row("OWED", now - 7_200_000, { owed: [{ run: 2, status: "completed", report: "x" }] }),
+      ...Array.from({ length: 1_005 }, (_, n) => row(`DAY${n}`, now - 3_600_000 + n)),
+    ];
+    const t = book(undefined, { text: JSON.stringify(rows) }, { quota: { atOnce: 4, perDay: 2_000 }, taken: false });
+    expect(await t.workers.start("p", params)).toEqual({ taskId: "T1", run: 1 });
+    const kept = t.rows().map((entry) => entry.task);
+    expect(kept.length).toBe(1_000);
+    for (const task of ["OWED", "T1", "DAY1004"]) expect(kept, task).toContain(task);
+    expect(kept).not.toContain("DAY0");
+  });
+
   it("B3: a worker that ended without this book hearing of it frees its place when the next one is asked for, and is told once", async () => {
     const core = fakeCore(), file = { text: null as string | null };
     await book(core, file, { quota: { atOnce: 1 } }).workers.start("p", params);

@@ -5,10 +5,10 @@
 
    The owner of every worker is the bot it runs for (plan M7-O01 Q1 A); the plugin holds a revocable route: the book
    (`<dataDir>/plugin-workers.json`, one entry per worker here) remembers which plugin and which hash started it, its
-   place in the quota, whether the plugin may still send to it or cancel it (`handed`: given back to core), and the
+   place in the counts (at work, started in the day), whether the plugin may still send to it or cancel it (`handed`: given back to core), and the
    plugin's own copy of each run's end (`reported` is the cursor, `owed` the copies not taken by its host yet).
 
-     workers.start: gate (on, granted, room; pickUp first) --written by a bot--> card --Allow + recheck--> reserved
+     workers.start: gate (on, granted; pickUp first) --written by a bot--> card --Allow + recheck--> reserved
                     reserved --PortStart (ledger: running, startedBy)--> --StartReturn (task id)--> live
      End: the bot is owed the report (rep pending, BotTake); the book owes the plugin a copy (cursor), told when its host
           listens and the plugin is still that hash with its grant
@@ -20,6 +20,10 @@
    The bot's own handling of a report (turns, checkpoint, routing to another bot) is spec/models/worker; here the bot
    just takes it (BotTake). A worker the bot starts after a plugin's message is OrchestrationHeard.tla.
 
+   No cap (2026-11-17, the user: "不限定，告警就好"): a start or a send is never refused for how many a plugin has. The
+   counts stay exact (a place is taken before the first await, freed when the worker is gone) and feed a warning: the
+   step that takes a plugin past a threshold (AtOnce at work, PerDay started) tells the user, once per crossing.
+
    Code = "today" is the code at c1b17be2; Code = "fixed" adds the three fixes this model asks for (see the cfgs
    Orchestration_today_*.cfg for the counterexamples). Model only for now: a reference and conformance test follow
    the product fixes (.bot/artifacts/v3-orch/M7-O05.md). *)
@@ -30,8 +34,8 @@ CONSTANTS
   Hashes,      \* code identities (sha256 of the manifest in 2.x)
   Workers,     \* worker slots (task ids)
   MaxRun,      \* runs per worker (the start is run 1, each workers.send that starts a run adds one)
-  AtOnce,      \* quota: a plugin's workers at work at once (settings orchestrateQuota.atOnce)
-  PerDay,      \* quota: a plugin's starts in 24 hours (no time passes here: the bound for a behaviour)
+  AtOnce,      \* warning threshold: more than this many of a plugin's workers at work (settings orchestrateQuota.atOnce)
+  PerDay,      \* warning threshold: more than this many started in 24 hours (no time passes here: the whole behaviour)
   MaxCrash,    \* app restarts in one behaviour
   MaxChanges,  \* plugin changes in one behaviour (disable, enable, replace, revoke, grant)
   Written,     \* the plugins a bot wrote (unknown counts as written): a card for every worker
@@ -40,19 +44,21 @@ CONSTANTS
 
 ASSUME Written \subseteq Plugins /\ Code \in {"today", "fixed"}
 ASSUME Bug \in {"none", "pluginowner", "nocursor", "nohash", "nohandback", "norecheck", "nogrant", "latereserve",
-                "nopickup", "notag", "noday", "fullrights", "retell", "botskip"}
+                "nopickup", "notag", "noday", "fullrights", "retell", "botskip", "earlyrearm"}
 
-VARIABLES pl, wk, ent, told, crashes, changes
-vars == <<pl, wk, ent, told, crashes, changes>>
+VARIABLES pl, wk, ent, told, crashes, changes,
+  warned,      \* the book's flags (`warned`, in memory): this plugin was told it is past this threshold
+  said         \* the warnings the last step gave (per plugin, a set of Kinds): what the user saw, for the properties
+vars == <<pl, wk, ent, told, crashes, changes, warned, said>>
 
 Runs == 1..MaxRun
+Kinds == {"atOnce", "perDay"}
 Idle == {"ended", "stopped", "interrupted"}
 NoEnt == [st |-> "none", plugin |-> "none", hash |-> "none", open |-> FALSE, reported |-> 0, stopped |-> FALSE,
           stopping |-> FALSE, sending |-> "no", handed |-> FALSE, owed |-> {}]
 
 TypeOK ==
-  /\ pl \in [Plugins -> [on: BOOLEAN, hash: Hashes, granted: BOOLEAN, listen: BOOLEAN, card: Workers \cup {"none"},
-                         starts: 0..PerDay + 2]]
+  /\ pl \in [Plugins -> [on: BOOLEAN, hash: Hashes, granted: BOOLEAN, listen: BOOLEAN, card: Workers \cup {"none"}]]
   /\ wk \in [Workers -> [status: {"new", "running"} \cup Idle, run: 0..MaxRun, owner: {"none", "bot"} \cup Plugins,
                          rep: {"none", "pending", "taken"}, by: Plugins \cup {"none"}, hash: Hashes \cup {"none"},
                          fewer: BOOLEAN, evt: BOOLEAN]]
@@ -62,6 +68,7 @@ TypeOK ==
                           owed: SUBSET Runs]]
   /\ told \in [Workers -> [bot: [Runs -> 0..3], plugin: [Runs -> 0..3]]]
   /\ crashes \in 0..MaxCrash /\ changes \in 0..MaxChanges
+  /\ warned \in [Plugins -> [Kinds -> BOOLEAN]] /\ said \in [Plugins -> SUBSET Kinds]
 
 -----------------------------------------------------------------------------
 (* The book's rules, as operators on one entry. *)
@@ -69,10 +76,24 @@ TypeOK ==
 (* `allowed()`: loaded and on, and the user's grant (the declared permissions are fixed for a hash: left out). *)
 Authorized(p) == pl[p].on /\ (pl[p].granted \/ Bug = "nogrant")
 
-(* `full()`: an open entry is a place taken (a reservation too: the room is taken before the first await). *)
+(* `counts()`: an open entry is a place taken at work (a reservation too: the place is taken before the first await);
+   every row of the plugin is a start of the day (a cut-off reservation, "lost", too: the book keeps it as a row). *)
 Counted(e) == e.st \in {"reserved", "live"} /\ e.open /\ (Bug # "latereserve" \/ e.st = "live")
 OpenIn(p, E) == Cardinality({w \in Workers : E[w].plugin = p /\ Counted(E[w])})
-FullIn(p, E) == OpenIn(p, E) >= AtOnce \/ (pl[p].starts >= PerDay /\ Bug # "noday")
+DayCounts(e) == e.st \in {"reserved", "live"} \/ (e.st = "lost" /\ Bug # "noday")
+DayIn(p, E) == Cardinality({w \in Workers : E[w].plugin = p /\ DayCounts(E[w])})
+Count(p, E, k) == IF k = "atOnce" THEN OpenIn(p, E) ELSE DayIn(p, E)
+Limit(k) == IF k = "atOnce" THEN AtOnce ELSE PerDay
+
+(* The warning, in the step that takes a place (E0 the book before it, E1 after it). `rearm()` first: a flag whose count
+   is back under its threshold clears; then `warnIfPast()`: a count past its threshold with no flag tells the user and
+   sets the flag. Nothing is refused. *)
+Rearm(p, E) == [k \in Kinds |-> warned[p][k] /\ Count(p, E, k) > Limit(k)]
+Notice(p, F, E1) == {k \in Kinds : Count(p, E1, k) > Limit(k) /\ ~F[k]}
+WarnWith(p, F, E1) == /\ said' = [q \in Plugins |-> IF q = p THEN Notice(p, F, E1) ELSE {}]
+                      /\ warned' = [warned EXCEPT ![p] = [k \in Kinds |-> F[k] \/ k \in Notice(p, F, E1)]]
+Warn(p, E0, E1) == WarnWith(p, Rearm(p, E0), E1)
+Quiet == said' = [p \in Plugins |-> {}]
 
 (* An entry is closed (its place freed). Fixed: never while a workers.send for it is in flight (its run is coming). *)
 Shut(e) == IF Code = "fixed" /\ e.sending # "no" THEN e ELSE [e EXCEPT !.open = FALSE]
@@ -121,24 +142,33 @@ Reserved(p) == [NoEnt EXCEPT !.st = "reserved", !.plugin = p, !.hash = pl[p].has
 -----------------------------------------------------------------------------
 (* The plugin's requests. *)
 
-(* workers.start (and `gate()`): pickUp first, then the checks; a plugin a bot wrote gets a card (one at a time). *)
+(* workers.start (and `gate()`): pickUp first, then the checks (no count among them); a plugin a bot wrote gets a card
+   (one at a time), any other takes its place now. Bug earlyrearm: the warning is re-armed here, in the gate, and not
+   again when the card's answer takes the place. *)
 PluginStart(p, w) ==
   /\ wk[w].status = "new" /\ ent[w].st = "none"
   /\ Authorized(p)
-  /\ ~FullIn(p, PickEnt)
   /\ (p \in Written => pl[p].card = "none")
-  /\ ent' = [PickEnt EXCEPT ![w] = IF p \in Written THEN [NoEnt EXCEPT !.st = "card", !.plugin = p, !.hash = pl[p].hash]
-                                   ELSE Reserved(p)]
+  /\ LET E1 == [PickEnt EXCEPT ![w] = IF p \in Written THEN [NoEnt EXCEPT !.st = "card", !.plugin = p, !.hash = pl[p].hash]
+                                      ELSE Reserved(p)] IN
+     /\ ent' = E1
+     /\ IF p \in Written
+        THEN /\ Quiet
+             /\ warned' = IF Bug = "earlyrearm" THEN [warned EXCEPT ![p] = Rearm(p, PickEnt)] ELSE warned
+        ELSE Warn(p, PickEnt, E1)
   /\ told' = PickTold
-  /\ pl' = IF p \in Written THEN [pl EXCEPT ![p].card = w] ELSE [pl EXCEPT ![p].starts = @ + 1]
+  /\ pl' = IF p \in Written THEN [pl EXCEPT ![p].card = w] ELSE pl
   /\ UNCHANGED <<wk, crashes, changes>>
 
 (* The card is answered (a timeout is a refusal). Allow: the facts are checked again (authority at use). *)
 CardAnswer(p, allow) == LET w == pl[p].card IN
   /\ w # "none"
-  /\ LET ok == allow /\ (Bug = "norecheck" \/ (Authorized(p) /\ pl[p].hash = ent[w].hash /\ ~FullIn(p, ent))) IN
-     /\ ent' = [ent EXCEPT ![w] = IF ok THEN [Reserved(p) EXCEPT !.hash = ent[w].hash] ELSE NoEnt]
-     /\ pl' = [pl EXCEPT ![p].card = "none", ![p].starts = IF ok THEN @ + 1 ELSE @]
+  /\ LET ok == allow /\ (Bug = "norecheck" \/ (Authorized(p) /\ pl[p].hash = ent[w].hash))
+         E1 == [ent EXCEPT ![w] = IF ok THEN [Reserved(p) EXCEPT !.hash = ent[w].hash] ELSE NoEnt] IN
+     /\ ent' = E1
+     /\ pl' = [pl EXCEPT ![p].card = "none"]
+     /\ IF ~ok THEN Quiet /\ UNCHANGED warned
+        ELSE IF Bug = "earlyrearm" THEN WarnWith(p, warned[p], E1) ELSE Warn(p, ent, E1)
   /\ UNCHANGED <<wk, told, crashes, changes>>
 
 (* `port.start`: the bot's worker host records the worker (startedBy) and starts run 1: the owner is the bot. *)
@@ -146,23 +176,25 @@ PortStart(w) == LET e == ent[w] IN
   /\ e.st = "reserved" /\ wk[w].status = "new"
   /\ wk' = [wk EXCEPT ![w].status = "running", ![w].run = 1, ![w].rep = "none", ![w].by = e.plugin, ![w].hash = e.hash,
                       ![w].fewer = (Bug # "fullrights"), ![w].owner = IF Bug = "pluginowner" THEN e.plugin ELSE "bot"]
-  /\ UNCHANGED <<pl, ent, told, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, ent, told, crashes, changes, warned>>
 
 (* The start failed: its place is given back (`forget`). *)
 PortFail(w) == ent[w].st = "reserved" /\ wk[w].status = "new"
-  /\ ent' = [ent EXCEPT ![w] = NoEnt] /\ UNCHANGED <<pl, wk, told, crashes, changes>>
+  /\ ent' = [ent EXCEPT ![w] = NoEnt] /\ Quiet /\ UNCHANGED <<pl, wk, told, crashes, changes, warned>>
 
 (* The handoff returned its task id: written into the entry. *)
 StartReturn(w) == ent[w].st = "reserved" /\ wk[w].status # "new"
-  /\ ent' = [ent EXCEPT ![w].st = "live"] /\ UNCHANGED <<pl, wk, told, crashes, changes>>
+  /\ ent' = [ent EXCEPT ![w].st = "live"] /\ Quiet /\ UNCHANGED <<pl, wk, told, crashes, changes, warned>>
 
-(* workers.send to an idle worker: the place is taken again (not the day's count), then `port.send` is awaited. *)
+(* workers.send to an idle worker: the place is taken again (not the day's count; never refused for the count, warned
+   like a start when it was closed), then `port.send` is awaited. *)
 SendAsk(p, w) == LET e == ent[w] IN
   /\ Mine(p, w) /\ Authorized(p) /\ e.sending = "no" /\ ~e.stopping
   /\ wk[w].status \in Idle /\ wk[w].run < MaxRun
-  /\ e.open \/ OpenIn(p, ent) < AtOnce
   /\ Code = "fixed" => wk[w].rep # "pending"
-  /\ ent' = [ent EXCEPT ![w].open = TRUE, ![w].stopped = FALSE, ![w].sending = IF e.open THEN "wasOpen" ELSE "wasClosed"]
+  /\ LET E1 == [ent EXCEPT ![w].open = TRUE, ![w].stopped = FALSE, ![w].sending = IF e.open THEN "wasOpen" ELSE "wasClosed"] IN
+     /\ ent' = E1
+     /\ IF e.open THEN Quiet /\ UNCHANGED warned ELSE Warn(p, ent, E1)
   /\ UNCHANGED <<pl, wk, told, crashes, changes>>
 
 (* `port.send` answers: a new run (a report the bot was not handed yet is dropped, as any next run drops it), or a
@@ -174,11 +206,11 @@ SendDone(w, ok) == LET e == ent[w] IN
           /\ ent' = [ent EXCEPT ![w].sending = "no"]
      ELSE /\ ent' = [ent EXCEPT ![w].sending = "no", ![w].open = (e.sending = "wasOpen")]
           /\ UNCHANGED wk
-  /\ UNCHANGED <<pl, told, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, told, crashes, changes, warned>>
 
 (* workers.cancel: marked stopped before the stop is awaited. *)
 CancelAsk(p, w) == Mine(p, w) /\ ~ent[w].stopping /\ ent[w].sending = "no"
-  /\ ent' = [ent EXCEPT ![w].stopped = TRUE, ![w].stopping = TRUE] /\ UNCHANGED <<pl, wk, told, crashes, changes>>
+  /\ ent' = [ent EXCEPT ![w].stopped = TRUE, ![w].stopping = TRUE] /\ Quiet /\ UNCHANGED <<pl, wk, told, crashes, changes, warned>>
 
 (* The stop answers: it stopped the run (no report, the place freed), or the run had ended on its own first (that end
    is a report like any other: the mark is put back and pickUp looks). *)
@@ -191,7 +223,7 @@ CancelDone(w) ==
           /\ ent' = [x \in Workers |-> FlushE(PickE(x, e1[x]))]
           /\ told' = [x \in Workers |-> FlushT(PickE(x, e1[x]), told[x])]
           /\ UNCHANGED wk
-  /\ UNCHANGED <<pl, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, crashes, changes, warned>>
 
 -----------------------------------------------------------------------------
 (* The worker and its owner. *)
@@ -203,25 +235,25 @@ End(w) == LET r == wk[w] IN
   /\ wk' = [wk EXCEPT ![w].status = "ended", ![w].evt = TRUE, ![w].rep = IF r.owner = "bot" THEN "pending" ELSE "none"]
   /\ ent' = [ent EXCEPT ![w] = FlushE(EndedE(ent[w], r.run))]
   /\ told' = [told EXCEPT ![w] = FlushT(EndedE(ent[w], r.run), told[w])]
-  /\ UNCHANGED <<pl, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, crashes, changes, warned>>
 
 (* Another non-running `subagent.updated` for the same run (plugin-side.ts calls workerEnded on each one). *)
 EndAgain(w) == wk[w].evt /\ wk[w].status \in Idle
   /\ ent' = [ent EXCEPT ![w] = FlushE(EndedE(ent[w], wk[w].run))]
   /\ told' = [told EXCEPT ![w] = FlushT(EndedE(ent[w], wk[w].run), told[w])]
-  /\ UNCHANGED <<pl, wk, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, wk, crashes, changes, warned>>
 
 (* The bot (the owner) is handed its report. *)
 BotTake(w) == wk[w].rep = "pending" /\ (Bug # "botskip" \/ wk[w].by = "none")
   /\ wk' = [wk EXCEPT ![w].rep = IF Bug = "retell" THEN "pending" ELSE "taken"]
   /\ told' = [told EXCEPT ![w].bot[wk[w].run] = @ + 1]
-  /\ UNCHANGED <<pl, ent, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<pl, ent, crashes, changes, warned>>
 
 -----------------------------------------------------------------------------
 (* The plugin changes (the user, or a bot editing its code), and its host. *)
 
 Change(p, P) == changes < MaxChanges /\ changes' = changes + 1 /\ pl' = P /\ ent' = Reconcile(P)
-  /\ UNCHANGED <<wk, told, crashes>>
+  /\ Quiet /\ UNCHANGED <<wk, told, crashes, warned>>
 
 Disable(p) == pl[p].on /\ Change(p, [pl EXCEPT ![p].on = FALSE, ![p].listen = FALSE])
 Enable(p) == ~pl[p].on /\ Change(p, [pl EXCEPT ![p].on = TRUE])
@@ -239,9 +271,9 @@ Register(p) == pl[p].on /\ ~pl[p].listen
                   IF e.owed # {} /\ MayHear(e) /\ P[e.plugin].listen
                   THEN [told[w] EXCEPT !.plugin = [r \in Runs |-> told[w].plugin[r] + (IF r \in e.owed THEN 1 ELSE 0)]]
                   ELSE told[w]]
-  /\ UNCHANGED <<wk, crashes, changes>>
+  /\ Quiet /\ UNCHANGED <<wk, crashes, changes, warned>>
 
-(* The app goes away and comes back. *)
+(* The app goes away and comes back (the warning flags were in memory: gone). *)
 Crash == crashes < MaxCrash /\ crashes' = crashes + 1
   /\ wk' = [w \in Workers |-> [wk[w] EXCEPT !.status = IF @ = "running" THEN "interrupted" ELSE @, !.evt = FALSE,
                                             !.by = IF Bug = "notag" THEN "none" ELSE @,
@@ -253,18 +285,20 @@ Crash == crashes < MaxCrash /\ crashes' = crashes + 1
                  [] OTHER -> [e EXCEPT !.stopping = FALSE, !.sending = "no",
                                        !.stopped = IF Code = "fixed" /\ e.open THEN FALSE ELSE @]]
   /\ pl' = [p \in Plugins |-> [pl[p] EXCEPT !.listen = FALSE, !.card = "none"]]
+  /\ warned' = [p \in Plugins |-> [k \in Kinds |-> FALSE]] /\ Quiet
   /\ UNCHANGED <<told, changes>>
 
 -----------------------------------------------------------------------------
 
 Init ==
   /\ pl = [p \in Plugins |-> [on |-> TRUE, hash |-> CHOOSE h \in Hashes : TRUE, granted |-> TRUE, listen |-> FALSE,
-                              card |-> "none", starts |-> 0]]
+                              card |-> "none"]]
   /\ wk = [w \in Workers |-> [status |-> "new", run |-> 0, owner |-> "none", rep |-> "none", by |-> "none",
                               hash |-> "none", fewer |-> FALSE, evt |-> FALSE]]
   /\ ent = [w \in Workers |-> NoEnt]
   /\ told = [w \in Workers |-> [bot |-> [r \in Runs |-> 0], plugin |-> [r \in Runs |-> 0]]]
   /\ crashes = 0 /\ changes = 0
+  /\ warned = [p \in Plugins |-> [k \in Kinds |-> FALSE]] /\ said = [p \in Plugins |-> {}]
 
 Next ==
   \/ Crash
@@ -303,11 +337,17 @@ PluginToldOnce == \A w \in Workers : \A r \in Runs : told[w].plugin[r] <= 1
 EndOwesBot == \A w \in Workers : wk[w].status = "ended" => wk[w].rep # "none"
 (* P-O1: what the owner is owed leaves only by being handed to it (a plugin never drops it). *)
 BotNotSkipped == [][\A w \in Workers : wk[w].rep = "pending" => wk'[w].rep \in {"pending", "taken"}]_vars
-(* P-O5: a plugin's workers at work never exceed its quota, nor do the places it holds; nor its starts. *)
-AtOnceHolds == \A p \in Plugins : Cardinality({w \in Workers : wk[w].status = "running" /\ wk[w].by = p}) <= AtOnce
-PlacesHold == \A p \in Plugins : OpenIn(p, ent) <= AtOnce
-PerDayHolds == \A p \in Plugins : pl[p].starts <= PerDay
-(* P-O5 / P-O6: when a start counts the room (after its pickUp), every place still taken is a worker at work, one being
+(* P-O5 (no cap since 2026-11-17, so the counts, not a limit): every worker of a plugin at work holds a counted place
+   (the warning's count is never short, a reservation included), and every worker a plugin started is one of its
+   starts of the day, also after a restart cut it off. *)
+RunningCounted == \A w \in Workers : wk[w].status = "running" /\ wk[w].by \in Plugins => Counted(ent[w])
+DayCounted == \A w \in Workers : wk[w].by \in Plugins => ent[w].plugin = wk[w].by /\ DayCounts(ent[w])
+(* The warning: the step that takes a plugin past a threshold tells the user (once per crossing: the flag stops a second
+   notice until a place is taken with the count back under it, or a restart forgot it); a notice is never false. *)
+WarnsEachCrossing == [][\A p \in Plugins, k \in Kinds :
+  Count(p, ent, k) <= Limit(k) /\ Count(p, ent', k) > Limit(k) => k \in said'[p]]_vars
+WarnsOnlyPast == \A p \in Plugins, k \in Kinds : k \in said[p] => Count(p, ent, k) > Limit(k)
+(* P-O5 / P-O6: when a start counts the places (after its pickUp), every place still taken is a worker at work, one being
    started, or one with a send or a cancel under way: a worker that ended, was stopped, cut off by a restart or handed
    back never holds a place against the next start. *)
 PlacesAreReal == \A w \in Workers :

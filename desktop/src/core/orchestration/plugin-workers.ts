@@ -147,12 +147,14 @@ export class PluginWorkers {
   private save() {
     const now = this.now();
     this.entries = this.entries.filter((entry) => entry.open || entry.at > now - KEEP);
-    // Over the most: the oldest rows that nothing counts any more go (closed, older than a day, nothing owed). A row at work,
-    // one from the last day (the quota counts it) or one with a report owed is never the one forgotten.
+    // Over the most: the oldest rows that nothing needs go, first those older than a day, then (with no cap since 2026-11-17 a
+    // plugin can start any number in a day) closed rows of the last day, which only the day's warning counts. A row at work
+    // or one with a report owed is never the one forgotten.
     let excess = this.entries.length - MAX_ENTRIES;
-    if (excess > 0) {
+    for (const dayToo of [false, true]) {
+      if (excess <= 0) break;
       this.entries = this.entries.filter((entry) => {
-        if (excess <= 0 || entry.open || entry.at > now - DAY || entry.owed?.length) return true;
+        if (excess <= 0 || entry.open || (!dayToo && entry.at > now - DAY) || entry.owed?.length) return true;
         excess -= 1;
         return false;
       });
@@ -188,12 +190,14 @@ export class PluginWorkers {
 
   /** Called before a place is taken: a plugin that has dipped back under a threshold since its last warning may be warned again when it crosses once more. */
   private rearm(plugin: string) {
-    const flags = this.warned.get(plugin);
-    if (!flags) return;
-    const { atOnce, perDay } = this.quota();
-    const { open, day } = this.counts(plugin);
-    if (open <= atOnce) flags.atOnce = false;
-    if (day <= perDay) flags.perDay = false;
+    try {
+      const flags = this.warned.get(plugin);
+      if (!flags) return;
+      const { atOnce, perDay } = this.quota();
+      const { open, day } = this.counts(plugin);
+      if (open <= atOnce) flags.atOnce = false;
+      if (day <= perDay) flags.perDay = false;
+    } catch { /* counting for a warning never stops a worker */ }
   }
 
   /**
@@ -273,7 +277,6 @@ export class PluginWorkers {
     }
     // A place held for a worker that has ended (or is gone) without this book hearing of it is free before the room is counted.
     this.pickUp();
-    this.rearm(plugin);
     return facts;
   }
 
@@ -285,6 +288,9 @@ export class PluginWorkers {
       this.allowed(facts.name, facts.identity);
     }
     const entry: Entry = { plugin: facts.name, bot: botId, task: null, at: this.now(), open: true, reported: 0, stopped: false, hash: facts.identity };
+    // Re-armed here, right before the place is taken (not in `gate`): a card may wait minutes, and a count that dipped under the
+    // threshold meanwhile and is crossed again by this place is a new crossing, told again.
+    this.rearm(facts.name);
     this.entries.push(entry);
     this.warnIfPast(facts.name);
     const forget = () => { this.entries = this.entries.filter((candidate) => candidate !== entry); this.persist(); };
