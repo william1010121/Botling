@@ -10,7 +10,7 @@ import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { inlineBlocksFor } from "../inline-blocks";
-import { BUILT_INS, COMPONENT_LIMIT, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
+import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
@@ -19,7 +19,7 @@ import { toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
 import { join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
-import { cardScriptCommand, readCards, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -254,15 +254,33 @@ export class BotCards {
     return show ? { record, display: this.cardDisplay(show), key: `${messageId}/${index}`, detail: false } : null;
   }
 
-  /** What the worker of a card is given besides the prompt: every component of the bot's with its usage, the rest of the library in a line each. */
+  /**
+   * What the worker of a card is given besides the prompt: the usage of every component of the bot's (its list, the library's built-ins and the
+   * ones the guidance names, `GUIDED_BUILT_INS`), whole component by whole component while they fit (`CARD_BRIEF_MAX`), and the rest of the library in a
+   * line each (`CARD_OTHERS_MAX`). A cut never lands inside a component's usage: what does not fit moves to the one-line list.
+   */
   cardBrief(): CardBrief | null {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
     const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
-    const own = this.ownComponents().filter(usable);
-    const others = library.names.filter((name) => !own.includes(name) && usable(name));
-    return { components: library.catalog(own), others: library.summaries(others), scriptsDir: this.cardRules().scriptsDir };
+    const builtIn = library.builtInNames();
+    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
+    const own = [...new Set([...this.ownComponents(), ...library.names.filter((name) => GUIDED_BUILT_INS.includes(name))])].filter(usable)
+      .sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const whole: string[] = [], moved: string[] = [];
+    let used = 0;
+    for (const name of own) {
+      const text = library.catalog([name]);
+      if (used + text.length + 1 > CARD_BRIEF_MAX) { moved.push(name); continue; }
+      used += text.length + 1;
+      whole.push(name);
+    }
+    const lines = library.summaries([...moved, ...library.names.filter((name) => !own.includes(name) && usable(name))]).split("\n");
+    let shown = 0, size = 0;
+    while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
+    const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
+    return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
   }
 
   /**

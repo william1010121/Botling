@@ -9,7 +9,8 @@
 // given every component with its usage and picks one; its report is untrusted (it may carry web text): only its words and components
 // with their own JSON are drawn, a `command` only when it runs a script under .bot/card-scripts (and the user allows it as for any
 // card), and the one request it may make is a component for Maintainer (`wants`, passed on once by bot/workers.ts).
-import { isAbsolute, resolve } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseReply, type CardRequest } from "./reply";
 import type { ChatRecord } from "./store/records";
 import { chipStatus, type WorkerLedgerRecord } from "./worker-core";
@@ -111,6 +112,8 @@ export interface CardBrief {
 
 /** The most characters of component usage the worker is given (the list is cut there, with a note). */
 export const CARD_BRIEF_MAX = 60_000;
+/** The most characters of the one-line list of the rest of the library (the lines beyond it are counted, not shown). */
+export const CARD_OTHERS_MAX = 20_000;
 
 /** What the worker is told: the bot's prompt, the card it fills, the components it may pick from and the rules it keeps. */
 export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">, brief?: CardBrief): string {
@@ -126,7 +129,23 @@ export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt"
 4. If a new component is worth it, end with <component name="short-english-name">what it shows, its data format, where the data comes from</component> instead of a <show>, and stop: the app tells you when it is built (or why not), and then you fill the card. Ask for one at most.
 5. Your words: one or two sentences on what the card shows, in the user's language.
 Components you may use, each with its usage:
-${components}${brief.others ? `\nAlso in the library, not on the bot's list (a <component name="name">add it to my list</component> asks Maintainer for one):\n${brief.others}` : ""})`;
+${components}${brief.others ? `\nAlso in the library, usage not shown here (end your report with <component name="name">its usage</component> for one of these: the app answers at once with its usage, and you then fill the card; it changes nothing in the library):\n${brief.others}` : ""})`;
+}
+
+/** The real path of `path`, or of its nearest existing ancestor with the rest of the name put back (a script not written yet). */
+function realOrNearest(path: string): string {
+  let at = resolve(path);
+  const rest: string[] = [];
+  for (let depth = 0; depth < 64; depth++) {
+    try { return join(realpathSync.native(at), ...rest.reverse()); } catch { /* not there yet, or a link that leads nowhere */ }
+    // Something is there that cannot be resolved (a dangling or looping link): it is not a place to trust, whatever it may point at later.
+    try { lstatSync(at); return "\0unresolved"; } catch { /* not there yet: its parent */ }
+    const parent = resolve(at, "..");
+    if (parent === at) break;
+    rest.push(basename(at));
+    at = parent;
+  }
+  return resolve(path);
 }
 
 /** The only commands a card keeps: a script under the card scripts folder, run by python3, node or bash with plain arguments. Null otherwise. */
@@ -140,7 +159,12 @@ export function cardScriptCommand(command: string, rules: Pick<CardRules, "scrip
   if (path.split("/").includes("..")) return null;
   const full = resolve(isAbsolute(path) ? path : resolve(rules.folder, path));
   const root = resolve(rules.scriptsDir);
-  return full.startsWith(`${root}/`) && !parsed[3]!.split(" ").some((arg) => arg.split("/").includes("..")) ? text : null;
+  if (!full.startsWith(`${root}/`) || parsed[3]!.split(" ").some((arg) => arg.split("/").includes(".."))) return null;
+  // By the real paths too (a symlinked folder or file under card-scripts that leads out, or `.bot` / card-scripts themselves a link, is no script of the card's). The folder
+  // the scripts must be in is the project folder's real path plus the same steps, never a path read through a link inside it. Checked again where the command runs.
+  const inside = relative(resolve(rules.folder), root);
+  const realRoot = inside && !inside.startsWith("..") && !isAbsolute(inside) ? join(realOrNearest(rules.folder), inside) : realOrNearest(root);
+  return realOrNearest(full).startsWith(`${realRoot}${sep}`) ? text : null;
 }
 
 /** A report as the card keeps it: its words, its components with their JSON (and a script command, see `cardScriptCommand`), and the component it asks for. Never another command or request. */

@@ -8,21 +8,21 @@ import { Core } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
 import { saveProjectRow } from "../../src/core/projects";
 import { componentKnowledgeFor, knowledgeChanges, knowledgeFull, VIA_CARDS_NOTE } from "../../src/core/components/library";
-import { cardInstructions } from "../../src/core/worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardInstructions } from "../../src/core/worker-cards";
 import { tempDir } from "../helpers";
 import { writeLibrary } from "../fixtures/components";
 
 const FLUX = "6AC64E3A-C7D7-4000-8000-000000000001";
 
 /** A library of the shape `componentKnowledgeFor` reads: names, one line each, a command for `gitlog`, two built-ins and the preview card. */
-function fake(names: string[]) {
+function fake(names: string[], builtIn: string[] = ["inline-chart", "inline-report-block"]) {
   const first: Record<string, string> = { "inline-chart": "Inline chart", "inline-report-block": "Inline report block", "網頁預覽卡片": "Preview card" };
   return {
     names,
     command: (name: string) => (name === "gitlog" ? "git log" : null),
     summaries: (of: string[]) => names.filter((name) => of.includes(name)).map((name) => `- ${name}: ${first[name] ?? `${name} card`}`).join("\n"),
     pinOnly: () => false,
-    builtInNames: () => ["inline-chart", "inline-report-block"],
+    builtInNames: () => builtIn,
   };
 }
 const NAMES = ["inline-chart", "inline-report-block", "網頁預覽卡片", "status", "todo", "gitlog", "eeg-board"];
@@ -34,6 +34,17 @@ describe("componentKnowledgeFor with the cards", () => {
     expect(k.others).toEqual([]);
     // status (its own), todo, gitlog, eeg-board (the shelf).
     expect(k.viaCards).toEqual({ hidden: 4 });
+  });
+
+  it("the guidance's built-ins stay whatever the library's tags say: an inline-report-block with no `Built-in: yes` line, the preview card under either name, even off the bot's list", () => {
+    // The shipped library: only inline-chart carries the tag; the preview card is `web-preview`, not the app's 「網頁預覽卡片」.
+    const names = ["inline-chart", "inline-report-block", "web-preview", "status", "todo"];
+    const k = componentKnowledgeFor(fake(names, ["inline-chart"]), ["status"], false, true);
+    expect(k.own.map((entry) => entry.name)).toEqual(["inline-chart", "inline-report-block", "web-preview"]);
+    expect(k.viaCards).toEqual({ hidden: 2 });
+    // The bot's own list changes nothing of what it is told (its cached front stays put).
+    expect(componentKnowledgeFor(fake(names, ["inline-chart"]), [], false, true)).toEqual(k);
+    expect(componentKnowledgeFor(fake(names, ["inline-chart"]), ["status", "todo", "web-preview"], false, true)).toEqual(k);
   });
 
   it("without the cards it is the whole list, as before", () => {
@@ -86,13 +97,13 @@ describe("knowledgeChanges with the cards", () => {
 });
 
 describe("a bot with the cards", () => {
-  function bot(settings: Record<string, unknown> | null, folderName = "flux-k8s") {
+  function bot(settings: Record<string, unknown> | null, folderName = "flux-k8s", library: Record<string, string> | null = null) {
     const dir = tempDir("component-cards");
     const folder = tempDir("component-cards-flux");
     mkdirSync(join(folder, ".bot"), { recursive: true });
     writeLibrary(dir);
     // The two inline blocks are built in (the library's tag), the preview card is the app's own built-in.
-    const extra: Record<string, string> = {
+    const extra: Record<string, string> = library ?? {
       "inline-chart": 'Inline chart: a chart inside the words.\nBuilt-in: yes\nBuilt-in order: 1\nData: {"type": "bar"}',
       "inline-report-block": "Inline report block: a short report inside the words.\nBuilt-in: yes\nBuilt-in order: 2\nData: {}",
       "網頁預覽卡片": "Preview card: a web page.\nData: {\"url\": \"http://x\"}",
@@ -108,7 +119,7 @@ describe("a bot with the cards", () => {
     saveProjectRow(dir, { id: FLUX, name: folderName, folder, avatar: "cloud" });
     const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
       routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
-    const flux = ((core as unknown as { bots: Map<string, Bot> }).bots.get(FLUX)!) as unknown as { setComponentList(names: string[]): void; componentNote(): string; cards: any; options: any };
+    const flux = ((core as unknown as { bots: Map<string, Bot> }).bots.get(FLUX)!) as unknown as { setComponentList(names: string[]): void; componentNote(): string; cards: any; options: any; workers: any };
     flux.setComponentList(["status", "todo", "網頁預覽卡片"]);
     return { core, flux, folder };
   }
@@ -172,6 +183,57 @@ describe("a bot with the cards", () => {
       expect(rules).toMatchObject({ scriptsDir: join(folder, ".bot", "card-scripts"), folder });
       expect(rules.hasCommand("gitlog")).toBe(true);
       expect(rules.hasCommand("status")).toBe(false);
+    } finally { await core.shutdown(); }
+  });
+  it("the shipped library (inline-report-block without the Built-in tag, the preview card named web-preview): both stay in the note, and the worker has their usage, though neither is on the bot's list", async () => {
+    const shipped = {
+      "inline-chart": 'Inline chart: a chart inside the words.\nBuilt-in: yes\nData: {"type": "bar"}',
+      "inline-report-block": "Inline report block: a short report inside the words.\nData: {}",
+      "web-preview": "Web preview card: a page.\nData: {\"path\": \"/x.html\"}",
+    };
+    const { core, flux } = bot(null, "flux-k8s", shipped);
+    try {
+      flux.setComponentList(["status"]);
+      const note = flux.componentNote();
+      for (const kept of ["- inline-chart (JSON): ", "- inline-report-block (JSON): ", "- web-preview (JSON): "]) expect(note, kept).toContain(kept);
+      expect(note).not.toContain("- status");
+      const brief = flux.cards.cardBrief();
+      for (const name of ["inline-chart", "inline-report-block", "web-preview", "status"]) expect(brief.components, name).toContain(`- ${name}:`);
+      expect(brief.others).not.toContain("- inline-report-block");
+      // The bot's own lookup says the same: these are its own, not 'ask Maintainer first'; a component off its list still is.
+      expect(flux.workers.componentUsage({ name: "inline-report-block" }, "coordinator")).toMatchObject({ yours: true });
+      expect(flux.workers.componentUsage({ name: "web-preview" }, "coordinator")).toMatchObject({ yours: true });
+      expect(flux.workers.componentUsage({ name: "todo" }, "coordinator")).toMatchObject({ yours: false });
+    } finally { await core.shutdown(); }
+  });
+
+  it("a big library: the worker's usage is cut between components, never inside one; what did not fit is listed in a line", async () => {
+    const lib: Record<string, string> = { "inline-chart": "Inline chart: c.\nBuilt-in: yes\nData: {}" };
+    for (let i = 0; i < 5; i++) lib[`big-${i}`] = `Big ${i}: a card.\n${"x".repeat(25_000)}\nEND-big-${i}`;
+    const { core, flux } = bot(null, "flux-k8s", lib);
+    try {
+      flux.setComponentList(["big-0", "big-1", "big-2", "big-3", "big-4"]);
+      const brief = flux.cards.cardBrief();
+      expect(brief.components.length).toBeLessThanOrEqual(CARD_BRIEF_MAX);
+      const whole = [0, 1, 2, 3, 4].filter((i) => brief.components.includes(`- big-${i}:`));
+      expect(whole.length).toBeGreaterThan(0);
+      expect(whole.length).toBeLessThan(5);
+      for (const i of whole) expect(brief.components, `big-${i} whole`).toContain(`END-big-${i}`);
+      for (const i of [0, 1, 2, 3, 4].filter((index) => !whole.includes(index))) { expect(brief.others).toContain(`- big-${i}: Big ${i}: a card.`); expect(brief.components).not.toContain(`END-big-${i}`); }
+      expect(brief.components).toContain("- inline-chart:");
+      // The instructions are not cut again: the whole components went in as they were.
+      expect(cardInstructions({ title: "t", prompt: "p" }, brief)).not.toContain("…cut");
+    } finally { await core.shutdown(); }
+  });
+  it("the one-line list of the rest of the library has its own limit; the lines beyond it are counted", async () => {
+    const lib: Record<string, string> = { "inline-chart": "Inline chart: c.\nBuilt-in: yes\nData: {}" };
+    for (let i = 0; i < 300; i++) lib[`shelf-${i}`] = `Shelf ${i}: ${"y".repeat(100)}\nData: {}`;
+    const { core, flux } = bot(null, "flux-k8s", lib);
+    try {
+      const brief = flux.cards.cardBrief();
+      expect(brief.others.length).toBeLessThanOrEqual(CARD_OTHERS_MAX + 100);
+      expect(brief.others).toMatch(/\(…and \d+ more components in the library\)$/);
+      expect(brief.others).toContain("- shelf-0:");
     } finally { await core.shutdown(); }
   });
 });

@@ -180,13 +180,16 @@ export class MaintainerDesk {
     const name = safeName(rawName);
     if (!name) return;
     const request = rawRequest.trim();
+    // A card worker's ask: a component the library has is only looked up for it, and Maintainer is not woken (`askForCard`).
+    const forCard = card && bot ? this.askForCard(name, request, bot, card) : undefined;
+    if (forCard === null) return;
     // Pictures alone say it: what is wrong is in them.
     const said = request || `see the attached picture${files.length === 1 ? "" : "s"}`;
     this.deps.library.markWorking(name, said);
     const exists = this.deps.library.names.includes(name);
     const pictures = files.length ? ` (Attached: ${files.length === 1 ? "a picture" : `${files.length} pictures`} of how it looks now or should look.)` : "";
     // Which bot asked, and how full its own list is (the library has no cap).
-    const note = this.askNote(name, request, exists, bot, card);
+    const note = forCard ?? this.askNote(name, request, exists, bot);
     this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${pictures}${note}` : `${asker} wants a new component "${name}": ${said}${pictures}${note}`, files);
   }
 
@@ -229,14 +232,14 @@ export class MaintainerDesk {
   }
 
   /** What Maintainer is told about the bot that asked (`componentAskNote`), after giving it at once when the library has it. */
-  askNote(name: string, request: string, exists: boolean, bot: Bot | null, card?: string): string {
+  askNote(name: string, request: string, exists: boolean, bot: Bot | null): string {
     if (!bot || bot.components === null) return "";
     const own = bot.ownComponentNames;
     const limit = COMPONENT_LIMIT;
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = {
       key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300),
-      stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name), ...(card ? { card } : {}),
+      stamp: this.deps.library.stampOf(name), changing: exists && own.includes(name),
     };
     const answerBack = ` If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for ${botName}</component-declined>; the app passes it on to ${botName}.`;
     const full = ` (App: ${botName} already has ${countedComponents(own, this.deps.library.builtInNames()).length} / ${limit} components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from ${botName}'s list first, then <take-component bot="${botName}">that name</take-component>.)`;
@@ -258,6 +261,34 @@ export class MaintainerDesk {
     return ` (App: ${botName} has ${countedComponents(own, this.deps.library.builtInNames()).length} / ${limit} components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="${botName}">its name</give-component>. Otherwise build it; once it is in the library the app adds it to ${botName}'s list.${answerBack})`;
   }
 
+  /**
+   * What a card worker's component ask comes to (worker-cards.ts). The worker draws its card itself, so the ask never touches the bot's list (and
+   * its 20-component limit is no part of it), and it can only get a component made, never one of the library's changed: it may have read web text.
+   * One the library has is answered by the app at once with its usage (null: nothing for Maintainer); a pin-only one is not available. A new one is
+   * kept as an ask with the worker's task id, answered when the library has it (`deliverAsked`) or Maintainer declines it (`decline`); the text
+   * Maintainer is given, otherwise.
+   */
+  private askForCard(name: string, request: string, bot: Bot, card: string): string | null {
+    const library = this.deps.library;
+    if (library.names.includes(name)) {
+      bot.workers.tellCardWorker(card, library.pinOnly(name)
+        ? `(App: "${name}" is not available for a card. Show the data another way: another component from your list, or a matplotlib picture, and say in one sentence what you did.)`
+        : this.cardReadyText(name, name, false));
+      return null;
+    }
+    const botName = this.nameOf(bot);
+    const ask: ComponentAsk = { key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300), stamp: library.stampOf(name), changing: false, card };
+    this.asks = this.asks.filter((other) => !(other.card === card && other.name === name));
+    this.asks.push(ask);
+    return ` (App: A card worker of ${botName} asks for this; it is not on ${botName}'s list and nothing is added there (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <component-declined id="${ask.key}">it already exists: its name</component>. Otherwise build it; once it is in the library the app tells the worker. If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component>.)`;
+  }
+
+  /** What a card worker is told when the component it asked for is in the library (`instead`: what it was named when it asked, if differently). */
+  private cardReadyText(name: string, asked: string, changed: boolean): string {
+    const instead = asked === name ? "" : ` in place of the "${asked}" you asked for`;
+    return `(App: The component "${name}" is ready${instead}${changed ? " (changed as you asked)" : ""}. Its usage:\n${this.deps.library.catalog([name])}\nFill the card now: end your report with exactly one <show name="${name}">…</show> as the usage says (a component with a Command: needs only <show name="${name}"></show>), and one sentence. Do not ask for it again.)`;
+  }
+
   private nameOf(bot: Bot) {
     return bot.id === this.deps.mainBot()?.id ? "Main bot" : bot.profile.name;
   }
@@ -272,8 +303,7 @@ export class MaintainerDesk {
     const user = ask.userAsked ? ` The user had asked you: "${ask.userAsked}".` : "";
     if (ask.card) {
       // A card worker asked: the card is filled by that worker, not by the bot (worker-cards.ts).
-      const usage = library.catalog([name]);
-      bot.workers.tellCardWorker(ask.card, `(App: The component "${name}" is ready${instead}${changed ? " (changed as you asked)" : ""}. Its usage:\n${usage}\nFill the card now: end your report with exactly one <show name="${name}">…</show> as the usage says (a component with a Command: needs only <show name="${name}"></show>), and one sentence. Do not ask for it again.)`);
+      bot.workers.tellCardWorker(ask.card, this.cardReadyText(name, ask.name, changed));
       bot.appNotice(changed ? `${maker ?? "Maintainer"} changed ${shown} for a card of ${this.nameOf(bot)}.` : `${maker ?? "Maintainer"} added ${shown} for a card of ${this.nameOf(bot)}.`);
       return;
     }
@@ -287,7 +317,8 @@ export class MaintainerDesk {
       if (ask.changing || !this.deps.library.names.includes(ask.name)) continue;
       const bot = this.deps.bots().find((candidate) => candidate.id === ask.botId);
       if (!bot) { this.asks = this.asks.filter((other) => other !== ask); continue; }
-      if (!this.giveComponent(ask.name, bot)) continue;
+      // A card's component is the worker's to draw: it goes on no list.
+      if (!ask.card && !this.giveComponent(ask.name, bot)) continue;
       this.asks = this.asks.filter((other) => other !== ask);
       this.arrived(ask.name, ask, bot, "Maintainer");
     }

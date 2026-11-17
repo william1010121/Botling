@@ -30,6 +30,12 @@ export const BUILT_IN_ORDER_TAG = "built-in order:";
 export const countedComponents = (names: readonly string[], builtIn: readonly string[]): string[] => names.filter((name) => !builtIn.includes(name));
 /** Components the bots' component list leaves out: the instructions already teach the choices block. */
 export const UNLISTED_COMPONENTS = ["choices"];
+/**
+ * The components the bots' guidance calls built in (inline-blocks.ts: the two inline blocks; the preview card under both of its names, the
+ * app's 「網頁預覽卡片」 and the library's `web-preview`), whether or not their about.md carries `Built-in: yes` (the shipped
+ * `inline-report-block` does not). A bot told the built-ins only (`viaCards`) keeps these in its note, and a card worker is given their usage.
+ */
+export const GUIDED_BUILT_INS = ["inline-report-block", "inline-chart", "網頁預覽卡片", "web-preview"];
 export const LIVE_RANGE = { min: 1, max: 3600 };
 /** What an about.md `Pin only:` line may say to turn it on. */
 const PIN_ONLY_YES = ["yes", "true", "on", "1"];
@@ -423,10 +429,13 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
   const others = library.names.filter((name) => !mine.includes(name) && listed(name));
   if (viaCards) {
     // Only the built-ins stay in the note (the inline blocks and the preview card, which the bot draws itself); the rest is the card worker's to pick from.
-    const kept = own.filter((name) => builtIn.includes(name) || BUILT_INS.includes(name));
+    // Which ones is the library's and the guidance's, never the bot's own list: the note does not move when a list does, nor when a component that is
+    // not built in comes or goes (`knowledgeChanges` has nothing to say, so a wake keeps its cached front).
+    const everything = library.names.filter(listed);
+    const kept = everything.filter((name) => builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)).sort((a, b) => rank(a) - rank(b));
     return {
       own: kept.map((name) => ({ name, text: ownLine(library, name) })), others: [], limit: COMPONENT_LIMIT,
-      ...(builtIn.length ? { builtIn } : {}), ...(examples ? { examples } : {}), viaCards: { hidden: own.length - kept.length + others.length },
+      ...(builtIn.length ? { builtIn } : {}), ...(examples ? { examples } : {}), viaCards: { hidden: everything.length - kept.length },
     };
   }
   return {
