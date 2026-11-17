@@ -121,7 +121,7 @@ describe("the guidance in the prompt", () => {
     const html = readFileSync(join(cardsFolder, "inline-chart", "template.html"), "utf8");
     const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, {
       runScripts: "dangerously",
-      beforeParse(window) { (window as unknown as { ccb: unknown }).ccb = { data: JSON.stringify(chart), setStatus() {}, onData() {} }; },
+      beforeParse(window: unknown) { (window as unknown as { ccb: unknown }).ccb = { data: JSON.stringify(chart), setStatus() {}, onData() {} }; },
     });
     const root = dom.window.document.getElementById("root")!;
     const result = { error: root.querySelector(".err")?.textContent ?? null, drawn: root.querySelector(".ch") !== null };
