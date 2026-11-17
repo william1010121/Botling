@@ -139,7 +139,7 @@ export const BUILTIN_FEATURES: Readonly<Record<string, readonly string[]>> = {
     "api.settings.app",
   ],
   "botling.note": [
-    "api.notes.outline", "api.notes.read", "api.notes.write",
+    "api.bots.send", "api.notes.outline", "api.notes.read", "api.notes.write",
   ],
   "botling.orchestration": [],
   "botling.pin-area": [
