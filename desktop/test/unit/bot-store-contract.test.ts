@@ -353,6 +353,7 @@ describe("DbBotStore", () => {
     it("a save before any load does not keep the parsed lines (they are parsed again from their text when loaded)", async () => {
       const { lines, hosts, runs } = await persisted(6);
       const store = hosts.open("bot", folder());
+      runs.length = 0;
       store.saveMessages(lines);
       await store.durable();
       expect(runs).toEqual([]);
