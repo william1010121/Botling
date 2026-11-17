@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
-import { INLINE_BLOCK_GUIDANCE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
+import { INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
@@ -77,7 +77,9 @@ describe("the guidance in the prompt", () => {
       expect(text).toContain("you need no usage lookup");
       // The main bot's results rule is its own line (it hands work over), without the list.
       if (role !== "main") {
-        expect(text).toContain("Results meant for the user (reports, screenshots, previews)");
+        // Inline is the default and comes first; a page is for screenshots, previews, really long content or a page the user asks for.
+        expect(text).toContain(`${RESULTS_LIST_INLINE} go into one page published as a claude.ai Artifact`);
+        expect(text).not.toContain("Results meant for the user (reports");
         expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
       }
       expect(text).toContain("every bot has them, and no request to Maintainer is needed to show one");
@@ -180,6 +182,32 @@ describe("the report rule by size", () => {
     const text = desktopPrompts(botPrompts({ profile: profile(), inlineBlocks: true }), profile(), "claude", true, rewritten as never, undefined, true).system;
     expect(text).toContain("finished result that needs visuals");
     expect(text).not.toContain(REPORT_RULE_BY_SIZE);
+  });
+});
+
+describe("what a worker hands back (inline first)", () => {
+  const told = (inlineBlocks: boolean, role: "main" | "manager" | "bot" = "manager", engine: "claude" | "codex" | "agy" = "claude", delegation: string | null = null) =>
+    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), { ...profile(role), delegation }, engine, true, reportSections(tool), undefined, inlineBlocks).system;
+  it("a bot with the guidance tells its workers to hand back inline component JSON (and a script when numbers need gathering), a page only on request or when really long", () => {
+    for (const role of ["manager", "bot"] as const) {
+      const text = told(true, role);
+      expect(text).toContain(INLINE_HANDOFF_SENTENCE);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/inline component JSON \(inline-chart, inline-report-block\)/);
+      expect(INLINE_HANDOFF_SENTENCE).toContain(".bot/card-scripts/<name>/");
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/ask for a page only if the user asked or the content is really long/);
+      // It ends the Claude workers line (its own line of the prompt), after what is already there.
+      expect(text.split("\n").find((line) => line.startsWith("- Hand all real work"))).toMatch(/ \S[^\n]*A worker hands back its results as ready-to-paste inline component JSON[^\n]*really long\.$/);
+    }
+  });
+  it("is told to nobody else: no guidance, the main bot, Codex, Antigravity and an onRequest bot get the prompt as it was", () => {
+    expect(told(false)).not.toContain("A worker hands back");
+    expect(told(true, "main")).not.toContain("A worker hands back");
+    expect(told(true, "manager", "codex")).not.toContain("A worker hands back");
+    expect(told(true, "manager", "agy")).not.toContain("A worker hands back");
+    expect(told(true, "manager", "claude", "onRequest")).not.toContain("A worker hands back");
+  });
+  it("is about 40 tokens (about 250 characters)", () => {
+    expect(INLINE_HANDOFF_SENTENCE.length).toBeLessThan(270);
   });
 });
 

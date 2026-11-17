@@ -10,7 +10,7 @@
 // The Maintainer's component-editor rule is not here (2.0 has no Maintainer).
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
-import { INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
+import { INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, renderFragments, type OrchestrationRules } from "./orchestration/default-rules";
@@ -618,6 +618,11 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   if (profile.delegation === "onRequest" && profile.role !== "main" && engine === "claude") {
     system = system.replace(claudeWorkersRule(rules), () => onRequestWorkersRule(rules)).replace(NATIVE_SUBAGENT_LINE, () => ON_REQUEST_SUBAGENT_LINE)
       .replace(WORKERS_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS).replace(NATIVE_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS);
+  }
+  // A bot with the inline guidance (not the main bot) also tells its workers what to hand back: inline component JSON, not a report page.
+  if (workers && inlineBlocks && profile.role !== "main") {
+    const workersRule = claudeWorkersRule(rules);
+    if (system.includes(workersRule)) system = system.replace(workersRule, () => `${workersRule} ${INLINE_HANDOFF_SENTENCE}`);
   }
   // A sub bot a plugin made (`bots.create` with a parent) took over no subagent: its first message is the plugin's, not a handoff.
   if (profile.parent && profile.plugin && profile.folder && profile.id) system = `${system}\n${pluginSubBotLine(progressFile(profile.folder, profile.id))}`;
