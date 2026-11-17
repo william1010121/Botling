@@ -65,7 +65,7 @@ export const INLINE_BLOCK_GUIDANCE = `- Inline blocks (yours to use, no request 
   options with a recommendation: {"type":"options","title":"推薦 1＋3：髮色加字章","criteria":["20px 分得出來","額外工作"],"options":[{"name":"1＋3 髮色加字章","recommended":true,"cells":[{"text":"分得出來","tone":"good"},{"text":"多一張遮罩","tone":"warn"}]},{"name":"只用 1","cells":[{"text":"撞色分不出","tone":"bad"},{"text":"少","tone":"good"}]}]}
   a sequence of steps or events: {"type":"steps","title":"85 + 6 = 91 人已刪","items":[{"title":"先刪 85 人","status":"done"},{"title":"再刪 6 人","status":"done"},{"title":"留 7 人","status":"active"}]}
   numbers per category (inline-chart): {"kind":"bars","title":"Haiku 比 Opus 快 3.1 倍","unit":"tokens/s","base":"Opus","items":[{"label":"Haiku","value":182},{"label":"Sonnet","value":96},{"label":"Opus","value":58}]}
-  time per step (inline-chart): {"kind":"waterfall","title":"載入 plugin 佔 62%","unit":"ms","steps":[{"label":"啟動","value":180},{"label":"載入 plugin","value":1480,"hot":true}]}
+  time per step (inline-chart): {"kind":"waterfall","title":"載入 plugin 佔 89%","unit":"ms","steps":[{"label":"啟動","value":180},{"label":"載入 plugin","value":1480,"hot":true}]}
   before / after per row (inline-chart): {"kind":"dumbbell","title":"開啟變快 62%","unit":"ms","better":"lower","rows":[{"label":"開啟聊天","before":820,"after":310}]}
   a trend over time (inline-chart): {"kind":"line","title":"回應時間 5 週降 46%","unit":"s","better":"lower","x":["W42","W43"],"series":[{"name":"p50","values":[2.4,1.3]}]}
   a cause chain: {"type":"flowchart","title":"撞機判雙輸，平台上輸比分","nodes":[{"id":"a","label":"撞機＝雙輸"},{"id":"b","label":"兜圈拖時間"},{"id":"c","label":"時間到比分輸","status":"blocked"}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"c"}]}`;

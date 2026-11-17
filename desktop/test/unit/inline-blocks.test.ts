@@ -386,6 +386,9 @@ describe("the component lines", () => {
   it("say a lookup is not needed for examples the instructions carry, only to a bot that has them", () => {
     const sentence = "a component your instructions already carry examples for (the inline blocks rule) needs no lookup";
     expect(knowledgeFull(componentKnowledgeFor(library, ["table"], true))).toContain(sentence);
+    // Only the kinds and types the examples show: any other is looked up first (2026-11-18: a bot guessed a waterfall's fields).
+    expect(knowledgeFull(componentKnowledgeFor(library, ["table"], true))).toContain("for any other kind or type call app_component_usage first");
+    expect(knowledgeFull(componentKnowledgeFor(library, ["table"], true))).not.toContain("the examples are enough");
     expect(knowledgeFull(componentKnowledgeFor(library, ["table"]))).not.toContain("needs no lookup");
     expect(knowledgeFull(componentKnowledgeFor(library, ["table"], false))).toBe(knowledgeFull(componentKnowledgeFor(library, ["table"])));
   });
