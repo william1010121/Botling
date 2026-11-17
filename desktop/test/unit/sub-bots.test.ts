@@ -568,6 +568,24 @@ describe("prompts", () => {
     expect(botPrompts({ profile: manager }).system).not.toContain("<sub-bot");
     expect(botPrompts({ profile: manager }).system).toContain("In .bot/ only .bot/memory.md, .bot/routines.cron, inbox.md and artifacts/ are yours");
   });
+  it("every bot but the main bot owns .bot/card-scripts/ and is told where its card scripts go (one line after the <show> line)", () => {
+    const sub = { ...manager, name: "Settings page", role: "bot" as "main" | "manager" | "bot", job: "Continue it", id: SUB, parent: PROJECT, memoryPath: `.bot/sub-bots/${SUB}/memory.md` };
+    const mainBot = { ...manager, name: "main", role: "main" as "main" | "manager" | "bot", memoryPath: "memory.md" };
+    const own = { ...manager, role: "bot" as "main" | "manager" | "bot", job: "Do it", id: "11111111-1111-4111-8111-111111111111" };
+    for (const engine of ["claude", "codex", "agy"] as const) {
+      for (const profile of [manager, own]) {
+        const system = desktop(profile, engine);
+        expect(system, `${engine}/${profile.role}`).toContain("inbox.md, artifacts/, card-scripts/, and the handoff.md");
+        expect(system.split("<name>/ and your <show name").length, `${engine}/${profile.role}`).toBe(1);
+      }
+    }
+    for (const profile of [manager, own, sub]) {
+      const system = desktop(profile);
+      expect(system.split(".bot/card-scripts/<component-name>/ and your <show name=\"…\" command=\"…\"> uses that path; shared scripts stay in the component library's ccb-components/scripts/<name>/ (Maintainer's).")).toHaveLength(2);
+    }
+    expect(desktop(sub)).toContain("card-scripts/, the .bot/subagents/<id>/handoff.md");
+    expect(desktop(mainBot)).not.toContain("card-scripts");
+  });
   it("a Claude project bot (native subagents, the hidden fallback) is told how to move a subagent out, and may write handoff.md and progress.md", () => {
     const system = desktopPrompts(botPrompts({ profile: manager }), manager, "claude", false).system;
     expect(system).toContain("<sub-bot name=");

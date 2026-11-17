@@ -458,7 +458,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         `- You are a sub bot of "${parentName ?? "your project bot"}". Your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file: read it and take over exactly where it stops, then keep going from its "next steps".`,
         `- Keep a progress file current as you work (the file named in that first message, .bot/subagents/<id>/progress.md): what is done, what you are doing now, what is next, and anything waiting on the user. "${parentName ?? "The project bot"}" reads it to answer the user's progress questions, so update it whenever it changes.`,
         `- When your job is finished, say so in one sentence in your chat and set the progress file's first line to "Status: done"; the app tells "${parentName ?? "the project bot"}".`,
-        `- In .bot/ only ${memory}, ${paths.routines}, artifacts/ under .bot/sub-bots/${profile.id}/, the .bot/subagents/<id>/handoff.md and progress.md files named in your first message are yours (and archive/ to read); leave every other file alone.`,
+        `- In .bot/ only ${memory}, ${paths.routines}, artifacts/ under .bot/sub-bots/${profile.id}/, card-scripts/, the .bot/subagents/<id>/handoff.md and progress.md files named in your first message are yours (and archive/ to read); leave every other file alone.`,
       ] : [
       `- The main bot reads the "${MEMORY_SECTIONS[0].heading}" and "${waiting}" sections of your memory file to follow progress, so update them whenever they change.`,
       `- Messages starting with "${RELAY_PREFIX}" are work passed on by the main bot. When done, say the result in one sentence; when stuck, say where, and attach a choices block if the user needs to decide. The app passes your report on to the user.`,
@@ -518,6 +518,8 @@ export const withoutPartsNote = (text: string) => (text.startsWith(PARTS_NOTE) ?
  * on the main bot's whiteboard a small picture of its own. Told to every bot but the main bot.
  */
 export const WHITEBOARD_PICTURE_LINE = "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.";
+/** Where a bot's own preprocess scripts for its cards live (told to every bot but the main bot, after the <show> line). */
+const CARD_SCRIPTS_LINE = "  Preprocess scripts you write for your own cards go in .bot/card-scripts/<component-name>/ and your <show name=\"…\" command=\"…\"> uses that path; shared scripts stay in the component library's ccb-components/scripts/<name>/ (Maintainer's).";
 const SHOW_LINE = "  To show data with a component: add <show name=\"component name\">JSON matching its format</show> to your reply.";
 
 /**
@@ -636,16 +638,17 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     system = `${system}\n${REMOVE_BOT_RULE}`;
   }
   if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
-    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" && !workers ? subBotRule : workerSubBotRule}`);
+    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, card-scripts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" && !workers ? subBotRule : workerSubBotRule}`);
     if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ are also yours to write.\n${workerSubBotRule}`;
   }
+  if (profile.id === MAINTAINER_PROMPT_ID) system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/ and card-scripts/ are yours, and archive/ to read; leave every other file alone.`);
   // An Antigravity sub bot: its prompt is a short one of its own, so what a sub bot is told is appended whole.
   if (engine === "agy" && profile.parent && profile.role !== "main") {
     system = `${system}\nYou are a sub bot of your project bot: your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file; read it and take over exactly where it stops. Keep the progress.md file named there current (what is done, what you are doing, what is next, anything waiting on the user) and set its first line to "Status: done" when your job is finished; your project bot reads it. In .bot/ only the handoff.md and progress.md files named in your first message are yours to write besides memory and artifacts.`;
   }
   // The sections (the whiteboard picture line, plugins'), in order: those after <show> one after another there.
   const told = sections.filter((section) => section.roles.includes(profile.role));
-  const afterShow = told.filter((section) => section.after === "show").map((section) => section.text);
+  const afterShow = [...(profile.role === "main" ? [] : [CARD_SCRIPTS_LINE]), ...told.filter((section) => section.after === "show").map((section) => section.text)];
   if (afterShow.length) {
     system = system.includes(SHOW_LINE)
       ? system.replace(SHOW_LINE, [SHOW_LINE, ...afterShow].join("\n"))
