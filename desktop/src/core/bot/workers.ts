@@ -471,9 +471,14 @@ export class BotWorkers {
     if (!row || atStart || (!projected.rowChanged && !this.options.agents)) return;
     if (projected.ended) this.subagentEnded(record.id);
     else if (projected.rowChanged) this.markWorkerStep(record.id, projected.stepFailed);
-    // A row that did not change (every old worker, re-projected when its head starts) is told to the registry, but
-    // the line that sent it is not drawn again: nothing on it changed.
-    this.subagentChanged(row, false, projected.rowChanged || projected.ended);
+    // A row that did not change (every old worker, re-projected when its head starts) is told to the registry and
+    // nothing else: no save, no view, no `subagent.updated` (the log holds this state; 230 of them at one start made
+    // runtime.start wait about 5 s), and the line that sent it is not drawn again.
+    if (!projected.rowChanged && !projected.ended) {
+      if (!row.parentID) this.options.agents?.observed(this.hostFacts(), row, this.workerViews.get(row.id));
+      return;
+    }
+    this.subagentChanged(row, false, true);
   }
 
   /**
