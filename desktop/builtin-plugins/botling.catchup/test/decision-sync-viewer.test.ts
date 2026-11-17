@@ -27,7 +27,7 @@ it('preserves distinct live card identities and read-only original snapshots for
   const original=structuredClone(state.messages);
   const live=new Map(state.messages.map(m=>{const row=messageElement(m,{});document.body.append(row);return [m.id,row]}));
   const revealed:string[]=[];
-  viewer.open('owner',state,{key:'range',ids:[a.id,b.id,c.id],count:3,state:'ready',bullets:['Reviewed design'],model:'test'},id=>live.get(id)??null,id=>revealed.push(id));
+  viewer.open('owner',state,{key:'range',ids:[a.id,b.id,c.id],important:3},id=>live.get(id)??null,id=>revealed.push(id));
   expect([...document.querySelectorAll<HTMLElement>('.source-message')].map(n=>n.dataset.sourceId)).toEqual([a.id,b.id,c.id]);
   expect([...document.querySelectorAll('.source-picked')].map(n=>n.textContent)).toEqual(['✓ Implement','✓ Implement']);
   expect([...document.querySelectorAll('.source-note')].filter(n=>n.textContent?.includes('Only reviewed scope'))).toHaveLength(2);

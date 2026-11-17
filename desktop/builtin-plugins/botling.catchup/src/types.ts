@@ -1,28 +1,18 @@
 import type { DecorationView } from "../../../../Web/src/types";
 
-/** A summary as the chat page draws it: a decoration's data (catchup.ts `CatchUpDecoration`). */
+/** The fold as the chat page draws it: a decoration's data (catchup.ts `CatchUpViewData`). */
 export interface CatchUpView {
-  /** The range and language summarized. */
+  /** The range folded. */
   key: string;
-  kind?: "unread" | "interval";
-  manual?: boolean;
-  automatic?: boolean;
-  speakerCounts?: Record<string, number> | null;
-  requestedBy?: string | null;
+  kind?: "unread";
+  /** The lines folded behind the header. */
   ids: string[];
-  count: number;
-  heads?: number | null;
-  state: "loading" | "ready" | "failed";
-  bullets: string[];
-  error?: string | null;
-  model: string;
-  since?: string | null;
-  until?: string | null;
-  latest?: string | null;
+  /** How many messages stayed in view. */
+  important: number;
 }
 
-/** The summary a decoration of this plugin carries. */
+/** The fold a decoration of this plugin carries. */
 export function viewOf(decoration: DecorationView): CatchUpView {
-  const data = (decoration.data ?? {}) as CatchUpView;
-  return { ...data, ids: data.ids ?? decoration.fold ?? [] };
+  const data = (decoration.data ?? {}) as Partial<CatchUpView>;
+  return { key: data.key ?? decoration.key, kind: "unread", ids: data.ids ?? decoration.fold ?? [], important: typeof data.important === "number" ? data.important : 0 };
 }

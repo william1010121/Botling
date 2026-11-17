@@ -139,7 +139,7 @@ test("attachments: picked files and a pasted picture go with the message, kept i
   }
 });
 
-test("Settings: language, bot look and avatar size reach the chat page; a summary setting and this bot's model are saved", async () => {
+test("Settings: language, bot look and avatar size reach the chat page; a catch-up setting and this bot's model are saved", async () => {
   const dataDir = tempDir("e2e-4a-settings");
   const { app, page, chat } = await launch({ dataDir });
   try {
@@ -155,18 +155,16 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     await sheet.getByLabel("Chat avatar size").fill("80");
     await expect.poll(() => chat.locator("html").evaluate((element) => getComputedStyle(element).getPropertyValue("--chat-avatar-size").trim())).toBe("80px");
     // (Switches show what the core saved: they change once it answers.)
-    await sheet.getByRole("switch", { name: "Summarize between your messages" }).click();
-    await expect(sheet.getByRole("switch", { name: "Summarize between your messages" })).toBeChecked();
+    await sheet.getByRole("switch", { name: "Fold unread replies when I come back" }).click();
+    await expect(sheet.getByRole("switch", { name: "Fold unread replies when I come back" })).not.toBeChecked();
     await shot(page, "settings-general");
-    // Model choices are dropdowns; the summary judge runs on Codex, its saved model is selected.
-    await expect(sheet.getByLabel("Summary model")).toHaveValue("gpt-6-luna");
     await sheet.getByLabel("App language").selectOption("ja");
     // The page's own words follow (its input box is no longer called "Message").
     await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(0);
     const settings = JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"));
     expect(settings).toMatchObject({ botLookChoice: "original", chatAvatarSizeChoice: 80, languageChoice: "ja" });
-    // Chat summaries' switches are botling.catchup's settings now (plugins.json).
-    expect(JSON.parse(readFileSync(join(dataDir, "core", "plugins.json"), "utf8")).settings["botling.catchup"]).toMatchObject({ "botling.catchup.interval": true });
+    // Catch-up's switch is botling.catchup's setting (plugins.json).
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "plugins.json"), "utf8")).settings["botling.catchup"]).toMatchObject({ "botling.catchup.unread": false });
     await sheet.getByLabel("App language").selectOption("");
     await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(1);
     // Engines and subagents; this bot.

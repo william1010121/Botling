@@ -1,10 +1,10 @@
-// Phase 3a in the real app: unread replies fold into a Catch-up summary when you open the chat (the
-// fake Codex CLI's `codex exec` writes it), and the header's Routines panel lists a schedule and
+// Phase 3a in the real app: more than three unread replies keep their top three in view and fold the rest behind
+// a small header when you open the chat (no model is called), and the header's Routines panel lists a schedule and
 // pauses it. Saves screenshots to desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { desktop, tempDir, until } from "../helpers";
+import { desktop, tempDir } from "../helpers";
 import { launch, MAIN, post } from "./launch";
 
 const screens = join(desktop, ".tmp", "screens");
@@ -15,7 +15,7 @@ const shot = async (page: import("@playwright/test").Page, name: string) => {
 };
 const at = (minutes: number) => (Date.now() - Date.UTC(2001, 0, 1)) / 1000 - 3600 + minutes * 60;
 
-test("unread replies fold into a Catch-up summary with its bullets", async () => {
+test("unread replies keep the top three in view and fold the rest behind a small header", async () => {
   const dataDir = tempDir("e2e-catchup");
   const chat = [
     { id: "C1000000-0000-4000-8000-000000000001", role: "user", text: "Ship the release", date: at(0) },
@@ -31,11 +31,13 @@ test("unread replies fold into a Catch-up summary with its bullets", async () =>
     await page.setViewportSize({ width: 1120, height: 820 });
     const head = frame.locator(".catchup-head");
     await expect(head).toBeVisible({ timeout: 10_000 });
-    await expect(head).toContainText("Main bot · Claude: Built the installer.", { timeout: 10_000 });
-    await expect(frame.locator(".row.decoration-folded")).toHaveCount(4);
+    // Four unread replies: the newest three stay (the fourth, the oldest, folds), and nothing is summarized.
+    await expect(head).toContainText("3 important", { timeout: 10_000 });
+    await expect(head).toContainText("Show 1 messages");
+    await expect(frame.locator(".row.decoration-folded")).toHaveCount(1);
+    await expect(frame.locator(".catchup-bullets, .catchup-loading, .catchup-by")).toHaveCount(0);
     await shot(page, "catchup");
-    const cached = await until(() => { try { return JSON.parse(readFileSync(join(dataDir, "core", "catchup-summaries.json"), "utf8")); } catch { return null; } });
-    expect(Object.values(cached)[0]).toMatchObject({ model: "gpt-6-luna", bullets: expect.arrayContaining([expect.stringContaining("[[source:C1000000-0000-4000-8000-00000000000")]) });
+    expect(existsSync(join(dataDir, "core", "catchup-summaries.json"))).toBe(false);
   } finally {
     await app.close();
   }

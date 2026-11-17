@@ -227,13 +227,10 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 - **A general Browser.** The globe in the folded left column browses any website, with pinned
   sites and separate accounts. **Capture** a page to ask the Maintainer for a website tool,
   which plugins then offer as a button for that site.
-- **Catch-up and interval summaries.** Come back to more than 3 unread bot replies and they fold
-  into a Catch-up card with a 1–5 bullet summary of what finished, what is running and what
-  waits for you; the card opens to every original message. A **Summarize** chip under the last
-  reply of each stretch between your messages does the same on demand, or automatically when
-  you send your next message (off by default). Each point links its sources, opened in a
-  read-only view of the conversation. The summaries are written by a read-only `codex exec`
-  outside the chat; Settings → General → Chat summaries sets thresholds, model and prompt.
+- **Catch-up.** Come back to more than 3 unread bot replies and only the few that matter stay in
+  view (at most 3: a question waiting for you, errors, replies with cards, the newest replies); the
+  rest fold behind a small header that opens them all. Nothing is summarized and no model is called;
+  Settings → Chat & reports sets the switch and the threshold.
 - **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies,
   result pages as preview cards, and an input box that works with CJK input methods.
 - **Call in any bot with `@name`.** It answers in your chat and keeps the work, with its steps,

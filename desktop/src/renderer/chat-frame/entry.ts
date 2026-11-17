@@ -1,6 +1,6 @@
 // The chat frame (app://botling/chat.html): the Swift app's chat page from Web/src, unchanged,
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
-// a Stop button in the input box. KaTeX is the built-in ccb-latex plugin and summaries the built-in
+// a Stop button in the input box. KaTeX is the built-in ccb-latex plugin and catch-up the built-in
 // botling.catchup, which arrive with the other plugins' web parts (Botling Web bundles them).
 import "../theme";
 import { unpackChatAvatars } from "../chat-avatar-wire";
@@ -205,7 +205,7 @@ installEscapeStop({
  * Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the built-in
  * web parts bundled in, as their manifests describe them, with their stylesheets (and ccb-latex's fonts)
  * beside chat.html, and their settings' defaults. ccb-latex's key (Mod+Shift+M) is the shell's to bind
- * (plugin-commands.ts). botling.catchup's draws the summaries the desktop wrote (its Retry needs the desktop). botling.board's draws the
+ * (plugin-commands.ts). botling.catchup's draws the fold header the desktop chose (it needs nothing else of the desktop). botling.board's draws the
  * pins the desktop keeps (a pin's command needs the desktop).
  */
 const defaults = (settings: Record<string, { default: unknown }>) => Object.fromEntries(Object.entries(settings).map(([key, setting]) => [key, setting.default]));

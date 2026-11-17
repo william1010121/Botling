@@ -17,7 +17,7 @@ let settingsShell: SettingsShell;
 beforeEach(async () => { settingsShell = await loadSettingsShell(); });
 afterEach(async () => { await settingsShell.stop(); });
 
-/** The Plugins view with botling.catchup on and its settings (Settings → General → Chat summaries draws them). */
+/** The Plugins view with botling.catchup on and its settings (Settings → Chat & reports draws them). */
 function plugins(values: Record<string, unknown> = {}): PluginsView {
   const settings = Object.entries(summaries.ccb.contributes.settings).map(([key, setting]) => ({
     key, type: setting.type, title: setting.title, options: (setting as { options?: string[] }).options ?? [], secret: false, set: true, hidden: true,
@@ -258,71 +258,19 @@ describe("Settings' model, effort and permission choices", () => {
     } finally { await done(); }
   });
 
-  it("Models & workers: the summary model is picked from every engine's models, grouped by engine", async () => {
-    const sent: any[] = [];
-    const client = fakeClient({}, sent);
-    const sheet = (values: Record<string, unknown> | null = {}) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: values ? plugins(values) : null, initialSection: "models", onClose() {} });
-    const { host, done, rerender } = await render(sheet());
-    try {
-      const summary = select(host, "Summary model");
-      expect(options(summary)).toEqual(["claude:haiku", "claude:sonnet", "claude:opus", "codex:gpt-6-luna", "codex:gpt-6-sol", "claude:__custom__"]);
-      expect(summary.value).toBe("codex:gpt-6-luna");
-      expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex"]);
-      await choose(summary, "codex:gpt-6-sol");
-      expect(sent.slice(-2)).toMatchObject([
-        { type: "plugins.setting", name: "botling.catchup", key: "botling.catchup.model", value: "gpt-6-sol" },
-        { type: "plugins.setting", name: "botling.catchup", key: "botling.catchup.engine", value: "codex" },
-      ]);
-      await choose(select(host, "Summary model"), "claude:sonnet");
-      expect(sent.slice(-2)).toMatchObject([{ key: "botling.catchup.model", value: "sonnet" }, { key: "botling.catchup.engine", value: "claude" }]);
-      // Any Claude id can be typed in: it is kept as the summary model of the Claude engine.
-      await choose(select(host, "Summary model"), "claude:__custom__");
-      await typeInto(box(host, "Summary model")!, "claude-haiku-5-5");
-      await press(box(host, "Summary model")!, "Enter");
-      expect(sent.slice(-2)).toMatchObject([{ key: "botling.catchup.model", value: "claude-haiku-5-5" }, { key: "botling.catchup.engine", value: "claude" }]);
-      expect(box(host, "Summary model")).toBeNull();
-      await choose(select(host, "Summary model"), "claude:__custom__");
-      const before = sent.length;
-      await typeInto(box(host, "Summary model")!, "gpt-6-luna");
-      await press(box(host, "Summary model")!, "Enter");
-      expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/Not a Claude model/);
-      expect(sent.length).toBe(before);
-      await press(box(host, "Summary model")!, "Escape");
-      // What the plugin keeps comes back in its view.
-      await rerender(sheet({ "botling.catchup.model": "sonnet", "botling.catchup.engine": "claude" }));
-      expect(select(host, "Summary model").value).toBe("claude:sonnet");
-      // Off, the plugin's settings are not drawn.
-      await rerender(sheet(null));
-      expect(host.querySelector('select[aria-label="Summary model"]')).toBeNull();
-    } finally { await done(); }
-  });
-
-  it("Models & workers: with a bot to ask, Antigravity's models are listed for summaries but disabled, with the reason", async () => {
-    const sent: any[] = [];
-    const bot = { id: "11111111-1111-4111-8111-111111111111", heads: ["claude", "codex", "agy"] } as unknown as BotView;
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: plugins(), initialSection: "models", onClose() {} }));
-    try {
-      const summary = select(host, "Summary model");
-      const agy = [...summary.options].filter((option) => option.value.startsWith("agy:"));
-      expect(agy.length).toBeGreaterThan(0);
-      expect(agy.every((option) => option.disabled)).toBe(true);
-      expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex", "Antigravity (not available for summaries)"]);
-      expect(host.textContent).toContain("Antigravity models can't write summaries");
-    } finally { await done(); }
-  });
-
-  it("Chat & reports: the summaries' options, or how to turn them on", async () => {
+  it("Chat & reports: the catch-up switch and threshold, or how to turn them on", async () => {
     const sent: any[] = [];
     const client = fakeClient({}, sent);
     const sheet = (on: boolean) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: on ? plugins() : null, initialSection: "chat", onClose() {} });
     const { host, done, rerender } = await render(sheet(true));
     try {
-      await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Summarize between your messages"]')!.click());
-      expect(sent.at(-1)).toMatchObject({ type: "plugins.setting", key: "botling.catchup.interval", value: true });
+      await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Fold unread replies when I come back"]')!.click());
+      expect(sent.at(-1)).toMatchObject({ type: "plugins.setting", key: "botling.catchup.unread", value: false });
+      expect(host.querySelector<HTMLInputElement>('input[aria-label="Unread threshold"]')!.value).toBe("3");
       expect(select(host, "Publish as")).toBeDefined();
       await rerender(sheet(false));
-      expect(host.querySelector('input[aria-label="Summarize between your messages"]')).toBeNull();
-      expect(host.textContent).toContain("Turn on the Chat summaries plugin");
+      expect(host.querySelector('input[aria-label="Fold unread replies when I come back"]')).toBeNull();
+      expect(host.textContent).toContain("Turn on the Catch-up plugin");
     } finally { await done(); }
   });
 

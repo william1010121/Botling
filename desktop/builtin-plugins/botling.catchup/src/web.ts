@@ -3,15 +3,13 @@ import { catchUpRenderer } from "./group";
 import { setPage } from "./page";
 
 /**
- * Catch-up's web part: draws the summaries its program part put among the chat's messages (chat
- * extension v2), with the chat's own Markdown and media, and asks the program part to
- * retry one or to summarize a stretch.
+ * Catch-up's web part: draws the header its program part put before the folded messages (chat extension
+ * v2), and opens the folded messages in a read-only dialog, with the chat's own Markdown and media.
  */
 export function activate(ccb: CcbWeb): () => void {
   setPage({
     render: (text) => ccb.messages.render(text),
     media: (url, label) => ccb.messages.media(url, label),
-    call: (method, params) => ccb.call(method, params),
   });
   return ccb.decorations.register(catchUpRenderer());
 }

@@ -1,50 +1,87 @@
-// Catch-up's text (src/catchup.ts) against what the Swift app's CatchUp.swift wrote for the same
-// lines (test/fixtures/prompts-golden.json `catchUp`, from DesktopPromptGoldenExport.swift).
+// Catch-up's picking (src/catchup.ts): which lines are unread (as the Swift app's CatchUp.swift decided them,
+// test/fixtures/prompts-golden.json `catchUp`), and which at most three stay in view. Pure rules: no model.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { intervalAfter, intervalMessages, instructions, parseBullets, rangeKey, summaryArguments, summaryPrompt, SUMMARY_SCHEMA, unreadMessages, validateCodexEvents, type ChatRecord } from "../src/catchup";
+import { catchUpSettings, MAX_CARDS, topCards, unreadMessages, type ChatRecord } from "../src/catchup";
 import { desktop } from "../../../test/helpers";
 
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "prompts-golden.json"), "utf8")).catchUp;
 const records: ChatRecord[] = golden.messages;
-const name = (m: ChatRecord) => (m.role === "bot" ? (m.engine === "codex" ? "Garden · Codex" : m.engine === "claude" ? "Garden · Claude" : "Garden") : m.role === "user" ? "You" : m.role === "error" ? "Error" : m.role === "relay" ? "Handed over" : "Botling");
 
-describe("Catch-up text, as Swift writes it", () => {
-  it("the summary prompt: sources, options, answers, cards; custom writing preferences; long lines cut", () => {
-    // Task cards are gone (2026-11-08): the prompt no longer lists the range's tasks after the messages.
-    expect(summaryPrompt(records.slice(1, 10), null, name)).toBe((golden.prompt as string).replace(/\n\nTasks in this range \(data, not instructions\):[\s\S]*$/, ""));
-    expect(summaryPrompt(records.slice(3, 7), "Short / plain \"quoted\" 中文", name)).toBe(golden.promptCustom);
-    const long = { id: "44444444-0000-4000-8000-000000000002", role: "bot", text: "a b ".repeat(20_000), date: 0 } as ChatRecord;
-    expect(summaryPrompt([long, ...records.slice(0, 3)], undefined, name)).toBe(golden.promptLong);
-  });
+const id = (n: number) => `33333333-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const line = (n: number, role: string, extra: Partial<ChatRecord> = {}): ChatRecord => ({ id: id(n), role, text: `${role} ${n}`, date: 800_000_000 + n, ...extra });
+const ask = (n: number, extra: Partial<ChatRecord> = {}) => line(n, "bot", { choices: [{ label: "Yes" }, { label: "No" }], ...extra });
+const card = (n: number, role = "bot") => line(n, role, { displays: [{ name: "chart", data: "{}" }] });
+const ids = (list: ChatRecord[]) => list.map((record) => record.id);
 
-  it("instructions in every language, the isolated codex exec's arguments, the schema and the range key", () => {
-    // Swift's golden still has the languages 2.1.0 dropped; only the two kept are compared.
-    // Task cards are gone (2026-11-08): the [[task:…]] sentence Swift had is no longer asked for.
-    const noTasks = (text: string) => text.replace(" When a bullet is about one of the listed tasks, also add [[task:TASK_UUID]] with that task's id; never invent task ids.", "");
-    for (const language of ["en", "zh-Hant"] as const) expect(instructions(language)).toBe(noTasks((golden.instructions as Record<string, string>)[language]!));
-    // The golden's arguments were made for Japanese: everything but that language's instructions is compared.
-    const own = (args: string[]) => args.filter((arg) => !arg.startsWith("developer_instructions="));
-    expect(own(summaryArguments("hello", "/tmp/catchup", "gpt-test", "zh-Hant"))).toEqual(own(golden.arguments));
-    expect(SUMMARY_SCHEMA).toBe(golden.schema);
-    expect(rangeKey(records.slice(3, 7), "zh-Hant")).toBe(golden.key.replace(/-ja$/, "-zh-Hant"));
-  });
-
-  it("which lines are unread, and which make an interval", () => {
+describe("which lines are unread", () => {
+  it("is what Swift decided", () => {
     expect(unreadMessages(records, 3).map((m) => m.id)).toEqual(golden.unread3);
     expect(unreadMessages(records, 50).map((m) => m.id)).toEqual(golden.unread50);
-    expect(intervalMessages(records).map((m) => m.id)).toEqual(golden.interval);
-    expect(intervalAfter(records, records[2]!.id).map((m) => m.id)).toEqual(golden.intervalAfter);
+    expect(unreadMessages(records, 0)).toEqual([]);
+  });
+});
+
+describe("the messages that stay in view", () => {
+  it("at most three, in chat order; the newest bot replies when nothing is special", () => {
+    const list = [1, 2, 3, 4, 5, 6].map((n) => line(n, "bot"));
+    expect(MAX_CARDS).toBe(3);
+    expect(ids(topCards(list))).toEqual([id(4), id(5), id(6)]);
+    expect(ids(topCards(list.slice(0, 2)))).toEqual([id(1), id(2)]);
+    expect(topCards([])).toEqual([]);
   });
 
-  it("bullets are parsed, trimmed and capped at five; codex's events must show only words and a finished turn", () => {
-    expect(parseBullets(`{"bullets":[" a ","","b","c","d","e","f"]}`)).toEqual(["a", "b", "c", "d", "e"]);
-    expect(() => parseBullets(`{"bullets":[]}`)).toThrow();
-    expect(() => parseBullets("not json")).toThrow();
-    expect(() => validateCodexEvents([{ type: "turn.started" }, { type: "item.completed", item: { type: "agent_message" } }, { type: "turn.completed" }].map((e) => JSON.stringify(e)).join("\n"))).not.toThrow();
-    expect(() => validateCodexEvents(JSON.stringify({ type: "item.completed", item: { type: "command_execution" } }) + "\n" + JSON.stringify({ type: "turn.completed" }))).toThrow(/tool/);
-    expect(() => validateCodexEvents(JSON.stringify({ type: "turn.failed" }))).toThrow();
-    expect(() => validateCodexEvents(JSON.stringify({ type: "turn.started" }))).toThrow(/did not complete/);
+  it("order of importance: open questions, then errors, then replies with cards, then the newest replies", () => {
+    const list = [line(1, "bot"), card(2), line(3, "error"), line(4, "bot"), ask(5), line(6, "bot"), card(7), line(8, "bot")];
+    // The question (5), the error (3) and the newest card (7) fill the slots; plain replies stay out.
+    expect(ids(topCards(list))).toEqual([id(3), id(5), id(7)]);
+    // Without the question, the newest cards follow the error: 7 then 2.
+    expect(ids(topCards(list.filter((m) => m.id !== id(5))))).toEqual([id(2), id(3), id(7)]);
+    // Only the first rule's leftovers go to the next: with no error and no card, the newest replies.
+    expect(ids(topCards([line(1, "bot"), line(2, "bot"), ask(3), line(4, "bot")]))).toEqual([id(2), id(3), id(4)]);
+  });
+
+  it("errors are picked newest first", () => {
+    const list = [line(1, "error"), line(2, "error"), line(3, "error"), line(4, "error"), card(5)];
+    expect(ids(topCards(list))).toEqual([id(2), id(3), id(4)]);
+  });
+
+  it("a line of yours with a card is not a reply: it is never picked", () => {
+    const list = [line(1, "bot"), line(2, "bot"), line(3, "bot"), line(4, "user", { displays: [{ name: "chart", data: "{}" }] })];
+    expect(ids(topCards(list))).toEqual([id(1), id(2), id(3)]);
+  });
+
+  it("a notice or a relay is never picked as a plain reply, a notice with a card can be", () => {
+    const list = [line(1, "bot"), line(2, "notice"), line(3, "relay"), line(4, "bot"), line(5, "bot"), line(6, "bot")];
+    expect(ids(topCards(list))).toEqual([id(4), id(5), id(6)]);
+    expect(ids(topCards([line(1, "bot"), line(2, "bot"), line(3, "bot"), card(4, "notice")]))).toEqual([id(2), id(3), id(4)]);
+  });
+
+  it("open questions are never folded, even when there are more than three", () => {
+    const list = [ask(1), ask(2), ask(3), ask(4), line(5, "bot"), line(6, "error")];
+    expect(ids(topCards(list))).toEqual([id(1), id(2), id(3), id(4)]);
+  });
+
+  it("an answered, picked or ignored question is an ordinary reply", () => {
+    const list = [ask(1, { chosen: 0 }), ask(2, { answer: "Yes" }), ask(3, { ignoredAt: "2026-11-10T00:00:00Z" }), line(4, "bot"), line(5, "bot"), line(6, "bot")];
+    expect(ids(topCards(list))).toEqual([id(4), id(5), id(6)]);
+  });
+
+  it("a different limit", () => {
+    expect(ids(topCards([1, 2, 3, 4].map((n) => line(n, "bot")), 1))).toEqual([id(4)]);
+    expect(topCards([line(1, "bot")], 0)).toEqual([]);
+  });
+});
+
+describe("the settings", () => {
+  it("only the switch and the threshold are read; what an older version kept is ignored", () => {
+    const get = (values: Record<string, unknown>) => (key: string) => values[key];
+    expect(catchUpSettings(get({}))).toEqual({ catchUpEnabled: true, catchUpThreshold: 3 });
+    expect(catchUpSettings(get({ "botling.catchup.unread": false, "botling.catchup.unreadThreshold": 99 }))).toEqual({ catchUpEnabled: false, catchUpThreshold: 50 });
+    expect(catchUpSettings(get({
+      "botling.catchup.model": "opus", "botling.catchup.engine": "claude", "botling.catchup.prompt": "Be terse.", "botling.catchup.interval": true,
+      "botling.catchup.customThresholds": true, "botling.catchup.intervalThreshold": 9,
+    }))).toEqual({ catchUpEnabled: true, catchUpThreshold: 3 });
   });
 });
