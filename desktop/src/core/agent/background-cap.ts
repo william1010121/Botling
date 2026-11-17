@@ -16,17 +16,22 @@ export const BACKGROUND_CAP_HOOK = "botling-background-cap";
 
 const own = (object: unknown, key: string): unknown =>
   object && typeof object === "object" && Object.hasOwn(object, key) ? (object as Record<string, unknown>)[key] : undefined;
-const overCap = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > BACKGROUND_WAIT_CAP_MS;
+// The CLI's schemas accept "true" and "3700000" for a boolean and a number; a string never slips past the cap.
+const isTrue = (value: unknown): boolean => value === true || value === "true";
+const asMs = (value: unknown): number | null => {
+  const ms = typeof value === "string" && /^\s*\d+(\.\d+)?\s*$/.test(value) ? Number(value) : value;
+  return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+};
 
 /** The hook's answer: the same call with its wait capped (and a note for the model), or `{}` when nothing needs capping. */
 export function backgroundCapDecision(input: any): Record<string, unknown> {
   if (input?.hook_event_name !== "PreToolUse") return {};
   const call = input.tool_input;
   let field: "timeout" | "timeout_ms" | null = null;
-  if (input.tool_name === "Bash" && own(call, "run_in_background") === true) field = "timeout";
-  else if (input.tool_name === "Monitor" && own(call, "persistent") !== true) field = "timeout_ms";
-  if (!field || !overCap(own(call, field))) return {};
-  const asked = own(call, field) as number;
+  if (input.tool_name === "Bash" && isTrue(own(call, "run_in_background"))) field = "timeout";
+  else if (input.tool_name === "Monitor" && !isTrue(own(call, "persistent"))) field = "timeout_ms";
+  const asked = field ? asMs(own(call, field)) : null;
+  if (!field || asked === null || asked <= BACKGROUND_WAIT_CAP_MS) return {};
   return { hookSpecificOutput: { hookEventName: "PreToolUse",
     updatedInput: { ...call, [field]: BACKGROUND_WAIT_CAP_MS },
     additionalContext: `Botling capped this background wait at 50 minutes (${field} ${BACKGROUND_WAIT_CAP_MS} ms; you asked for ${asked} ms) so the prompt cache stays warm. If it ends at the cap and you still need the result, start the wait again.` } };

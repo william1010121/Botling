@@ -38,6 +38,13 @@ describe("backgroundCapDecision", () => {
     expect(backgroundCapDecision({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { timeout: 9_000_000, run_in_background: true } })).toEqual({});
     expect(backgroundCapDecision(undefined)).toEqual({});
   });
+  it("caps the string forms the CLI's schemas also accept (\"true\", \"3700000\")", () => {
+    expect(out(backgroundCapDecision(pre("Bash", { command: "x", timeout: "3700000", run_in_background: "true" }))).updatedInput).toEqual({ command: "x", timeout: 3_000_000, run_in_background: "true" });
+    expect(out(backgroundCapDecision(pre("Bash", { command: "x", timeout: 3_700_000, run_in_background: "true" }))).updatedInput.timeout).toBe(3_000_000);
+    expect(backgroundCapDecision(pre("Monitor", { command: "x", timeout_ms: "3700000", persistent: "true" }))).toEqual({});
+    expect(backgroundCapDecision(pre("Bash", { command: "x", timeout: "600000", run_in_background: "true" }))).toEqual({});
+    expect(backgroundCapDecision(pre("Bash", { command: "x", timeout: "3700000", run_in_background: "false" }))).toEqual({});
+  });
   it("does not follow a prototype key as a value (own properties only)", () => {
     const input = Object.create({ timeout: 9_000_000, run_in_background: true });
     expect(backgroundCapDecision(pre("Bash", input))).toEqual({});
