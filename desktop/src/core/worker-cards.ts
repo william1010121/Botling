@@ -59,7 +59,7 @@ export interface WorkerCardRecord {
   /** The component its latest report asked Maintainer for, and whether that was passed on (once per ask). */
   wants?: CardWant;
   asked?: boolean;
-  /** Why a script command of its latest report was not kept (also written into `text`), and whether the worker was told (once, so a redo that fails again does not loop). */
+  /** Why a script command of its latest report was not kept (also written into `text`), and whether the worker was told (once per streak of rejected reports, so a redo that fails again does not loop). */
   rejected?: string;
   rejectedTold?: boolean;
 }
@@ -195,7 +195,7 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
 
 /** One line (the command is the worker's text: quoted and cut) on why a command was not kept and what to do. */
 function rejectedMessage(name: string, command: string, scriptsDir: string): string {
-  return `the command ${JSON.stringify(command.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 300))} of component ${JSON.stringify(name.slice(0, 100))} was not kept: it must be python3, node or bash on a script under ${scriptsDir}/<short-name>/ with plain arguments (no pipes or redirects), so the card shows the component's default instead. Copy or write the script there and redo the card.`;
+  return `the command ${JSON.stringify(command.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 300))} of component ${JSON.stringify(name.slice(0, 100))} was not kept: it must be python3, node or bash on a script under ${scriptsDir}/<short-name>/ with plain arguments (no pipes or redirects), so the card shows the component's default instead. Copy or write the script there and redo the card.`;
 }
 
 /** The rejection to tell the card's worker, once (null when there is none or it was told); the worker then fixes the command and redoes the card. */
@@ -225,9 +225,12 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
       card.text = content.text;
       // A rejected command is shown on the card itself, in its words, so the user and the head see it.
       if (content.rejected.length) {
-        card.text = `${card.text}${card.text ? "\n\n" : ""}⚠ ${content.rejected.join("\n⚠ ")}`.slice(0, CARD_TEXT_MAX);
+        // The warning goes last and is never the part that is cut: the words give way to it.
+        const warning = `⚠ ${content.rejected.join("\n⚠ ")}`.slice(0, 4_000);
+        card.text = `${card.text.slice(0, CARD_TEXT_MAX - warning.length - 2)}${card.text ? "\n\n" : ""}${warning}`;
+        // Told once per streak of rejected reports: a redo that is rejected again, even for another command, is shown but not told again (no loop). A clean report ends the streak.
         const joined = content.rejected.join(" ").slice(0, 2_000);
-        if (card.rejected !== joined) { card.rejected = joined; delete card.rejectedTold; }
+        if (card.rejected !== joined) card.rejected = joined;
       } else { delete card.rejected; delete card.rejectedTold; }
       if (content.shows.length) card.shows = content.shows; else delete card.shows;
       // A component asked for is passed on once; the same ask again (the next run repeats it) is not.

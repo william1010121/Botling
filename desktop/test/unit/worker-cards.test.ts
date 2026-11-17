@@ -7,7 +7,7 @@ import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, followWorker, newCards, projectCard, readCards, takeRejection,
+  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, followWorker, newCards, projectCard, readCards, takeRejection,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
 
@@ -329,6 +329,28 @@ describe("a rejected script command is never dropped silently", () => {
     expect(c.rejected).toBeUndefined();
     expect(c.text).not.toContain("not kept");
     expect(takeRejection(c)).toBeNull();
+  });
+
+  it("a redo rejected for another command is shown but not told again: one tell per streak, so a worker that keeps varying cannot loop", () => {
+    const c = card();
+    followWorker(c, ledger({ status: "done", text: OUTSIDE }), RULES);
+    expect(takeRejection(c)).not.toBeNull();
+    followWorker(c, ledger({ status: "done", run: 2, text: '<show name="git-log" command="python3 /p/repo/other/x.py 6"></show>' }), RULES);
+    expect(c.text).toContain("/p/repo/other/x.py");
+    expect(takeRejection(c)).toBeNull();
+    // A clean report ends the streak: the next rejection is told again.
+    followWorker(c, ledger({ status: "done", run: 3, text: "plain words" }), RULES);
+    followWorker(c, ledger({ status: "done", run: 4, text: OUTSIDE }), RULES);
+    expect(takeRejection(c)).not.toBeNull();
+  });
+
+  it("the warning survives a report whose words fill the card's text limit, and its command is one clean line", () => {
+    const c = card();
+    const bad = '<show name="git-log" command="python3 /p/x\u2028y.py"></show>';
+    followWorker(c, ledger({ status: "done", text: `${"w".repeat(CARD_TEXT_MAX)}\n${bad}` }), RULES);
+    expect(c.text!.length).toBeLessThanOrEqual(CARD_TEXT_MAX);
+    expect(c.text).toContain("⚠ the command");
+    expect(c.rejected).not.toMatch(/[\u2028\u2029]/);
   });
 
   it("cardInstructions says every script the command runs must live in <project>/.bot/card-scripts/<component>/ (copy it there; arguments are fine)", () => {

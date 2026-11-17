@@ -274,6 +274,34 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     expect(asked).toHaveLength(0);
   });
 
+  it("a report whose script command was not kept goes back to its worker once; a report read at the app's start, or the same bad command again, is not told", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Git">Last 6 commits.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const told = () => r.handoff.mock.calls.filter(([tool]) => tool === "app_send_message");
+    const bad = 'Last 6 commits.\n<show name="git-log" command="python3 /elsewhere/git-log.py 6"></show>';
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: bad }));
+    expect(record.workerCards![0]!.text).toContain("⚠");
+    await waitFor("the rejection told", () => told().length === 1);
+    expect(told()[0]![1]).toMatchObject({ task_id: "T1", message: expect.stringContaining("/elsewhere/git-log.py") });
+    expect(told()[0]![1]!.message).toMatch(/^\(App: .*card-scripts/);
+    // Its redo says the same again: shown, not told again.
+    r.peek.projectWorker(ledger({ status: "running", run: 2, text: bad }));
+    r.peek.projectWorker(ledger({ status: "done", run: 2, text: `${bad} ` }));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(told()).toHaveLength(1);
+  });
+
+  it("a rejection read again at the app's start is shown on the card but not told to the worker", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Git">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'x <show name="git-log" command="python3 /elsewhere/g.py"></show>' }), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(record.workerCards![0]!.rejected).toBeDefined();
+    expect(r.handoff.mock.calls.filter(([tool]) => tool === "app_send_message")).toHaveLength(0);
+  });
+
   it("tellCardWorker sends the words to the worker as app_send_message", async () => {
     const r = rig();
     r.peek.workers.tellCardWorker("T1", "gpu-gauge is ready.");
