@@ -848,6 +848,14 @@ describe("messages", () => {
     feedback.enabled = false;
   });
 
+  /** A file dragged over a report box; true when the box took it (acceptPictures). */
+  const dragFilesOver = (box: Element): boolean => {
+    const event = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"] } });
+    box.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
   it("the cube button opens Report problem's box, and Send posts one regather line for that reply (no command, no feedback)", () => {
     feedback.enabled = false;
     messageMenu.items = [];
@@ -864,6 +872,9 @@ describe("messages", () => {
     expect(box.querySelector(".report-title")?.textContent).toBe("Anything you would like in the report?");
     expect(box.querySelector("textarea")).not.toBeNull();
     expect(box.querySelector(".report-images")?.children.length).toBe(0);
+    // Pictures dragged onto it are not taken (nothing would send them).
+    expect(dragFilesOver(box)).toBe(false);
+    expect(box.classList.contains("dropping")).toBe(false);
     box.querySelector("textarea")!.value = "  compare by week ";
     box.querySelector<HTMLButtonElement>(".send")!.click();
     expect(document.querySelector(".report")).toBeNull();
@@ -880,6 +891,8 @@ describe("messages", () => {
       row.querySelector<HTMLButtonElement>(".feedback-button")!.click();
       expect(document.querySelectorAll(".report")).toHaveLength(1);
       expect(document.querySelector(".report .report-title")?.textContent).not.toBe("Anything you would like in the report?");
+      // Report problem's box takes pictures; the cube's does not.
+      expect(dragFilesOver(document.querySelector(".report")!)).toBe(true);
       expect(sent).toEqual([]);
     } finally {
       feedback.enabled = false;
