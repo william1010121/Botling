@@ -9,6 +9,7 @@ import type { ApprovalAskView, Event, MessageView, ResultOf } from "../../contra
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
+import { inlineBlocksFor } from "../inline-blocks";
 import { ALWAYS_COMPONENTS, BUILT_INS, COMPONENT_LIMIT, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
@@ -116,7 +117,9 @@ export class BotCards {
   private componentKnowledge(): ComponentKnowledge | null {
     const context = this.context;
     if (!context || !context.library.names.length) return null;
-    return componentKnowledgeFor(context.library, this.ownComponents());
+    // A bot with the inline block guidance has its examples in its instructions: its note says no usage lookup is needed for them.
+    const examples = inlineBlocksFor({ inlineBlockGuidance: this.options.launch?.().inlineBlockGuidance }, this.owner.profile.folder);
+    return componentKnowledgeFor(context.library, this.ownComponents(), examples);
   }
 
   /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */

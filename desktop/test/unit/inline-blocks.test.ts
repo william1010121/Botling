@@ -233,14 +233,36 @@ describe("the built-in component every bot has", () => {
 });
 
 describe("the component lines", () => {
-  it("count only the bot's own against the limit, and say the examples in the instructions are enough", () => {
-    const names = ["table", "inline-report-block"];
-    const library = { names, command: () => null, summaries: (of: string[]) => `- ${of[0]}: first line`, pinOnly: () => false };
+  const names = ["table", "inline-report-block"];
+  const library = { names, command: () => null, summaries: (of: string[]) => `- ${of[0]}: first line`, pinOnly: () => false };
+  it("count only the bot's own against the limit", () => {
     const k = componentKnowledgeFor(library, ["table", "inline-report-block"]);
-    const text = knowledgeFull(k);
-    expect(text).toContain("Components in the chat: 1 / 20 yours");
-    expect(text).toContain("unless your instructions already carry examples for that component");
+    expect(knowledgeFull(k)).toContain("Components in the chat: 1 / 20 yours");
     const told = componentKnowledgeFor(library, ["table"]);
     expect(knowledgeChanges(k, told)).toContain("You have 1 / 20.");
+  });
+  it("say a lookup is not needed for examples the instructions carry, only to a bot that has them", () => {
+    const sentence = "a component your instructions already carry examples for (the inline blocks rule) needs no lookup";
+    expect(knowledgeFull(componentKnowledgeFor(library, ["table"], true))).toContain(sentence);
+    expect(knowledgeFull(componentKnowledgeFor(library, ["table"]))).not.toContain("needs no lookup");
+    expect(knowledgeFull(componentKnowledgeFor(library, ["table"], false))).toBe(knowledgeFull(componentKnowledgeFor(library, ["table"])));
+  });
+  it("a bot's note follows settings.json inlineBlockGuidance (launch) and its project folder", () => {
+    const make = (guidance: unknown, folder: string) => {
+      const lib = new ComponentLibrary(() => [cardsFolder]);
+      const owner: any = { profile: { folder }, readOnly: false, store: { saveSetting() {} } };
+      const host: any = { readOnly: false, records: [], updated() {} };
+      const ctx: any = { options: { components: { library: lib }, launch: () => ({ subagentHourCache: false, inlineBlockGuidance: guidance }) }, id: "bot-1", owner, peers: [], store: owner.store };
+      const bot = new BotCards(host, ctx);
+      owner.cards = bot;
+      bot.componentList = [];
+      return bot.componentNote();
+    };
+    const here = folder();
+    expect(make("all", here)).toContain("needs no lookup");
+    expect(make([here], here)).toContain("needs no lookup");
+    expect(make(undefined, here)).not.toContain("needs no lookup");
+    expect(make("off", here)).not.toContain("needs no lookup");
+    expect(make([folder()], here)).not.toContain("needs no lookup");
   });
 });

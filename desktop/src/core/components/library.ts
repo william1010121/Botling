@@ -366,6 +366,8 @@ export interface ComponentKnowledge {
   own: { name: string; text: string }[];
   others: { name: string; text: string }[];
   limit: number;
+  /** The bot's instructions carry examples for a component (the inline blocks guidance): no app_component_usage lookup for it. */
+  examples?: boolean;
 }
 
 /** "- name (command): first line" or "- name (JSON): first line" (`ownLine`): how to fill it, and what it is for. */
@@ -375,7 +377,7 @@ export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">
 }
 
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
-export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly">>, mine: readonly string[]): ComponentKnowledge {
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly">>, mine: readonly string[], examples = false): ComponentKnowledge {
   // choices is the app's own buttons: the instructions already teach its block, so it is not listed again. A pin-only component (status
   // things for the pin strip) is in neither list: the bots do not see it.
   const listed = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name);
@@ -386,11 +388,12 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     own: own.map((name) => ({ name, text: ownLine(library, name) })),
     others: others.map((name) => ({ name, text: library.summaries([name]) })),
     limit: COMPONENT_LIMIT,
+    ...(examples ? { examples } : {}),
   };
 }
 
 export function knowledgeFull(k: ComponentKnowledge): string {
-  let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them, unless your instructions already carry examples for that component (then the examples are enough). <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
+  let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name)).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them.${k.examples ? " Exception: a component your instructions already carry examples for (the inline blocks rule) needs no lookup; the examples are enough." : ""} <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
   if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; it then shows up in your list.)\n` + k.others.map((e) => e.text).join("\n");
   return text;
 }
