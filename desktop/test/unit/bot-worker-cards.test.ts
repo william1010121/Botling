@@ -147,7 +147,44 @@ describe("a reply with <card>: the worker starts", () => {
   });
 });
 
+describe("a card starts one worker, whatever calls it", () => {
+  it("startCards called again for the same reply while the first handoff is still being answered starts no second worker", async () => {
+    const r = rig();
+    let release!: () => void;
+    r.handoff.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ task_id: "T1", run: 1 }); }));
+    const record = await answer(r, '<card title="t">go</card>');
+    await waitFor("the first handoff to be asked", () => r.handoff.mock.calls.length === 1);
+    r.peek.workers.startCards(record);
+    r.peek.workers.startCards(record);
+    release();
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    expect(r.handoff).toHaveBeenCalledTimes(1);
+  });
+
+  it("drawing the cards of a reply that has them already (a second finish of the line) keeps them, bound as they are, and draws none new", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="t">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const first = record.workerCards![0]!;
+    r.peek.headEvents.drawCards(record, [{ title: "again", prompt: "again" }], { plugin: undefined });
+    expect(record.workerCards).toHaveLength(1);
+    expect(record.workerCards![0]).toBe(first);
+    r.peek.workers.startCards(record);
+    expect(r.handoff).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a card follows its worker", () => {
+  it("a card bound to a worker the ledger does not have at the next start shows as interrupted, not at work for ever", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="t">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    expect(record.workerCards![0]!.status).toBe("running");
+    r.peek.workers.projectLedgerAtStart();
+    expect(record.workerCards![0]).toMatchObject({ status: "interrupted", taskId: "T1" });
+    expect(record.workerCards![0]!.error).toMatch(/app went away/);
+  });
+
   it("the worker's ledger moves the card: running, then its report (words and components), then a reply's next run replaces it", async () => {
     const r = rig();
     const record = await answer(r, '<card title="Prices">Go.</card>');

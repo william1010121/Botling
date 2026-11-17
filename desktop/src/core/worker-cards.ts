@@ -81,7 +81,7 @@ export function readCards(value: unknown): WorkerCardRecord[] {
 
 /** What the worker is told: the bot's prompt, and where its answer goes. */
 export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">): string {
-  return `${card.prompt}\n\n(App: your final report is drawn in a card titled "${card.title}" in the user's chat, who may reply on it. Make it the finished result, not a status note.)`;
+  return `${card.prompt}\n\n(App: your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it. Make it the finished result, not a status note.)`;
 }
 
 /** A report as the card keeps it: its words and its components with JSON, never a command or a request. */

@@ -611,6 +611,8 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   let system = prompts.system;
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
+  // A card starts an app-managed Claude worker (bot/workers.ts `startCards`): with native Agent subagents it would only fail, so the line goes.
+  if (engine === "claude" && !claudeWorkers) system = system.replace(`\n${CARD_TAG_RULE}`, "");
   if (workers) {
     const workersRule = claudeWorkersRule(rules);
     system = system.replace(NATIVE_SUBAGENT_LINE, () => workersRule).replace(NATIVE_SUB_BOT_AGENTS, WORKERS_SUB_BOT_AGENTS);

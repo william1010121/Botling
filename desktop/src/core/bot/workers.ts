@@ -477,8 +477,16 @@ export class BotWorkers {
    * start says why on itself. The worker's report reaches this bot as any worker's does.
    */
   startCards(record: ChatRecord) {
-    for (const card of record.workerCards ?? []) if (card.status === "starting" && !card.taskId) void this.startCard(record, card);
+    for (const card of record.workerCards ?? []) {
+      // A second call for the same reply (a redelivery) while the first is still asking the host starts nothing: one card, one worker.
+      if (card.status !== "starting" || card.taskId || this.startingCards.has(card.id)) continue;
+      this.startingCards.add(card.id);
+      void this.startCard(record, card).finally(() => this.startingCards.delete(card.id));
+    }
   }
+
+  /** The cards whose worker is being asked for (`startCards`). */
+  private readonly startingCards = new Set<string>();
 
   /** At start: a card whose worker was never started (the app went away first) says so; nothing starts it later. */
   private endStaleCards() {
@@ -536,7 +544,16 @@ export class BotWorkers {
     for (const record of records) {
       this.projectWorker(record.status === "running" ? { ...record, status: "interrupted", interruptedBy: "crash", report: { ...record.report, status: "interrupted", state: "none" } } : record, true);
     }
-    if (records.length) { this.saveSubagents(); this.persist(true); }
+    // A card bound to a worker its ledger no longer has (or has no ledger at all) would show it at work for ever: it shows as interrupted.
+    let orphaned = false;
+    const known = new Set(records.map((record) => record.id));
+    for (const line of this.records) for (const card of line.workerCards ?? []) {
+      if (!card.taskId || known.has(card.taskId) || (card.status !== "running" && card.status !== "starting")) continue;
+      card.status = "interrupted";
+      card.error = "The worker's record is gone; the app went away while it was at work.";
+      orphaned = true;
+    }
+    if (records.length || orphaned) { this.saveSubagents(); this.persist(true); }
   }
 
   /** What the constructor of `Bot` does about workers (M7-S60, moved from it in the same order): the ledger first, then the Claude workers. */

@@ -552,6 +552,8 @@ export class HeadEvents {
    * began with a plugin's message starts none (the checks of a worker a plugin asked for run on the turn under way, which is over here).
    */
   private drawCards(record: ChatRecord, requests: NonNullable<ReturnType<typeof parseReply>["cards"]>, turn: Turn) {
+    // The reply was finished before (a second finish of the same line): its cards are drawn and bound already, and are not drawn again.
+    if (record.workerCards?.length) return;
     const refusal = turn.plugin ? "This turn began with a plugin's message, and a plugin's worker needs the checks of its own. Nothing was started." : undefined;
     const { cards, dropped } = newCards(requests, () => randomUUID().toLowerCase(), refusal);
     record.workerCards = cards;

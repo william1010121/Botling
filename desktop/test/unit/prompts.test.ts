@@ -135,6 +135,14 @@ describe("prompts: the Swift app's strings", () => {
     });
   }
 
+  it("the <card> line is told to a Claude bot with app-managed workers only: not to native Agent subagents, not to Codex or Antigravity", () => {
+    const profile = { id: "m", name: "P", role: "manager" as const, folder: "/p/repo", memoryPath: ".bot/memory.md", job: null, instructions: "X" };
+    const plain = botPrompts({ profile, engine: "claude", language: "en" });
+    expect(desktopPrompts(plain, profile, "claude", true).system).toContain(CARD_TAG_RULE);
+    expect(desktopPrompts(plain, profile, "claude", false).system).not.toContain("<card title=");
+    expect(botPrompts({ profile, engine: "codex", language: "en" }).system).not.toContain("<card title=");
+  });
+
   it("every engine's worker text carries the lookup rule exactly once (M7-F02)", () => {
     const count = (text: string, part: string) => text.split(part).length - 1;
     const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };
