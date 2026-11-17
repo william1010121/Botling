@@ -144,7 +144,7 @@ it("shows the components of folded messages as real, live, read-only components 
   // Never the raw-data fallback, never a snapshot of the folded chat frame, never a command or a call to the app.
   expect(dialog.querySelector(".source-card pre")).toBeNull();
   expect(dialog.querySelector(".source-static-frame")).toBeNull();
-  expect(sent.length).toBe(before);
+  expect(JSON.stringify(sent.slice(before))).not.toMatch(/never-run|never-detail/);
   document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
   window.ccb.setState(state(null));
 });

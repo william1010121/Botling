@@ -22,7 +22,7 @@ export async function openPage(): Promise<void> {
   const sync = PluginHost.prototype.sync;
   PluginHost.prototype.sync = function (specs: PluginSpec[]) { return sync.call(this, specs, async () => activate); };
   await import("../../../../Web/src/main");
-  await window.ccb.setPlugins([{ name: manifest.name, version: manifest.version, source: "bundled", styles: [], settings: {}, commands: [] }]);
+  await window.ccb.setPlugins([{ name: manifest.name, version: manifest.version, source: "bundled", styles: [], settings: {}, commands: [], builtIn: true }]);
 }
 
 /** A summary as the program part puts it in the chat. */
