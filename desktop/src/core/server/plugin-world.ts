@@ -13,6 +13,13 @@ import { Layout } from "../store/workspace";
 import { usageView } from "../usage";
 import type { Plugins } from "../plugins";
 
+/**
+ * The plugins that may start workers on Maintainer (the plugin library's bot). Every other plugin is refused there: its worker could rewrite plugins.
+ * The user decided on 2026-11-18 that the design arena (design-duel) may open its designers on Maintainer (a duel to redesign a plugin's own page
+ * is opened in Maintainer's chat). Named by plugin name; a plugin is added only on the user's word.
+ */
+export const MAINTAINER_WORKER_PLUGINS: ReadonlySet<string> = new Set(["design-duel"]);
+
 export class CorePluginWorld {
   constructor(private readonly host: Core) {}
 
@@ -203,11 +210,11 @@ export class CorePluginWorld {
         orchestration: {
           granted: (name) => options.pluginCapability?.(name, "orchestrate") === true,
           installed: (name) => options.pluginCapability?.(name, "installed") === true,
-          workers: (botId) => {
+          workers: (botId, plugin) => {
             const bot = this.pluginBot(botId);
             if (!bot) return "No such bot.";
-            // Maintainer owns the plugin library: a plugin's worker there could rewrite plugins, so it is never a target.
-            if (bot.id === this.maintainerId) return "A plugin may not start workers on Maintainer. Nothing was started.";
+            // Maintainer owns the plugin library: a plugin's worker there could rewrite plugins, so it is a target only for the plugins named in MAINTAINER_WORKER_PLUGINS.
+            if (bot.id === this.maintainerId && !(plugin !== undefined && MAINTAINER_WORKER_PLUGINS.has(plugin))) return "A plugin may not start workers on Maintainer. Nothing was started.";
             if (bot.engine !== "claude" || !bot.workers.claudeWorkersOn()) return "That bot does not run Claude-process workers, the only kind a plugin starts for now. Nothing was started.";
             const host = bot.ensureClaudeWorkers();
             // The bot's own id (not "main"): the book's entries must match `botRemoved`, which names the real id (review).
