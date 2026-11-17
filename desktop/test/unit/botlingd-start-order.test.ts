@@ -151,8 +151,11 @@ describe("M7-S84: Botlingd start / stop order", () => {
 
   it("starts and stops in the same order every time", async () => {
     const runs = [await record("a"), await record("b"), await record("c")];
-    expect(runs[1]).toEqual(runs[0]);
-    expect(runs[2]).toEqual(runs[0]);
+    // The order only: the timing lines carry milliseconds (and the finer ones appear only from 100 ms), so they differ between runs.
+    for (const run of runs.slice(1)) {
+      expect(run.start).toEqual(runs[0].start);
+      expect(run.stop).toEqual(runs[0].stop);
+    }
     expect(runs[0].start).toEqual(EXPECTED_START);
     expect(runs[0].stop).toEqual(EXPECTED_STOP);
     // The startup phases say where the time went (core/phase-marks.ts): startCore, startRuntime, startPush and the core itself.
