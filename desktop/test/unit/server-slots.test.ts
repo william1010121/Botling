@@ -298,6 +298,13 @@ describe("§11.3 apply at the owner, branch by branch", () => {
         expect(h.applied).toEqual([1, 2]);
       });
 
+      it("a card a worker drew (`<line id>:card-<n>`) is approved through its line", async () => {
+        const h = harness();
+        line(h, "c1");
+        expect(await h.send(approve(1, "c1:card-0"))).toMatchObject({ message: { outcome: { kind: "applied" } } });
+        expect(await h.send(approve(2, "c9:card-0"))).toMatchObject({ message: { outcome: { reason: "changed" } } });
+      });
+
       it("a line that does not exist is still refused{changed}; so is one whose card row is closed or newer than the basis", async () => {
         const h = harness();
         expect(await h.send(approve(1, "gone"))).toMatchObject({ message: { outcome: { reason: "changed", detail: "card gone is closed" } } });

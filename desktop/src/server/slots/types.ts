@@ -58,6 +58,11 @@ export interface BasisReader {
   turnRunning(tx: Db, botId: string, turnId: string): boolean;
   /** A card (a question or approval line, `cardId` = its message id), or null when there is none. */
   card(tx: Db, botId: string, cardId: string): { open: boolean; rev: number } | null;
+  /**
+   * Whether the bot has a line with this id. Only `component.approve` asks it: a component card (`<show … command=…>`) is a plain
+   * line with no `cards` row. A reader that leaves it out says no (fail closed).
+   */
+  line?(tx: Db, botId: string, messageId: string): boolean;
 }
 
 /** Things the owner records for the Doctor and audits (§11.3 "audit"); never part of an outcome. */

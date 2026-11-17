@@ -23,6 +23,11 @@ export const dbBasisReader: BasisReader = {
     const row = tx.prepare("SELECT rev, state FROM cards WHERE botId = ? AND cardId = ?").get(botId, cardId);
     return row ? { open: row.state === "open", rev: Number(row.rev) } : null;
   },
+  line(tx, botId, messageId) {
+    // A card a worker drew is keyed `<line id>:card-<n>` (BotCards.shownAt): the line is the part before it.
+    const lineId = messageId.replace(/:card-\d+$/, "");
+    return !!tx.prepare("SELECT 1 AS found FROM messages WHERE botId = ? AND msgId = ?").get(botId, lineId);
+  },
 };
 
 /** M1: the local desktop front end on its own server may do everything; any other scope waits for M2's table (§11.7). */
@@ -54,6 +59,9 @@ export function checkBasis(tx: Db, reader: BasisReader, log: SlotLog, target: St
   if (CARD_COMMANDS.has(cmd.type)) {
     const { botId, messageId } = cmd as { botId: string; messageId: string };
     const card = reader.card(tx, botId, messageId);
+    // "Allow and run" on a component card: the card is a plain line (no `cards` row: only buttons, questions and approvals have
+    // one), so a line that is there is enough; the core checks the command, folder and Detail against that line itself.
+    if (!card && cmd.type === "component.approve" && reader.line?.(tx, botId, messageId) === true) return;
     if (!card || !card.open) throw new SlotRefusal("changed", `card ${messageId} is closed`);
     if (basis && (basis.logId !== log.logId(tx, target) || card.rev > basis.seq)) throw new SlotRefusal("changed", `card ${messageId} has a newer revision`);
     return;
