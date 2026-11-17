@@ -316,8 +316,12 @@ export const WorkerCardView = z.strictObject({
   taskId: z.string().max(200).optional(),
   /** Where in the reply's text it is drawn (UTF-16 offset); absent: after the text. */
   at: z.number().int().nonnegative().optional(),
-  /** The latest finished run's words. */
+  /** The latest finished run's words (without `warning`): the page folds them when the card has components. */
   text: z.string().max(200_000).optional(),
+  /** The ⚠ lines on a rejected command: always in sight, never folded with `text`. */
+  warning: z.string().max(4_000).optional(),
+  /** A component it asked Maintainer for is not here yet ("late": after 30 minutes). */
+  waiting: z.enum(["component", "late"]).optional(),
   /** Its components, each at `at` in `text`. */
   displays: z.array(DisplayView).max(10).optional(),
   error: z.string().max(2_000).optional(),

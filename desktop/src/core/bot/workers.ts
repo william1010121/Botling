@@ -30,7 +30,7 @@ import type { RequestEvent } from "../token-speed";
 import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
-import { cardInstructions, followWorker, projectCard, takeRejection } from "../worker-cards";
+import { CARD_WAIT_MAX_MS, cardInstructions, followWorker, projectCard, takeRejection } from "../worker-cards";
 import { CARD_WORKER_MODEL } from "../settings";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
@@ -336,8 +336,16 @@ export class BotWorkers {
     return plugin ? { plugin } : {};
   }
 
+  /** Whether worker `id` is the one a `<card>` of this chat started (all of the chat's lines, not only the recent ones: a card is followed up on for as long as it stands). */
+  private isCardWorker(id: string): boolean {
+    for (let i = this.records.length - 1; i >= 0; i--) if (this.records[i]!.workerCards?.some((card) => card.taskId === id)) return true;
+    return false;
+  }
+
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
   workerReport(text: string, workerId?: string): boolean {
+    // A card's worker reports to its card (the ledger moves it, `projectCard`), never to the head: the card is the only place its result shows, and the user follows up on the card.
+    if (workerId && this.isCardWorker(workerId)) return true;
     if (this.shuttingDown || this.problem || this.profile.problem) return false;
     try { this.relayIfCallInWork((this.options.primary ?? this.host).deliverTo(this.engine, text, null, { origin: "app", ...this.pluginBehind(workerId) }), workerId, "report"); return true; }
     catch (error) { this.log(`claude worker report not delivered: ${(error as Error).message}`); return false; }
@@ -535,6 +543,9 @@ export class BotWorkers {
     for (const card of record.workerCards ?? []) {
       if (!card.wants || card.asked || !card.taskId) continue;
       card.asked = true;
+      card.askedAt = Date.now();
+      // The card says the component is late after a while (nothing else happens: the worker still waits for it).
+      setTimeout(() => { if (!this.shuttingDown) this.changed(record); }, CARD_WAIT_MAX_MS + 1_000).unref?.();
       const { name, request } = card.wants, taskId = card.taskId, title = card.title;
       queueMicrotask(() => {
         if (this.shuttingDown) return;

@@ -6,8 +6,9 @@ import { answerAction, answerImages, choicesData, choicesDrawGroups, commandCard
 import { groupSummary, questionGroupElement } from "./question-group";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
-import { avatar, extensions, messageMenu, quickIcon } from "./messages";
-import { liveElement, stepsElement } from "./steps";
+import { avatar, cubeIcon, extensions, messageMenu, openReportBox, quickIcon } from "./messages";
+import { newComponentText } from "./regather";
+import { chevron, liveElement, stepsElement } from "./steps";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, StepView, WorkerCardView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
@@ -150,23 +151,47 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
   const status = document.createElement("span");
   status.className = "worker-card-status";
   status.textContent = t(CARD_STATUS_KEYS[card.status]);
-  head.append(title, status);
+  head.append(title);
+  // "Make a new component": the same small box as "make it a visual report" on a reply; its words go to the card's worker as any reply on the card does.
+  if (card.taskId) head.append(newComponentButton(card.taskId));
+  head.append(status);
   root.append(head);
-  if (card.text || card.displays?.length) {
-    const report: MessageView = {
-      ...message, id: `${message.id}:card-${index}`, role: "bot", text: card.text ?? "", displays: card.displays ?? null, display: null, workerCards: null,
-      choices: null, chosen: null, answer: null, questions: null, picks: null, open: false, steps: null, previews: null, artifacts: null, attachments: null,
-      openable: false, interrupted: null, fromSubagent: null, tasks: null, queued: false, replyTo: null, replyPreview: null, reactions: null, reactionEnabled: false, component: null,
+  const hasDisplays = !!card.displays?.length;
+  if (card.text || hasDisplays || card.warning) {
+    // The report is drawn as a reply is. The component keeps the id `<line>:card-<n>` (its command and answers are found by it).
+    const draw = (text: string, displays: DisplayView[] | null): HTMLElement => {
+      const report: MessageView = {
+        ...message, id: `${message.id}:card-${index}`, role: "bot", text, displays, display: null, workerCards: null,
+        choices: null, chosen: null, answer: null, questions: null, picks: null, open: false, steps: null, previews: null, artifacts: null, attachments: null,
+        openable: false, interrupted: null, fromSubagent: null, tasks: null, queued: false, replyTo: null, replyPreview: null, reactions: null, reactionEnabled: false, component: null,
+      };
+      cardBodies.add(report);
+      const body = botBody(report, components, botId);
+      body.className = "worker-card-body";
+      return body;
     };
-    cardBodies.add(report);
-    const body = botBody(report, components, botId);
-    body.className = "worker-card-body";
-    root.append(body);
+    // With a component drawn, the worker's own words (how it got the data, notes) are folded; with none they are all the card has (a picture it made is in them), so they stay in sight.
+    if (card.text && !hasDisplays) root.append(draw(card.text, null));
+    if (hasDisplays) root.append(draw("", card.displays!));
+    // A rejected command is said on the card, never folded.
+    if (card.warning) {
+      const warning = document.createElement("div");
+      warning.className = "worker-card-warning";
+      warning.textContent = card.warning;
+      root.append(warning);
+    }
+    if (card.text && hasDisplays) root.append(cardNotes(card.id, () => draw(card.text!, null)));
   } else if (card.status === "starting" || card.status === "running") {
     const wait = document.createElement("div");
     wait.className = "worker-card-wait";
     wait.textContent = t("card.waiting");
     root.append(wait);
+  }
+  if (card.waiting) {
+    const waiting = document.createElement("div");
+    waiting.className = "worker-card-wait";
+    waiting.textContent = t(card.waiting === "late" ? "card.waitLate" : "card.waitComponent");
+    root.append(waiting);
   }
   if (card.error) {
     const error = document.createElement("div");
@@ -206,6 +231,53 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     root.append(form);
   }
   return root;
+}
+
+function newComponentButton(taskId: string): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "reply-button regather-button worker-card-new";
+  button.setAttribute("aria-label", t("card.new.label"));
+  button.title = t("card.new.title");
+  button.innerHTML = cubeIcon;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openReportBox(button, {
+      question: t("card.new.question"),
+      placeholder: t("card.new.placeholder"),
+      pictures: false,
+      send: (text) => post({ type: "cardSend", taskID: taskId, text: newComponentText(text) }),
+    });
+  });
+  return button;
+}
+
+/** Cards whose folded words the user opened (a redraw, as the worker moves on, keeps them open). */
+const openNotes = new Set<string>();
+
+/** The worker's words under a card's component, folded to one line ("Show notes"), as a reply's steps are ("Worked · 5 steps"). Built when first opened. */
+function cardNotes(cardID: string, build: () => HTMLElement): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "worker-card-notes";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "steps-toggle";
+  toggle.innerHTML = `${chevron}<span></span>`;
+  const label = toggle.querySelector("span")!;
+  let body: HTMLElement | null = null;
+  const setOpen = (open: boolean) => {
+    wrap.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+    label.textContent = t(open ? "card.notesHide" : "card.notesShow");
+    if (open && !body) { body = build(); wrap.append(body); }
+    if (body) body.hidden = !open;
+    if (open) openNotes.add(cardID);
+    else openNotes.delete(cardID);
+  };
+  toggle.addEventListener("click", () => setOpen(!wrap.classList.contains("open")));
+  wrap.append(toggle);
+  setOpen(openNotes.has(cardID));
+  return wrap;
 }
 
 /** Whose call it was: one of the bot's subagents ("Subagent · Fix group B  Open ›"), opening it. */

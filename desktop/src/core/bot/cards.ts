@@ -19,7 +19,7 @@ import { toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
 import { join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
-import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, splitCardWarning, cardWaiting, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -217,10 +217,11 @@ export class BotCards {
         ? card.shows.map((show, at) => displayView(context, this.cardDisplay(show), `${record.id}:card-${index}/${at}`, "bot", this.commandFolder))
           .map((display) => ({ ...display, detail: null, card: null }))
         : [];
+      const { words, warning } = splitCardWarning(card);
       return {
         id: card.id, title: card.title.slice(0, 200), status: card.status, run: card.run,
         ...(card.taskId ? { taskId: card.taskId.slice(0, 200) } : {}), ...(card.at !== undefined ? { at: card.at } : {}),
-        ...(card.text ? { text: card.text.slice(0, 200_000) } : {}), ...(shown.length ? { displays: shown } : {}),
+        ...(words ? { text: words.slice(0, 200_000) } : {}), ...(warning ? { warning: warning.slice(0, 4_000) } : {}), ...(cardWaiting(card, Date.now()) ? { waiting: cardWaiting(card, Date.now())! } : {}), ...(shown.length ? { displays: shown } : {}),
         ...(card.error ? { error: card.error.slice(0, 2_000) } : {}),
       };
     });

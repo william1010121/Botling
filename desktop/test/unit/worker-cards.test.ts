@@ -7,7 +7,7 @@ import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, followWorker, newCards, projectCard, readCards, takeRejection,
+  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, cardWaiting, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
 
@@ -351,6 +351,31 @@ describe("a rejected script command is never dropped silently", () => {
     expect(c.text!.length).toBeLessThanOrEqual(CARD_TEXT_MAX);
     expect(c.text).toContain("⚠ the command");
     expect(c.rejected).not.toMatch(/[\u2028\u2029]/);
+  });
+
+  it("splitCardWarning: the ⚠ lines the card put last come apart from the worker's words (and a card with no rejection keeps all its text as words)", () => {
+    const c = card();
+    followWorker(c, ledger({ status: "done", text: `Last 6 commits.\n\nFiles touched: a.py\n${OUTSIDE}` }), RULES);
+    const { words, warning } = splitCardWarning(c);
+    expect(words).toBe("Last 6 commits.\n\nFiles touched: a.py");
+    expect(warning).toMatch(/^⚠ the command .*git-log-json\.py/);
+    expect(words).not.toContain("⚠");
+    // No words: the whole text is the warning.
+    const bare = card();
+    followWorker(bare, ledger({ status: "done", text: OUTSIDE }), RULES);
+    expect(splitCardWarning(bare)).toMatchObject({ words: "" });
+    expect(splitCardWarning(bare).warning).toBe(bare.text);
+    // Words of its own that start a line with ⚠ are words when nothing was rejected.
+    expect(splitCardWarning({ text: "a\n\n⚠ careful" })).toEqual({ words: "a\n\n⚠ careful" });
+  });
+
+  it("cardWaiting: a done card whose asked component is not here says so, and says late after 30 minutes", () => {
+    const wants = { name: "g", request: "r" };
+    expect(cardWaiting({ status: "done", wants, asked: true, askedAt: 1_000 }, 2_000)).toBe("component");
+    expect(cardWaiting({ status: "done", wants, asked: true, askedAt: 1_000 }, 1_000 + CARD_WAIT_MAX_MS + 1)).toBe("late");
+    expect(cardWaiting({ status: "running", wants, asked: true, askedAt: 1_000 }, 2_000)).toBeUndefined();
+    expect(cardWaiting({ status: "done", wants }, 2_000)).toBeUndefined();
+    expect(cardWaiting({ status: "done" }, 2_000)).toBeUndefined();
   });
 
   it("cardInstructions says every script the command runs must live in <project>/.bot/card-scripts/<component>/ (copy it there; arguments are fine)", () => {

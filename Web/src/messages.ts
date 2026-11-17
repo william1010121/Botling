@@ -44,7 +44,7 @@ const quickIcons: Record<string, string> = { cube: `<svg width="13" height="13" 
 export const quickIcon = (name: string | undefined) => (name && quickIcons[name]) || "•";
 
 
-const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
+export const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
 
 const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
 
@@ -411,7 +411,7 @@ function regatherButton(message: MessageView): HTMLElement {
 }
 
 /** The small box beside a reply's button where you type a few words (and, if `pictures`, paste or drop pictures), then send. */
-function openReportBox(anchor: HTMLElement, spec: { question: string; placeholder: string; pictures: boolean; send: (text: string, images: Picture[]) => void }): void {
+export function openReportBox(anchor: HTMLElement, spec: { question: string; placeholder: string; pictures: boolean; send: (text: string, images: Picture[]) => void }): void {
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";

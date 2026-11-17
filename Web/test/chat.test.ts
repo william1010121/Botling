@@ -646,6 +646,69 @@ describe("messages", () => {
     expect(messageElement(message({ ...view, id: "f2", feedback: { about: "Maintainer", words: "" } }), {}).querySelector(".feedback-words.empty")).not.toBeNull();
   });
 
+  it("a finished worker card draws its component and folds the worker's words behind a toggle; a rejection warning stays in sight", () => {
+    const components = { log: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const card = { id: "c1", title: "Prices", status: "done" as const, run: 1, taskId: "T1", at: null, text: "Got it from the API.\n\nFiles touched: a.py", displays: [{ name: "log", data: "{}", at: null }] };
+    const row = messageElement(message({ id: "m50", workerCards: [{ ...card, warning: "⚠ the command \"x\" was not kept" }] }), components);
+    document.body.append(row);
+    expect(row.querySelector(".worker-card .component-frame")).not.toBeNull();
+    const notes = row.querySelector<HTMLElement>(".worker-card-notes")!;
+    // Folded: the words are not even built, the toggle says how to open them, the warning is in sight.
+    expect(notes.querySelector(".markdown")).toBeNull();
+    expect(notes.querySelector(".steps-toggle")?.textContent).toBe("Show notes");
+    expect(row.querySelector(".worker-card-warning")?.textContent).toBe("⚠ the command \"x\" was not kept");
+    expect(row.querySelector(".worker-card-warning")?.closest(".worker-card-notes")).toBeNull();
+    notes.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(notes.querySelector<HTMLElement>(".worker-card-body")!.hidden).toBe(false);
+    expect(notes.textContent).toContain("Files touched: a.py");
+    expect(notes.querySelector(".steps-toggle")?.textContent).toBe("Hide notes");
+    // Drawn again as the worker moves on: still open.
+    expect(messageElement(message({ id: "m50", workerCards: [card] }), components).querySelector(".worker-card-notes.open")).not.toBeNull();
+    notes.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(notes.querySelector<HTMLElement>(".worker-card-body")!.hidden).toBe(true);
+  });
+
+  it("a worker card has a 'make a new component' button: its suggestion box sends a follow-up to the card's worker, asking Maintainer for a new component", () => {
+    const row = messageElement(message({ id: "m52", workerCards: [{ id: "c3", title: "Prices", status: "done", run: 1, taskId: "T9", at: null, text: "x" }] }), {});
+    document.body.append(row);
+    const button = row.querySelector<HTMLButtonElement>(".worker-card-head .worker-card-new")!;
+    expect(button).not.toBeNull();
+    button.click();
+    const box = document.querySelector<HTMLElement>(".report")!;
+    box.querySelector("textarea")!.value = "one bar per week";
+    box.querySelector<HTMLButtonElement>(".send")!.click();
+    expect(sent).toHaveLength(1);
+    const message0 = sent[0] as { type: string; taskID: string; text: string };
+    expect(message0).toMatchObject({ type: "cardSend", taskID: "T9" });
+    expect(message0.text).toMatch(/NEW component/);
+    expect(message0.text).toContain("<component name=");
+    expect(message0.text).toMatch(/Wait until/);
+    expect(message0.text).toContain("My suggestion: one bar per week");
+    // Without a suggestion, the request alone.
+    sent.length = 0;
+    button.click();
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+    expect((sent[0] as { text: string }).text).not.toContain("My suggestion");
+  });
+
+  it("no new-component button on a card that has no worker yet, nor on an ordinary reply", () => {
+    const starting = messageElement(message({ id: "m53", workerCards: [{ id: "c4", title: "t", status: "starting", run: 0, at: null }] }), {});
+    expect(starting.querySelector(".worker-card-new")).toBeNull();
+    expect(messageElement(message({ id: "m54", text: "plain" }), {}).querySelector(".worker-card-new")).toBeNull();
+  });
+
+  it("a card that waits for a component says so, and says it is late", () => {
+    const base = { id: "c5", title: "t", status: "done" as const, run: 1, taskId: "T1", at: null, text: "asked" };
+    expect(messageElement(message({ id: "m55", workerCards: [{ ...base, waiting: "component" }] }), {}).querySelector(".worker-card-wait")?.textContent).toBe("Waiting for Maintainer to build the new component…");
+    expect(messageElement(message({ id: "m56", workerCards: [{ ...base, waiting: "late" }] }), {}).querySelector(".worker-card-wait")?.textContent).toMatch(/over 30 minutes/);
+  });
+
+  it("a worker card with no component keeps its words in sight (they are all it has)", () => {
+    const row = messageElement(message({ id: "m51", workerCards: [{ id: "c2", title: "Chart", status: "done", run: 1, at: null, text: "![plot](file:///p/a.png) Done." }] }), {});
+    expect(row.querySelector(".worker-card-notes")).toBeNull();
+    expect(row.querySelector(".worker-card-body")?.textContent).toContain("Done.");
+  });
+
   it("fold a reply's steps and open a subagent from its card", () => {
     const step = (id: string, kind: "tool" | "text" | "subagent", title: string, extra: Partial<import("../src/types").StepView> = {}) =>
       ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });

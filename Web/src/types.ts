@@ -203,6 +203,9 @@ export interface WorkerCardView {
   taskId?: string;
   at?: number | null;
   text?: string;
+  /** The ⚠ lines on a rejected command: always in sight, never folded. */
+  warning?: string;
+  waiting?: "component" | "late";
   displays?: DisplayView[];
   error?: string;
 }

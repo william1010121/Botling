@@ -59,6 +59,8 @@ export interface WorkerCardRecord {
   /** The component its latest report asked Maintainer for, and whether that was passed on (once per ask). */
   wants?: CardWant;
   asked?: boolean;
+  /** When `asked` was set (ms): a component not delivered after `CARD_WAIT_MAX_MS` shows on the card as late. */
+  askedAt?: number;
   /** Why a script command of its latest report was not kept (also written into `text`), and whether the worker was told (once per streak of rejected reports, so a redo that fails again does not loop). */
   rejected?: string;
   rejectedTold?: boolean;
@@ -97,7 +99,7 @@ export function readCards(value: unknown): WorkerCardRecord[] {
       ...(typeof each.text === "string" ? { text: each.text } : {}),
       ...(shows.length ? { shows } : {}),
       ...(typeof each.error === "string" && each.error ? { error: each.error } : {}),
-      ...(wants ? { wants, ...(each.asked === true ? { asked: true } : {}) } : {}),
+      ...(wants ? { wants, ...(each.asked === true ? { asked: true, ...(typeof each.askedAt === "number" && Number.isFinite(each.askedAt) ? { askedAt: each.askedAt } : {}) } : {}) } : {}),
       ...(typeof each.rejected === "string" && each.rejected ? { rejected: each.rejected.slice(0, 2_000), ...(each.rejectedTold === true ? { rejectedTold: true } : {}) } : {}),
     });
   }
@@ -193,6 +195,27 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
   return { text: parsed.body.slice(0, CARD_TEXT_MAX), shows, rejected, ...(want ? { want } : {}) };
 }
 
+/** How long a card waits for a component it asked Maintainer for before it says the component is late (the worker stays, and still fills the card when it comes). */
+export const CARD_WAIT_MAX_MS = 30 * 60_000;
+
+/** A card whose worker asked for a component and has not been given it yet: "component" while it waits, "late" after `CARD_WAIT_MAX_MS`. */
+export function cardWaiting(card: Pick<WorkerCardRecord, "status" | "wants" | "asked" | "askedAt">, now: number): "component" | "late" | undefined {
+  if (card.status !== "done" || !card.wants || !card.asked) return undefined;
+  return typeof card.askedAt === "number" && now - card.askedAt > CARD_WAIT_MAX_MS ? "late" : "component";
+}
+
+/**
+ * A card's text as two parts: the worker's words, and the ⚠ warning `followWorker` put last (only when the card says a command was
+ * rejected). The page draws the words folded and the warning always in sight.
+ */
+export function splitCardWarning(card: Pick<WorkerCardRecord, "text" | "rejected">): { words: string; warning?: string } {
+  const text = card.text ?? "";
+  if (!card.rejected) return { words: text };
+  const join = text.lastIndexOf("\n\n⚠ ");
+  if (join >= 0) return { words: text.slice(0, join), warning: text.slice(join + 2) };
+  return text.startsWith("⚠ ") ? { words: "", warning: text } : { words: text };
+}
+
 /** One line (the command is the worker's text: quoted and cut) on why a command was not kept and what to do. */
 function rejectedMessage(name: string, command: string, scriptsDir: string): string {
   return `the command ${JSON.stringify(command.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 300))} of component ${JSON.stringify(name.slice(0, 100))} was not kept: it must be python3, node or bash on a script under ${scriptsDir}/<short-name>/ with plain arguments (no pipes or redirects), so the card shows the component's default instead. Copy or write the script there and redo the card.`;
@@ -234,9 +257,9 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
       } else { delete card.rejected; delete card.rejectedTold; }
       if (content.shows.length) card.shows = content.shows; else delete card.shows;
       // A component asked for is passed on once; the same ask again (the next run repeats it) is not.
-      if (!content.want) { delete card.wants; delete card.asked; }
-      else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; }
-    } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; delete card.rejected; delete card.rejectedTold; }
+      if (!content.want) { delete card.wants; delete card.asked; delete card.askedAt; }
+      else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; delete card.askedAt; }
+    } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; delete card.askedAt; delete card.rejected; delete card.rejectedTold; }
     // A run that ended badly and left no words says so on the card.
     const failure = report ? undefined : ENDED_BADLY[status];
     if (failure) card.error = failure; else delete card.error;
