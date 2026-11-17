@@ -208,7 +208,7 @@ export const en = {
   "regather.title": "Make a visual report: the bot gathers again and answers with a chart or report",
   "regather.question": "Anything you would like in the report?",
   "regather.placeholder": "Optional, e.g. compare by week, or show only the failures.",
-  "regather.message": "Please gather the data behind the reply I am quoting again, then answer it again as a visual report: use an inline-chart or inline-report-block by default (a result page only if it is really long). Ask Maintainer for a component only if none of the existing ones fits.",
+  "regather.message": "Please gather the data behind the reply I am quoting again, then answer it again as a visual report. First decide what the picture must show (groups side by side, a time axis, error bars, measured against estimated). A table, KPI row, comparison or timeline: one inline-report-block. A chart: an inline-chart only if it shows that clearly, otherwise a matplotlib PNG shown inline. A report page only if the content is really long. If nothing in the library shows it well and I would want it again, offer to make it a component, as you usually do.",
   "regather.suggestion": "My suggestion: ",
   // components.ts: a card that runs a command
   "command.runsIn": "Runs in {folder}",

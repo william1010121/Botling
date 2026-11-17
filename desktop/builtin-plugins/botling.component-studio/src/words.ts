@@ -3,7 +3,7 @@ export type Word = string | readonly [one: string, other: string];
 
 export const en = {
   "specChip.building": "Building…",
-  "specChip.buildingTitle": "Maintainer is building it; show its progress",
+  "specChip.buildingTitle": "Maintainer is building it",
   "specChip.component": "Component",
   "specChip.filling": "Filling in · {bot}",
   "specChip.fillingTitle": "Built; {bot} is drawing it with this reply's data",
@@ -19,7 +19,7 @@ export const en = {
 
 export const zhHant = {
   "specChip.building": "建置中…",
-  "specChip.buildingTitle": "Maintainer 正在建置；顯示進度",
+  "specChip.buildingTitle": "Maintainer 正在建置",
   "specChip.component": "元件",
   "specChip.filling": "填入中 · {bot}",
   "specChip.fillingTitle": "已建好；{bot} 正用這則回覆的資料畫出它",

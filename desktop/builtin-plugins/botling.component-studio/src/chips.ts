@@ -40,7 +40,7 @@ function undoButton(spec: SpecChipView, io: ChipIO): HTMLButtonElement {
   return element;
 }
 
-/** A built component under its reply: its name, Edit spec, and the component itself. */
+/** A built component under its reply: its name, Undo / Restore, and the component itself. */
 function builtSpec(spec: SpecChipView, state: ChatState, chat: string, draw: Draw, io: ChipIO): HTMLElement | null {
   const display = spec.display!;
   const name = spec.component!;
