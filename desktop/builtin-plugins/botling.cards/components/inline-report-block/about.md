@@ -1,6 +1,7 @@
 行內報告區塊: draws ONE report block (kpi, table, options, flowchart, timeline, steps…) inside a chat reply, looking the same as on a report page. Every bot has it; show it with `<show name="inline-report-block">{block JSON}</show>`.
 Sizes: 2x2
 Icon: chart.bar.doc.horizontal
+Built-in: yes
 
 Use it when the answer is mostly text and one block makes it clearer (a KPI row, a comparison table, the options with a recommendation, a flowchart of the cause). Several blocks = several `<show>` tags (one block each). When the result needs many charts, a matplotlib figure or a verdict card, publish a report page instead. It does not call `ccb.answer`: the user does not answer it, and nothing comes back to the bot.
 

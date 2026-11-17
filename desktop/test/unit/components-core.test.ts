@@ -33,7 +33,7 @@ describe("components", () => {
     const c = core(dir, { BOTLING_COMPONENT_SCAN_MS: "150" });
     const snapshot = await c.call({ type: "chat.snapshot", botId: MAIN });
     // (With the app's own preview card, seeded into the library as 1.x does.)
-    expect(Object.keys(snapshot.components).sort()).toEqual(["gitlog", "inline-report-block", "status", "todo", "網頁預覽卡片"]);
+    expect(Object.keys(snapshot.components).sort()).toEqual(["gitlog", "inline-chart", "inline-report-block", "status", "todo", "網頁預覽卡片"]);
     expect(snapshot.components.status).toMatchObject({ sizes: ["2x1", "2x2"], icon: "📊", title: "Status card", version: 0 });
     await turn(c, "hello");
     const first = inputs(dir)[0]!;

@@ -1,0 +1,334 @@
+<meta name="ccb-kit" content="1">
+<div class="card" id="root"></div>
+<style>
+/* Colours come from the host: the ccb-kit marker above makes the frame inject Botling's design tokens (--text, --muted, --faint,
+   --blue, --orange, --error, --code …) and set <html data-theme="dark|light"> (and the matching color-scheme), following the app.
+   Nothing here paints a background: the reply bubble, the pin panel or the Board tile behind the frame shows through. */
+html,body,#ccb-root{margin:0;background:transparent}
+html[data-surface="board"],html[data-surface="board"] body{height:100%}
+*{box-sizing:border-box}
+.card{border:0;background:none;border-radius:0;box-shadow:none;padding:12px;min-width:0;color:var(--text);font:13px/1.4 -apple-system,"PingFang TC","Noto Sans TC",sans-serif;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+html[data-surface="board"] .card{height:100%;overflow:hidden}
+.ch{--good:var(--blue);--bad:var(--orange);--ctx:color-mix(in srgb,var(--text) 28%,transparent);--grid:color-mix(in srgb,var(--text) 14%,transparent)}
+.ch-title{font-size:15px;font-weight:600;line-height:1.4;margin:0 0 2px}
+.ch-sub{font-size:12px;color:var(--faint);margin-bottom:10px}
+.ch-note{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+.ch-more{font-size:12px;color:var(--faint);margin-top:2px}
+.ch em{font-style:normal;color:var(--faint);font-size:12px}
+.ch b{font-weight:600}
+.mini{display:none}
+
+/* bars + waterfall */
+.br,.wr{display:grid;grid-template-columns:92px 1fr;align-items:center;min-height:30px;gap:8px}
+.bl,.wl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt,.wt{position:relative;height:24px}
+.bf,.wb{position:absolute;top:3px;bottom:3px;border-radius:4px;background:var(--ctx);min-width:2px;transition:filter .15s}
+.bf{left:0;width:calc(var(--p) * (100% - 96px));border-radius:0 5px 5px 0}
+.bf.hl{background:var(--good)}
+.bv,.wv{position:absolute;top:0;line-height:24px;white-space:nowrap}
+.bv{left:calc(var(--p) * (100% - 96px) + 8px)}
+.wb{left:calc(var(--s) * (100% - 112px));width:calc(var(--p) * (100% - 112px))}
+.wb.hot{background:var(--bad)}
+.wv{left:calc((var(--s) + var(--p)) * (100% - 112px) + 8px)}
+.wr.total{margin-top:4px;padding-top:6px;border-top:1px solid var(--grid)}
+.wr.total .wb{background:transparent;border:1.5px solid var(--faint)}
+.br:hover .bf,.wr:hover .wb{filter:brightness(1.15)}
+
+/* dumbbell */
+.lg{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-bottom:8px;align-items:center}
+.lg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.lg .o{border:2px solid var(--faint)}.lg .g{background:var(--good)}.lg .b{background:var(--bad)}
+.dumb{position:relative}
+.dr{display:grid;grid-template-columns:76px 1fr 54px;align-items:center;height:34px;gap:8px}
+.dm{position:relative;height:100%}
+.dtrack{position:absolute;top:0;bottom:0;left:34px;right:34px}
+.dline{position:absolute;top:50%;height:2px;margin-top:-1px;background:var(--c);opacity:.55}
+.dot{position:absolute;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%}
+.dot.o{border:2px solid var(--faint);background:transparent}
+.dot.f{background:var(--c)}
+.dv{position:absolute;top:50%;white-space:nowrap;font-size:12px}
+.dv.mute{color:var(--faint)}
+.dd{text-align:right;white-space:nowrap}
+.dd i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--c);margin-right:5px}
+.dax{height:20px}
+.dgrid{position:absolute;left:84px;right:62px;top:0;bottom:0;pointer-events:none}
+.dgrid .inner{position:absolute;inset:0 34px 0 34px}
+.dgrid .gl{position:absolute;top:0;bottom:20px;width:1px;background:var(--grid)}
+.dgrid .gl.zero{background:color-mix(in srgb,var(--text) 22%,transparent)}
+.dgrid .gt{white-space:nowrap;position:absolute;bottom:0;transform:translateX(-50%);font-size:11px;color:var(--faint)}
+
+/* line */
+.ln{display:block;width:100%;overflow:visible}
+.ln text{font:12px -apple-system,"PingFang TC",sans-serif;fill:var(--faint)}
+.ln text.v{fill:var(--text);font-weight:600}
+.ln .nm{fill:var(--faint);font-weight:400}
+
+/* error card */
+.err{border:1px dashed var(--error);border-radius:14px;padding:10px 14px;background:color-mix(in srgb,var(--error) 7%,transparent);font-size:13px;line-height:1.55}
+.err b{color:var(--error);display:block;margin-bottom:2px}
+.err p{margin:2px 0 0;color:var(--muted);font-size:12px}
+.err code{font:11.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;background:var(--code);border-radius:6px;padding:1px 6px;color:var(--text);word-break:break-all}
+
+@container (max-width:380px){
+  .br,.wr{grid-template-columns:72px 1fr}
+  .dr{grid-template-columns:62px 1fr 46px}.dgrid{left:70px;right:54px}
+  .dtrack{left:26px;right:26px}.dgrid .inner{inset:0 26px 0 26px}
+}
+/* short (a wide, one-row-high Board tile): the first three rows only */
+@container (max-height:210px){
+  .more,.ch-note,.ch-sub,.lg,.ch-more{display:none}
+  .ch-title{font-size:14px;margin-bottom:6px}
+}
+/* tiny (about one Board cell): title and the key number */
+@container (max-width:219px){
+  .ch{display:none}
+  .card{display:flex}
+  .mini{display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0;width:100%;height:100%}
+  .mini .t{font-size:12px;color:var(--muted);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .mini .k{font-size:30px;font-weight:700;line-height:1.15;letter-spacing:-.01em;color:var(--good);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini .k.w{color:var(--bad)}
+  .mini .k small{font-size:12px;font-weight:400;color:var(--faint);margin-left:4px;letter-spacing:0}
+  .mini .s{font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini{--good:var(--blue);--bad:var(--orange)}
+  .err{padding:8px 10px;font-size:12px}.err p,.err code{display:none}
+}
+@media (prefers-reduced-motion:reduce){.bf,.wb{transition:none}}
+</style>
+<script>
+(function () {
+  var root = document.getElementById('root');
+  var MAX = 12, KINDS = ['bars', 'waterfall', 'dumbbell', 'line'];
+  var EX = {
+    bars: '{"kind":"bars","title":"Haiku 比 Opus 快 3.1 倍","unit":"tokens/s","better":"higher","base":"Opus","items":[{"label":"Haiku","value":182},{"label":"Opus","value":58}]}',
+    waterfall: '{"kind":"waterfall","title":"62% 卡在載入 plugin","unit":"ms","steps":[{"label":"啟動","value":180},{"label":"載入 plugin","value":1480,"hot":true}]}',
+    dumbbell: '{"kind":"dumbbell","title":"開啟變快 62%","unit":"ms","better":"lower","rows":[{"label":"開啟聊天","before":820,"after":310}]}',
+    line: '{"kind":"line","title":"回應時間 5 週降 46%","unit":"s","better":"lower","x":["W42","W43"],"series":[{"name":"p50","values":[2.4,1.3]}]}'
+  };
+  function Bad(path, msg) { this.path = path; this.msg = msg; }
+  function fail(path, msg) { throw new Bad(path, msg); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function fmt(n) { return Number.isInteger(n) ? n.toLocaleString('en') : String(+n.toFixed(2)); }
+  function isObj(o) { return o && typeof o === 'object' && !Array.isArray(o); }
+  function cut(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  function num(v, path) { if (typeof v !== 'number' || !isFinite(v)) fail(path, '必須是數字（收到 ' + (v === undefined ? '沒有這個欄位' : JSON.stringify(v)) + '）'); if (v < 0) fail(path, '不能是負數（' + v + '）'); return v; }
+  function lbl(v, path) { if (v == null || String(v) === '') fail(path, '缺少 label'); return String(v); }
+  function arr(a, path, min) { if (!Array.isArray(a)) fail(path, '必須是陣列'); if (a.length < min) fail(path, '至少要 ' + min + ' 筆'); return a; }
+
+  function parse(raw) {
+    var d = raw;
+    if (typeof d === 'string') {
+      var s = d.trim();
+      if (!s) fail('', '資料是空的');
+      try { d = JSON.parse(s); } catch (e) { fail('', '不是有效的 JSON：' + e.message); }
+    }
+    if (isObj(d) && typeof d.output === 'string' && !d.kind) { try { d = JSON.parse(d.output); } catch (e) { /* keep d */ } }
+    if (d == null) fail('', '沒有收到資料（ccb.data 是空的）');
+    if (!isObj(d)) fail('', '資料必須是一個物件，收到 ' + (Array.isArray(d) ? '陣列' : typeof d));
+    if (!d.kind) fail('kind', '缺少 kind（' + KINDS.join(' / ') + '）');
+    if (KINDS.indexOf(d.kind) < 0) fail('kind', '不認得的 kind "' + d.kind + '"。支援：' + KINDS.join(' / '));
+    var better = d.better == null ? (d.kind === 'bars' || d.kind === 'line' ? 'higher' : 'lower') : d.better;
+    if (better !== 'higher' && better !== 'lower') fail('better', '只能是 "higher" 或 "lower"（收到 ' + JSON.stringify(d.better) + '）');
+    return { c: d, better: better, unit: d.unit == null ? '' : String(d.unit) };
+  }
+
+  /* ---- build: validate, compute, return { html, sum } ---- */
+  var BUILD = {};
+  function sub(ctx, b) { return (ctx.unit ? '單位 ' + esc(ctx.unit) + ' · ' : '') + ((b || ctx.better) === 'lower' ? '越短越好' : '越長越好'); }
+  function more(n) { return n > 0 ? '<div class="ch-more">+' + n + ' more</div>' : ''; }
+  function head(ctx) { return ctx.c.title ? '<div class="ch-title">' + esc(ctx.c.title) + '</div>' : ''; }
+  function foot(ctx) { return ctx.c.note ? '<div class="ch-note">' + esc(ctx.c.note) + '</div>' : ''; }
+  function wrap(ctx, inner) { return '<div class="ch" role="img" aria-label="' + esc(ctx.c.title || ctx.c.kind) + '">' + head(ctx) + inner + foot(ctx) + '</div>'; }
+  function niceTicks(max) {
+    if (!(max > 0)) return { top: 1, ticks: [0, 1] };
+    var raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var step = [1, 2, 2.5, 5, 10].map(function (m) { return m * mag; }).find(function (s) { return s >= raw; });
+    var top = Math.ceil(max / step - 1e-9) * step, t = [];
+    for (var v = 0; v <= top + 1e-9; v += step) t.push(+v.toFixed(6));
+    return { top: top, ticks: t };
+  }
+  // which rows stay visible in a short tile: the key rows first, then the first ones, three in all (document order kept)
+  function keepSet(list, isKey) {
+    var keep = {}, n = 0;
+    list.forEach(function (x, i) { if (isKey(x) && n < 3) { keep[i] = 1; n++; } });
+    list.forEach(function (x, i) { if (!keep[i] && n < 3) { keep[i] = 1; n++; } });
+    return keep;
+  }
+  function pctText(from, to) { if (!from) return '—'; var p = Math.round((to - from) / from * 100); return (p > 0 ? '+' : p < 0 ? '−' : '') + Math.abs(p) + '%'; }
+
+  BUILD.bars = function (ctx) {
+    var c = ctx.c, items = arr(c.items, 'items', 1);
+    var all = items.map(function (it, i) {
+      if (!isObj(it)) fail('items[' + i + ']', '必須是物件 {label, value}');
+      return { label: lbl(it.label, 'items[' + i + '].label'), value: num(it.value, 'items[' + i + '].value'), hl: !!it.hl };
+    });
+    var base = null;
+    if (c.base != null) { base = all.find(function (it) { return it.label === c.base; }); if (!base) fail('base', '"' + c.base + '" 不在 items 的 label 裡'); }
+    var lower = ctx.better === 'lower';
+    var best = all.reduce(function (a, b) { return (lower ? b.value < a.value : b.value > a.value) ? b : a; });
+    var shown = all.slice(0, MAX);
+    if (!shown.some(function (it) { return it.hl; })) shown.reduce(function (a, b) { return (lower ? b.value < a.value : b.value > a.value) ? b : a; }).hl = true;
+    var max = Math.max.apply(null, shown.map(function (i) { return i.value; })) || 1;
+    var kb = keepSet(shown, function (x) { return x.hl; });
+    var rows = shown.map(function (i, k) {
+      var p = i.value / max, tag = '';
+      if (base) tag = i === base ? '基準' : (i.value && base.value ? '×' + (lower ? base.value / i.value : i.value / base.value).toFixed(1) : '');
+      return '<div class="br' + (kb[k] ? '' : ' more') + '"><span class="bl" title="' + esc(i.label) + '">' + esc(i.label) + '</span><span class="bt"><i class="bf' + (i.hl ? ' hl' : '') + '" style="--p:' + p + '"></i>' +
+        '<span class="bv" style="--p:' + p + '"><b>' + fmt(i.value) + '</b>' + (tag ? ' <em>' + tag + '</em>' : '') + '</span></span></div>';
+    }).join('');
+    var tg = base && best !== base ? (best.value && base.value ? '×' + (lower ? base.value / best.value : best.value / base.value).toFixed(1) : '') : '';
+    return {
+      html: wrap(ctx, '<div class="ch-sub">' + sub(ctx) + '</div>' + rows + more(all.length - MAX)),
+      sum: { num: fmt(best.value), unit: ctx.unit, big: fmt(best.value) + (ctx.unit ? ' ' + ctx.unit : ''), sub: best.label + (tg ? ' · ' + tg : ''), tone: 'neutral', chip: fmt(best.value) + (ctx.unit ? ' ' + ctx.unit : '') }
+    };
+  };
+
+  BUILD.waterfall = function (ctx) {
+    var c = ctx.c, steps = arr(c.steps, 'steps', 1);
+    var all = steps.map(function (s, i) {
+      if (!isObj(s)) fail('steps[' + i + ']', '必須是物件 {label, value}');
+      var o = { label: lbl(s.label, 'steps[' + i + '].label'), value: num(s.value, 'steps[' + i + '].value'), hot: !!s.hot, start: null };
+      if (s.start != null) o.start = num(s.start, 'steps[' + i + '].start');
+      return o;
+    });
+    var at = 0;
+    all.forEach(function (s) { if (s.start == null) s.start = at; at = s.start + s.value; });
+    var total = Math.max.apply(null, all.map(function (s) { return s.start + s.value; })) || 1;
+    var sum = all.reduce(function (a, s) { return a + s.value; }, 0);
+    var top = all.reduce(function (a, s) { return s.value > a.value ? s : a; });
+    if (!all.some(function (s) { return s.hot; })) top.hot = true;
+    var hot = all.filter(function (s) { return s.hot; }).reduce(function (a, s) { return s.value > a.value ? s : a; });
+    var shown = all.slice(0, MAX);
+    var u = ctx.unit ? ' ' + esc(ctx.unit) : '';
+    var kw = keepSet(shown, function (x) { return x === hot; });
+    var rows = shown.map(function (s, k) {
+      var share = s.hot && sum ? ' · ' + Math.round(s.value / sum * 100) + '%' : '';
+      var st = '--s:' + (s.start / total) + ';--p:' + (s.value / total);
+      return '<div class="wr' + (kw[k] ? '' : ' more') + '"><span class="wl" title="' + esc(s.label) + '">' + esc(s.label) + '</span><span class="wt"><i class="wb' + (s.hot ? ' hot' : '') + '" style="' + st + '"></i>' +
+        '<span class="wv" style="' + st + '">' + (s.hot ? '<b>' : '') + fmt(s.value) + u + (s.hot ? '</b>' : '') + (share ? '<em>' + share + '</em>' : '') + '</span></span></div>';
+    }).join('');
+    var tot = '<div class="wr total more"><span class="wl">合計</span><span class="wt"><i class="wb" style="--s:0;--p:1"></i><span class="wv" style="--s:0;--p:1"><b>' + fmt(total) + u + '</b></span></span></div>';
+    return {
+      html: wrap(ctx, '<div class="ch-sub">' + sub(ctx, 'lower') + '</div>' + rows + more(all.length - MAX) + tot),
+      sum: { num: fmt(total), unit: ctx.unit, big: fmt(total) + (ctx.unit ? ' ' + ctx.unit : ''), sub: hot.label + (sum ? ' ' + Math.round(hot.value / sum * 100) + '%' : ''), tone: 'neutral', chip: fmt(total) + (ctx.unit ? ' ' + ctx.unit : '') }
+    };
+  };
+
+  BUILD.dumbbell = function (ctx) {
+    var c = ctx.c, rowsIn = arr(c.rows, 'rows', 1), lower = ctx.better === 'lower';
+    var all = rowsIn.map(function (r, i) {
+      if (!isObj(r)) fail('rows[' + i + ']', '必須是物件 {label, before, after}');
+      return { label: lbl(r.label, 'rows[' + i + '].label'), before: num(r.before, 'rows[' + i + '].before'), after: num(r.after, 'rows[' + i + '].after') };
+    });
+    all.forEach(function (r) { r.state = r.after === r.before ? 'same' : (lower ? r.after < r.before : r.after > r.before) ? 'good' : 'bad'; });
+    var shown = all.slice(0, MAX);
+    var max = Math.max.apply(null, shown.map(function (r) { return Math.max(r.before, r.after); }));
+    var nt = niceTicks(max), pos = function (v) { return v / nt.top * 100; };
+    var kd = keepSet(shown, function (x) { return x.state === 'bad'; });
+    var rows = shown.map(function (r, k) {
+      var col = r.state === 'good' ? 'var(--good)' : r.state === 'bad' ? 'var(--bad)' : 'var(--faint)';
+      var lo = Math.min(r.before, r.after), hi = Math.max(r.before, r.after), afterLeft = r.after < r.before;
+      function side(v, left) { return 'left:' + pos(v) + '%;transform:translate(' + (left ? 'calc(-100% - 10px)' : '10px') + ',-50%)'; }
+      return '<div class="dr' + (kd[k] ? '' : ' more') + '" style="--c:' + col + '"><span class="wl" title="' + esc(r.label) + '">' + esc(r.label) + '</span><span class="dm"><span class="dtrack">' +
+        '<i class="dline" style="left:calc(' + pos(lo) + '% + 6px);width:max(0px,calc(' + (pos(hi) - pos(lo)) + '% - 12px))"></i>' +
+        '<i class="dot o" style="left:' + pos(r.before) + '%"></i><i class="dot f" style="left:' + pos(r.after) + '%"></i>' +
+        '<span class="dv mute" style="' + side(r.before, !afterLeft) + '">' + fmt(r.before) + '</span>' +
+        '<span class="dv" style="' + side(r.after, afterLeft) + '"><b>' + fmt(r.after) + '</b></span></span></span>' +
+        '<span class="dd"><i></i>' + pctText(r.before, r.after) + '</span></div>';
+    }).join('');
+    var grid = nt.ticks.map(function (t) { return '<i class="gl' + (t === 0 ? ' zero' : '') + '" style="left:' + pos(t) + '%"></i><span class="gt" style="left:' + pos(t) + '%">' + fmt(t) + '</span>'; }).join('');
+    var bl = esc(c.beforeLabel || '前'), al = esc(c.afterLabel || '後');
+    var nGood = all.filter(function (r) { return r.state === 'good'; }).length, bads = all.filter(function (r) { return r.state === 'bad'; });
+    var worst = bads.reduce(function (a, r) { var p = r.before ? Math.abs(r.after - r.before) / r.before : 0; return !a || p > a.p ? { r: r, p: p } : a; }, null);
+    return {
+      html: wrap(ctx, '<div class="lg"><span><i class="o"></i>' + bl + '</span><span><i class="g"></i>' + al + '（變好）</span><span><i class="b"></i>' + al + '（變差）</span>' + (ctx.unit ? '<span>單位 ' + esc(ctx.unit) + '</span>' : '') + '</div>' +
+        '<div class="dumb"><div class="dgrid"><div class="inner">' + grid + '</div></div>' + rows + '<div class="dax"></div></div>' + more(all.length - MAX)),
+      sum: { big: nGood + '/' + all.length + ' 變好', sub: worst ? worst.r.label + ' ' + pctText(worst.r.before, worst.r.after) + ' 變差' : '沒有變差的項目', tone: bads.length ? 'warn' : 'good', warn: bads.length > 0, chip: nGood + '/' + all.length + ' 變好' }
+    };
+  };
+
+  BUILD.line = function (ctx) {
+    var c = ctx.c, xs = arr(c.x, 'x', 1), ss = arr(c.series, 'series', 1);
+    if (ss.length > 3) fail('series', '最多 3 條線（收到 ' + ss.length + '）');
+    ss.forEach(function (s, k) {
+      if (!isObj(s)) fail('series[' + k + ']', '必須是物件 {name, values}');
+      arr(s.values, 'series[' + k + '].values', 1);
+      if (s.values.length !== xs.length) fail('series[' + k + '].values', '長度 ' + s.values.length + ' 要和 x 的長度 ' + xs.length + ' 一樣');
+      s.values.forEach(function (v, i) { num(v, 'series[' + k + '].values[' + i + ']'); });
+    });
+    var ref = null;
+    if (c.ref != null) { if (!isObj(c.ref)) fail('ref', '必須是物件 {value, label}'); ref = { value: num(c.ref.value, 'ref.value'), label: c.ref.label == null ? '' : String(c.ref.label) }; }
+    var skip = Math.max(0, xs.length - MAX);
+    var X = xs.slice(skip).map(String), S = ss.map(function (s) { return { name: String(s.name == null ? '' : s.name), values: s.values.slice(skip) }; });
+    var first = S[0].values[0], last = S[0].values[S[0].values.length - 1];
+    var improved = last === first ? null : (ctx.better === 'lower' ? last < first : last > first);
+    ctx.line = { x: X, series: S, ref: ref };
+    return {
+      html: wrap(ctx, '<div class="ch-sub">' + sub(ctx) + (skip ? ' · 前 ' + skip + ' 筆省略' : '') + '</div><div class="ln-wrap" id="lnwrap"></div>'),
+      sum: { num: fmt(last), unit: ctx.unit, big: fmt(last) + (ctx.unit ? ' ' + ctx.unit : ''), sub: S[0].values.length > 1 ? '較第一筆 ' + pctText(first, last) : '', tone: improved === false ? 'warn' : improved ? 'good' : 'neutral', warn: improved === false, chip: fmt(last) + (ctx.unit ? ' ' + ctx.unit : '') }
+    };
+  };
+
+  function lineSvg(ctx, W) {
+    var L = ctx.line, H = Math.max(130, Math.min(230, Math.round(W * 0.36)));
+    try { if (ccb.surface === 'board' && ccb.size && ccb.size.px.height <= 210) H = Math.max(80, ccb.size.px.height - 70); } catch (e) { /* keep H */ }
+    var compact = H < 110, padL = 34, padR = L.series.length > 1 ? 84 : 44, T = compact ? 12 : 22, B = 26;
+    var all = [].concat.apply([], L.series.map(function (s) { return s.values; })).concat(L.ref ? [L.ref.value] : []);
+    var nt = niceTicks(Math.max.apply(null, all)), n = L.x.length;
+    var X = function (i) { return padL + (W - padL - padR) * (n === 1 ? 0.5 : i / (n - 1)); }, Y = function (v) { return T + (H - T - B) * (1 - v / nt.top); };
+    var svg = nt.ticks.map(function (t) { return '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="var(--grid)"/><text x="' + (padL - 6) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + fmt(t) + '</text>'; }).join('');
+    var step = Math.ceil(n / Math.max(1, Math.floor((W - padL - padR) / 48)));
+    svg += L.x.map(function (x, i) { return (n - 1 - i) % step === 0 ? '<text x="' + X(i) + '" y="' + (H - 6) + '" text-anchor="middle">' + esc(cut(x, 8)) + '</text>' : ''; }).join('');
+    if (L.ref) svg += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + Y(L.ref.value) + '" y2="' + Y(L.ref.value) + '" stroke="var(--faint)" stroke-dasharray="4 4"/>' + (L.ref.label && !compact ? '<text x="' + (padL + 4) + '" y="' + (Y(L.ref.value) - 5) + '">' + esc(L.ref.label) + '</text>' : '');
+    var ends = [];
+    L.series.forEach(function (s, k) {
+      var col = k === 0 ? 'var(--good)' : k === 1 ? 'var(--bad)' : 'var(--faint)', m = s.values.length - 1;
+      svg += '<polyline points="' + s.values.map(function (v, i) { return X(i) + ',' + Y(v); }).join(' ') + '" fill="none" stroke="' + col + '" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>';
+      svg += s.values.map(function (v, i) { return '<circle cx="' + X(i) + '" cy="' + Y(v) + '" r="' + (i === m ? 4.2 : 2.8) + '" fill="' + col + '"/>'; }).join('');
+      if (m > 0 && !compact) svg += '<text class="v" x="' + X(0) + '" y="' + (Y(s.values[0]) - 9) + '" text-anchor="start">' + fmt(s.values[0]) + '</text>';
+      ends.push({ y: Y(s.values[m]) + 4, x: X(m) + 9, t: fmt(s.values[m]), name: L.series.length > 1 ? cut(s.name, 6) : '' });
+    });
+    ends.sort(function (a, b) { return a.y - b.y; });
+    for (var q = 1; q < ends.length; q++) if (ends[q].y - ends[q - 1].y < 14) ends[q].y = ends[q - 1].y + 14;
+    svg += ends.map(function (e) { return '<text class="v" x="' + e.x + '" y="' + e.y + '">' + e.t + (e.name ? '<tspan class="nm"> ' + esc(e.name) + '</tspan>' : '') + '</text>'; }).join('');
+    return '<svg class="ln" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">' + svg + '</svg>';
+  }
+
+  /* ---- draw ---- */
+  var cur = null; // ctx of the last good draw (for the line's redraw on resize)
+  function errCard(e, kind) {
+    var ex = EX[kind];
+    return '<div class="err" role="alert"><b>圖表資料有問題，畫不出來</b>' + esc(e.msg) + (e.path ? '<p>位置：<code>' + esc(e.path) + '</code></p>' : '') +
+      (ex ? '<p>' + esc(kind) + ' 的最小範例：<code>' + esc(ex) + '</code></p>' : '<p>kind 可用：' + KINDS.join(' / ') + '</p>') + '</div>';
+  }
+  function mini(ctx, sum) {
+    return '<div class="mini"><span class="t">' + esc(ctx.c.title || ctx.c.kind) + '</span><span class="k' + (sum.warn ? ' w' : '') + '">' + (sum.num != null ? esc(sum.num) + (sum.unit ? '<small>' + esc(cut(sum.unit, 12)) + '</small>' : '') : esc(sum.big)) + '</span>' + (sum.sub ? '<span class="s">' + esc(sum.sub) + '</span>' : '') + '</div>';
+  }
+  function setStatus(s) { try { if (typeof ccb.setStatus === 'function') ccb.setStatus(s); } catch (e) { /* chip is optional */ } }
+  function drawLine() {
+    if (!cur || !cur.line) return;
+    var el = document.getElementById('lnwrap'); if (!el) return;
+    var w = Math.round(el.getBoundingClientRect().width);
+    if (w < 120) return;
+    cur.w = w; el.innerHTML = lineSvg(cur, Math.min(w, 900));
+  }
+  function draw() {
+    var kind = '';
+    try {
+      var ctx = parse(ccb.data); kind = ctx.c.kind;
+      var r = BUILD[kind](ctx);
+      root.innerHTML = r.html + mini(ctx, r.sum);
+      cur = ctx; drawLine();
+      setStatus({ text: cut(r.sum.chip, 14), tone: r.sum.warn ? 'warning' : r.sum.tone === 'good' ? 'good' : 'neutral' });
+    } catch (e) {
+      cur = null;
+      var bad = e instanceof Bad ? e : new Bad('', '畫圖時發生例外：' + (e && e.message ? e.message : e));
+      try { root.innerHTML = errCard(bad, kind); } catch (e2) { root.textContent = '圖表資料有問題：' + bad.msg; }
+      setStatus({ text: '圖表資料錯誤', tone: 'bad' });
+    }
+  }
+  draw();
+  if (typeof ccb.onData === 'function') ccb.onData(function () { draw(); });
+  if (typeof ccb.onSize === 'function') ccb.onSize(function () { drawLine(); });
+  if (typeof ResizeObserver === 'function') { var lastW = 0; new ResizeObserver(function () { var w = Math.round(root.getBoundingClientRect().width); if (Math.abs(w - lastW) > 2) { lastW = w; drawLine(); } }).observe(root); }
+})();
+</script>
