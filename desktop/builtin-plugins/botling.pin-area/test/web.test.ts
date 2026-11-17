@@ -196,7 +196,7 @@ describe("the chip in the main input box (the card has no box of its own)", () =
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     expect(chipText()).toBeNull();
     open();
-    scroller.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    scroller.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
     expect(chipText()).toBeNull();
     expect(slots.topArea.querySelector(".pt-card")).toBeNull();
     type("hello");
