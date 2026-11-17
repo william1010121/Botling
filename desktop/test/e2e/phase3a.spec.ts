@@ -2,7 +2,7 @@
 // a small header when you open the chat (no model is called), and the header's Routines panel lists a schedule and
 // pauses it. Saves screenshots to desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { launch, MAIN, post } from "./launch";

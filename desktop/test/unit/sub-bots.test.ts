@@ -563,7 +563,7 @@ describe("making a sub bot from a subagent", () => {
 
 describe("prompts", () => {
   const manager = { name: "botling", role: "manager" as "main" | "manager" | "bot", folder: "/p", memoryPath: ".bot/memory.md", job: null, id: PROJECT };
-  const desktop = (profile: typeof manager, engine: "claude" | "codex" | "agy" = "claude") => desktopPrompts(botPrompts({ profile, engine }), profile, engine).system;
+  const desktop = (profile: Parameters<typeof botPrompts>[0]["profile"] & Parameters<typeof desktopPrompts>[1], engine: "claude" | "codex" | "agy" = "claude") => desktopPrompts(botPrompts({ profile, engine }), profile, engine).system;
   it("leaves the Swift prompts alone: only the desktop layer adds the sub-bot text", () => {
     expect(botPrompts({ profile: manager }).system).not.toContain("<sub-bot");
     expect(botPrompts({ profile: manager }).system).toContain("In .bot/ only .bot/memory.md, .bot/routines.cron, inbox.md and artifacts/ are yours");
