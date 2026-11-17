@@ -639,12 +639,12 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   }
   if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
     system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, card-scripts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" && !workers ? subBotRule : workerSubBotRule}`);
-    if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ are also yours to write.\n${workerSubBotRule}`;
+    if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ and the card-scripts/ folder are also yours to write.\n${workerSubBotRule}`;
   }
   if (profile.id === MAINTAINER_PROMPT_ID) system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/ and card-scripts/ are yours, and archive/ to read; leave every other file alone.`);
   // An Antigravity sub bot: its prompt is a short one of its own, so what a sub bot is told is appended whole.
   if (engine === "agy" && profile.parent && profile.role !== "main") {
-    system = `${system}\nYou are a sub bot of your project bot: your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file; read it and take over exactly where it stops. Keep the progress.md file named there current (what is done, what you are doing, what is next, anything waiting on the user) and set its first line to "Status: done" when your job is finished; your project bot reads it. In .bot/ only the handoff.md and progress.md files named in your first message are yours to write besides memory and artifacts.`;
+    system = `${system}\nYou are a sub bot of your project bot: your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file; read it and take over exactly where it stops. Keep the progress.md file named there current (what is done, what you are doing, what is next, anything waiting on the user) and set its first line to "Status: done" when your job is finished; your project bot reads it. In .bot/ only the handoff.md and progress.md files named in your first message are yours to write besides memory, artifacts and card-scripts/.`;
   }
   // The sections (the whiteboard picture line, plugins'), in order: those after <show> one after another there.
   const told = sections.filter((section) => section.roles.includes(profile.role));

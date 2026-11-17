@@ -575,7 +575,7 @@ describe("prompts", () => {
     for (const engine of ["claude", "codex", "agy"] as const) {
       for (const profile of [manager, own]) {
         const system = desktop(profile, engine);
-        expect(system, `${engine}/${profile.role}`).toContain("inbox.md, artifacts/, card-scripts/, and the handoff.md");
+        expect(system, `${engine}/${profile.role}`).toContain(engine === "agy" ? "and the card-scripts/ folder are also yours to write" : "inbox.md, artifacts/, card-scripts/, and the handoff.md");
       }
     }
     for (const profile of [manager, own, sub]) {
