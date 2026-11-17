@@ -337,7 +337,7 @@ describe("briefing: every write", () => {
     expect(r.peek.briefing).toBe(false);
   });
 
-  it("onExit after a restart (or on Antigravity) keeps the session, and needs the briefing only if it never started", () => {
+  it("an exit nobody asked for during a restart's recovery (or on Antigravity) keeps the session, and needs the briefing only if it never started", () => {
     const r = rig();
     for (const started of [true, false]) {
       const head = r.peek.ensureHead();
@@ -345,7 +345,8 @@ describe("briefing: every write", () => {
       r.peek.session = { sessionId: randomUUID(), started };
       r.peek.briefing = started;
       const id = r.peek.session.sessionId;
-      r.peek.onExit(head, EXIT);
+      // A sleep (expected) of a claude head is a new session even then (bot-cold-resume.test.ts): its cache is cold at the next wake.
+      r.peek.onExit(head, { ...EXIT, expected: false });
       expect(r.peek.briefing).toBe(!started);
       expect(r.peek.session.sessionId).toBe(id);
     }

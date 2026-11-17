@@ -166,6 +166,8 @@ export class HeadEvents {
     // Workers' own items come through `onWorkerOutput` only.
     if (item.kind === "workerReport" || item.kind === "workerNote") return;
     if (item.kind === "request") { this.noteRequest(item.request); return; }
+    // The coordinator's own model call (a subagent's, an init or a monitor is none): claude's cache is warm from here on.
+    if (this.engine === "claude" && (item.kind === "delta" || item.kind === "assistantText" || item.kind === "usage" || item.kind === "result" || (item.kind === "toolUse" && item.parent === null))) this.host.headRun.modelCalled();
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
     if (item.kind === "connectionTrouble") {
@@ -595,12 +597,14 @@ export class HeadEvents {
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
       this.host.restartEnded();
-    } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
+    } else if ((this.restartRecovery && !(exit.expected && this.engine === "claude")) || (exit.expected && this.engine === "agy")) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
       this.briefingDue();
     } else if (exit.expected) {
-      // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
+      // It went to sleep: the next wake is a new session, briefed from memory.md and the chat. That holds for claude after a
+      // restart's recovery too (its prompt cache is cold by the next wake); the recovery is over for it.
       this.newSession();
+      this.host.restarts.recoveryEnded();
     } else if (!this.shuttingDown) {
       // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
       // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:

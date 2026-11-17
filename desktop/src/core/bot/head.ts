@@ -19,7 +19,7 @@ import type { Bot } from "../bot";
 import { isBotTool, type BotToolName, type ToolCaller } from "../bot-tools";
 import type { BotContext } from "./context";
 import type { Engine, Heads } from "../heads";
-import type { Outage } from "../network-resume";
+import { WARM_WINDOW_MS, type Outage } from "../network-resume";
 import { isPlainOK, type BotPrompts } from "../prompts";
 import type { BotSettingsView } from "../../contract";
 import { newId, toSwiftDate, type ChatRecord } from "../store/records";
@@ -106,6 +106,14 @@ export class BotHead {
   /** The new session has been served its first message. */
   endFresh() { this.startedFresh = false; }
 
+  /**
+   * When claude's own coordinator last made a model call (ms): its prompt cache (1-hour TTL) is warm only for WARM_WINDOW_MS after it.
+   * Null: not known (a new object after a restart), which forces nothing.
+   */
+  lastModelAt: number | null = null;
+  /** The coordinator's own model call came in just now. */
+  modelCalled() { this.lastModelAt = Date.now(); }
+
   /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
   adoptedSession = false;
 
@@ -154,6 +162,14 @@ export class BotHead {
       this.newSession();
       this.startedFresh = true;
       this.owner.add({ id: newId(), role: "divider", text: PROMPT_SESSION_DIVIDER, date: toSwiftDate() });
+    }
+    // Its last model call is older than the cache's warm window: resuming would write the whole conversation again at the full
+    // price (eeg, 2026-11-17: 243,988 tokens written, none read), so it starts afresh from memory.md and the chat instead, as a
+    // wake does. A session handed over by a restart (a cut-off turn) is resumed exactly as it was.
+    else if (this.engine === "claude" && this.session.started && !this.briefing && !adopted && this.lastModelAt !== null && Date.now() - this.lastModelAt > WARM_WINDOW_MS) {
+      this.log(`its prompt cache is cold (last model call ${Math.round((Date.now() - this.lastModelAt) / 60_000)} min ago): a new session instead of resuming`);
+      this.newSession();
+      this.startedFresh = true;
     }
     this.freshSessionPending = false;
     const resume = this.session.started && !this.briefing;
@@ -285,6 +301,7 @@ export class BotHead {
     this.host.delivery.forgetQueuedNote();
     this.freshSessionPending = false;
     this.session = { sessionId: randomUUID(), started: false };
+    this.lastModelAt = null;
     this.briefing = true;
     this.host.recordsBook.forgetReactions();
     this.host.cards.forgetBriefed();

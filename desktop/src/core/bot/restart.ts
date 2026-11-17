@@ -91,6 +91,8 @@ export class BotRestart {
   restartWorkersSince?: number;
   /** The restart's recovery is on: a lost resume starts no new session. */
   recoveryStarted() { this.restartRecovery = true; }
+  /** A claude session the recovery handed over was replaced by a new one (it slept): the recovery is over for it. */
+  recoveryEnded() { this.restartRecovery = false; }
   /** The restart hands the head its ledger: the workers, the time of the restart, the provider turn. */
   restartAdopted(workers: BotRestart["restartWorkerRecords"], since: number | undefined, providerTurn: string | undefined) { this.restartWorkerRecords = workers; this.restartWorkersSince = since; this.restartProviderTurn = providerTurn; }
   /** A head took up the restart's hand-over: providerTurn, workerRecords, workersSince (in that order) are used up. */
