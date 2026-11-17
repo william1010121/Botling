@@ -52,6 +52,12 @@ describe("question group answers", () => {
     for (const stray of [String(QUESTION_OPTIONS_MAX), "-1", "01", "1.5", "", "x"]) expect(QUESTION_OPTION_INDEX.test(stray)).toBe(false);
   });
 
+  it("the chat page's picks keep indices 0 up to 11, all twelve of them, and drop 12 and more", () => {
+    const all = Array.from({ length: QUESTION_OPTIONS_MAX }, (_, i) => i);
+    expect(actionPicks([{ options: [...all, 12, 13] }])).toEqual([{ options: all }]);
+    expect(actionPicks([{ options: [12, 0, 11, -1, 1.5] }])).toEqual([{ options: [0, 11] }]);
+  });
+
   it("a question of 9 options, picking the 8th (single and multiple), goes through the page, the contract, the bot and the view", async () => {
     const nine = Array.from({ length: 9 }, (_, i) => ({ label: `option ${i + 1}`, recommended: false }));
     const group = [{ question: "Which one?", multiple: false, options: nine }, { question: "Which ones?", multiple: true, options: nine }];
