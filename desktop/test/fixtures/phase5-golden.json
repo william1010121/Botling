@@ -967,7 +967,11 @@
         },
         {
           "findings" : [
-
+            {
+              "level" : "warning",
+              "place" : "board 1x1",
+              "text" : "Taller than its tile: 260px of content in 160px, the rest is cut off (collapse to a summary when short)"
+            }
           ],
           "label" : "tall",
           "masked" : false,
