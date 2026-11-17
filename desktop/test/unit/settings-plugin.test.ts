@@ -106,7 +106,7 @@ describe("settingsNav over the slot", () => {
     expect(settingsNav([], "", groups)).toEqual(golden.none);
     // The plugin pages are indented under Plugins, the legacy ids still resolve (settings-redesign-ui-model.test.ts, unedited).
     const titles = settingsNav(view.settingsSections ?? [], "", groups).find((group) => group.title === "Connect")!.pages.map((page) => page.title);
-    expect(titles.slice(titles.indexOf("Plugins"), titles.indexOf("Plugins") + 4)).toEqual(["Plugins", "Worktrees", "Usage", "Zed settings"]);
+    expect(titles.slice(titles.indexOf("Plugins"), titles.indexOf("Plugins") + 5)).toEqual(["Plugins", "Plugin dependencies", "Worktrees", "Usage", "Zed settings"]);
     // The nav alone (no slot read: the default is the core pages as data): the same pages.
     expect(settingsNav(view.settingsSections ?? [], "")).toEqual(golden.all);
   });
