@@ -230,6 +230,8 @@ export class BotWorkers {
   get workerLedgerFile() { return join(this.store.directory, "worker-ledger.json"); }
   /** What each of its workers' ledger records last said (the registry's and the rows' state come from it). */
   workerViews = new Map<string, WorkerLedgerRecord>();
+  /** Workers whose row `projectLedgerAtStart` changed without telling anyone (see `projectWorker`). */
+  private readonly changedAtStart = new Set<string>();
 
   /**
    * This member's worker core, as its facade makes it (ClaudeWorkers, its Codex or Antigravity head): the member's
@@ -468,12 +470,20 @@ export class BotWorkers {
       this.changed(drawn);
     }
     const row = projected.row;
-    if (!row || atStart || (!projected.rowChanged && !this.options.agents)) return;
+    // A row the start itself changed (a worker cut off by a crash, or a row older than its ledger) was told to nobody:
+    // the log, the plugins and the windows still hold the old state, so the next projection of it tells it in full.
+    if (row && atStart && (projected.rowChanged || projected.ended)) this.changedAtStart.add(record.id);
+    if (!row || atStart || (!projected.rowChanged && !this.options.agents && !this.changedAtStart.has(record.id))) return;
     if (projected.ended) this.subagentEnded(record.id);
     else if (projected.rowChanged) this.markWorkerStep(record.id, projected.stepFailed);
-    // A row that did not change (every old worker, re-projected when its head starts) is told to the registry, but
-    // the line that sent it is not drawn again: nothing on it changed.
-    this.subagentChanged(row, false, projected.rowChanged || projected.ended);
+    // A row that did not change (every old worker, re-projected when its head starts) is told to the registry and
+    // nothing else: no save, no view, no `subagent.updated` (the log holds this state; 230 of them at one start made
+    // runtime.start wait about 5 s), and the line that sent it is not drawn again.
+    if (!projected.rowChanged && !projected.ended && !this.changedAtStart.delete(record.id)) {
+      if (!row.parentID) this.options.agents?.observed(this.hostFacts(), row, this.workerViews.get(row.id));
+      return;
+    }
+    this.subagentChanged(row, false, true);
   }
 
   /**

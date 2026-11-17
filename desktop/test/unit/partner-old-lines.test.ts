@@ -92,6 +92,54 @@ it("a partner line it moves below your new line (joinTurn: removed, then added) 
   expect((f.primary as any).records.at(-1)?.id).toBe(NEW);
 });
 
+// Seen 2026-11-18 (build cb8bfcba): WorkerCore.projectAll re-projects every old worker when a bot starts; 230 of them
+// each built a subagent view, wrote subagents.json and emitted a `subagent.updated` the log already held, which made
+// runtime.start wait about 5 s. An unchanged row is told to the registry and nothing else.
+it("an old worker re-projected unchanged at the head's start only tells the registry: no save, no subagent.updated", () => {
+  const f = fixture();
+  const bot = f.partner as any;
+  bot.options.agents = { observed: vi.fn(), ended: vi.fn(), retained: () => [], movedOut: () => new Set() };
+  bot.onSubagentItem({ kind: "subagentStarted", id: "w1", description: "arch-investigation", type: "agy-worker", prompt: "Work", background: true });
+  const ledger = { v: 3, id: "w1", engine: "agy", adapter: "agy-acp", name: "arch-investigation", status: "done", run: 1,
+    report: { status: "done", state: "none", text: "報告完成。", attempts: 0 }, createdAt: 1, endedAt: 2 };
+  const sent = vi.spyOn(bot, "emit");
+  const saved = vi.spyOn(bot, "saveSubagents");
+  const updates = () => sent.mock.calls.filter(([e]: any[]) => e.type === "subagent.updated").length;
+  bot.projectWorker(ledger); // its end: the row changes, it is saved and told
+  const updatesAfterEnd = updates(), savesAfterEnd = saved.mock.calls.length;
+  expect(updatesAfterEnd).toBeGreaterThanOrEqual(1);
+  expect(savesAfterEnd).toBeGreaterThanOrEqual(1);
+  const observed = bot.options.agents.observed.mock.calls.length;
+  bot.projectWorker(structuredClone(ledger)); // projectAll at the next start: nothing changed
+  bot.projectWorker(structuredClone(ledger));
+  expect(updates()).toBe(updatesAfterEnd);
+  expect(saved.mock.calls.length).toBe(savesAfterEnd);
+  expect(bot.options.agents.observed.mock.calls.length).toBe(observed + 2); // the registry still hears of each
+  // The final state is the one told at the end.
+  const last = sent.mock.calls.map(([e]: any[]) => e).filter((e: any) => e.type === "subagent.updated").at(-1);
+  expect(last.subagent.status).not.toBe("running");
+});
+
+// A row the start itself changed (a crash cut the worker off; subagents.json older than the ledger) was told to nobody,
+// so the first projection after it must tell it in full: the log, the plugins (workerEnded) and the windows hold "running".
+it("a row the start changed (a worker cut off by a crash) is told in full by the next projection, once", () => {
+  const f = fixture();
+  const bot = f.partner as any; // no registry here: the row is still told (the test of the guard on `agents`)
+  bot.onSubagentItem({ kind: "subagentStarted", id: "w2", description: "cut-off", type: "agy-worker", prompt: "Work", background: true });
+  const cut = { v: 3, id: "w2", engine: "agy", adapter: "agy-acp", name: "cut-off", status: "interrupted", interruptedBy: "crash", run: 1,
+    report: { status: "interrupted", state: "none", text: "The app went away.", attempts: 0 }, createdAt: 1, endedAt: 2 };
+  const sent = vi.spyOn(bot, "emit");
+  const updates = () => sent.mock.calls.filter(([e]: any[]) => e.type === "subagent.updated").length;
+  bot.projectWorker(structuredClone(cut), true); // projectLedgerAtStart: the row turns interrupted, nobody is told
+  expect(updates()).toBe(0);
+  bot.projectWorker(structuredClone(cut)); // the core's first projection: the log still says running
+  expect(updates()).toBe(1);
+  const told = sent.mock.calls.map(([e]: any[]) => e).find((e: any) => e.type === "subagent.updated");
+  expect(told.subagent.status).not.toBe("running");
+  bot.projectWorker(structuredClone(cut)); // and not again
+  expect(updates()).toBe(1);
+});
+
 it("an old worker re-projected unchanged when its head starts does not redraw the line that sent it", () => {
   const f = fixture();
   const bot = f.partner as any;
