@@ -1357,7 +1357,8 @@ describe("a plain line sorted by the small model (4c)", () => {
       await advance(3_001);
       // the first was given up on at its 4 s; the second has 1 s of its own 4 s left less the 1 ms: the call gets what is left less the 300 ms margin
       expect(M.hasBriefing((await first) as string)).toBe(true);
-      expect(m.calls().map((call) => call[1].timeoutMs)).toEqual([3_500, 699]);
+      // (the first call was made after the injected clock had moved 1 s, so it had 3 s left less the margin)
+      expect(m.calls().map((call) => call[1].timeoutMs)).toEqual([2_700, 699]);
       await advance(1_500);
       expect(M.hasBriefing((await second) as string)).toBe(true);
       // two lines sent together, the first never answered: the second has nothing left when the first is given up on, and is not asked

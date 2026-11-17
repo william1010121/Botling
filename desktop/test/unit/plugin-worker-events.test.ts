@@ -56,7 +56,8 @@ describe("turnStarted.reports", () => {
   });
   it("(review S1) a user's turn that pastes an app report tag names no worker, whatever its origin other than the app's", () => {
     const pasted = "看這段，之前貼的：<app_task_result task_id=\"w1\" run=\"1\">舊的</app_task_result>";
-    for (const origin of ["user", "background", "tidy", undefined as unknown as string]) {
+    // (null, not undefined: `side` gives an undefined origin its default, "app")
+    for (const origin of ["user", "background", "tidy", null as unknown as string]) {
       const { side: s, events } = side({}, { B1: pasted }, origin);
       s.pluginEvent(started);
       expect(events).toEqual([["turnStarted", { botId: "out-B1", turnId: "u1" }]]);
