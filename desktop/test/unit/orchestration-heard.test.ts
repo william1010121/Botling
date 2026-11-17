@@ -1,7 +1,7 @@
 // M7-O04 (the O03a review's F6, G1, G2, R7 and the Maintainer decision): a plugin that is not shipped cannot get a worker without the checks
 // of `workers.start` (declared and granted permission, quota, the user's card for a plugin a bot wrote, a worker with fewer rights) by
 // sending a bot a message (`bots.send`, `bots.wake`) or by adding a routine (`routines.add`); a bot-written plugin is asked again for a new
-// instruction (`workers.send`), works only on bots it made, has one card open at a time; Maintainer is never a target; and
+// instruction (`workers.send`), works only on bots it made, has one card open at a time; Maintainer is a target only for design-duel (2026-11-18), no other plugin; and
 // "the user granted `orchestrate`" is false in the real core unless `pluginCapability` says so. Two layers: `PluginWorkers` alone, and the real core.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +50,34 @@ function handoff(book: PluginWorkers, args: Record<string, unknown>, kind = "cla
   const run = async (): Promise<Handoff> => { ran.n += 1; ran.args = { ...args }; return { task_id: `H${ran.n}`, run: 1 }; };
   return { ran, result: book.admitHeard("p", bot, kind, args, run) };
 }
+
+describe("the plugin's name reaches the world's workers() check", () => {
+  it("start, admitHeard, send and cancel each ask the world about the plugin that asked", async () => {
+    const asked: Array<[string, string | undefined]> = [];
+    const port: WorkerPort = { id: "b1", start: async () => ({ task_id: "T1", run: 1 }), send: async () => ({ ok: true, how: "steered", run: 1 }), stop: async () => true };
+    const world: OrchestrationWorld = { granted: () => true, workers: (bot, plugin) => { asked.push([bot, plugin]); return bot === "b1" ? port : "No such bot."; }, made: () => true, quota: () => ({ atOnce: 4 }), specWriters: () => ["opus"] };
+    const workers = new PluginWorkers({ world, facts: () => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: false }), ask: async () => ({ index: 0 }), tell: () => {}, warn: () => {} });
+    const started = await workers.start("p", { bot: "b1", instructions: "x" });
+    await workers.send("p", started.taskId, "more");
+    await workers.cancel("p", started.taskId);
+    await handoff(workers, { instructions: "y" }).result;
+    expect(asked.length).toBeGreaterThanOrEqual(4);
+    expect(asked.every(([, plugin]) => plugin === "p")).toBe(true);
+  });
+});
+
+describe("pickUp asks the world about the plugin that started the worker", () => {
+  it("a worker that is still open is looked up with its own plugin name (review: mutant M5 survived without this)", async () => {
+    const asked: Array<[string, string | undefined]> = [];
+    const port: WorkerPort = { id: "b1", start: async () => ({ task_id: "T1", run: 1 }), send: async () => ({ ok: true, how: "steered", run: 1 }), stop: async () => true, look: () => ({ run: 1, running: true, status: "running", report: "" }) };
+    const world: OrchestrationWorld = { granted: () => true, workers: (bot, plugin) => { asked.push([bot, plugin]); return port; }, made: () => true, quota: () => ({ atOnce: 4 }), specWriters: () => ["opus"] };
+    const workers = new PluginWorkers({ world, facts: () => ({ name: "p", identity: "a".repeat(64), permissions: ALL, botWritten: false }), ask: async () => ({ index: 0 }), tell: () => {}, warn: () => {} });
+    await workers.start("p", { bot: "b1", instructions: "x" });
+    asked.length = 0;
+    workers.pickUp();
+    expect(asked).toEqual([["b1", "p"]]);
+  });
+});
 
 describe("F6: a worker the bot starts after a plugin's message goes through the checks of workers.start", () => {
   it("is refused without the permission (not declared, or not granted), and the handoff never runs", async () => {
@@ -293,11 +321,19 @@ describe("R7 and Maintainer in the real core", () => {
     await expect(t.ask("workers.start", { plugin: "written", bot: "main", instructions: "x" })).rejects.toThrow(/has not been allowed to orchestrate/);
   });
 
-  it("Maintainer is never a target, and a bot is 'made' by a plugin only when its profile says so", () => {
+  it("Maintainer is a target only for design-duel, and a bot is 'made' by a plugin only when its profile says so", () => {
     const t = realCore({ grant: true });
     const world = (t.core.plugins as unknown as { options: { world: { orchestration: OrchestrationWorld } } }).options.world.orchestration;
     const maintainer = (t.core as unknown as { maintainerId: string }).maintainerId;
     expect(world.workers(maintainer)).toMatch(/Maintainer/);
+    // Another plugin, a missing plugin name and a near-miss name are refused too; only design-duel (the user's decision of 2026-11-18) is a target.
+    for (const plugin of ["written", "shipped", "design-duel2", "Design-Duel", "design-duel ", "", "constructor", "__proto__"]) expect(world.workers(maintainer, plugin)).toMatch(/may not start workers on Maintainer/);
+    // Past the Maintainer rule it is the ordinary checks' answer (a port, or "does not run Claude-process workers" in a core with no agent), never the Maintainer refusal.
+    const duel = world.workers(maintainer, "design-duel");
+    expect(typeof duel === "string" ? duel : "port").not.toMatch(/may not start workers on Maintainer/);
+    if (typeof duel !== "string") expect(duel.id).toBe(maintainer);
+    // design-duel is let in only on Maintainer: the other checks (a bot that exists, one that runs Claude workers) are the same for it.
+    expect(world.workers("no-such-bot", "design-duel")).toBe("No such bot.");
     // "main" names the main bot, but the port (and so each entry of the book) carries its real id, the one `botRemoved` names (review).
     const port = world.workers("main");
     expect(typeof port === "string" ? port : port.id).toBe(t.main.id);

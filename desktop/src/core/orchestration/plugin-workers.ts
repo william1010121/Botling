@@ -17,7 +17,7 @@
 // the bot starts in a turn that began with such a plugin's message goes through the same checks (`admitHeard`; the plugin belongs to the
 // turn, made with the message and never changed: `Turn.plugin`, M7-O05). A bot-written plugin also gets a card for every `workers.send`
 // (a new instruction is a new worker's worth of trust), may only work on bots it made itself (both unless the user approved the plugin: `installed`), and has one card open at a time.
-// No plugin gets Maintainer (the plugin library) as a target: the world refuses it (`workers`).
+// No plugin gets Maintainer (the plugin library) as a target, except the one the user named (design-duel, 2026-11-18): the world decides (`workers`, which is told the plugin).
 // The owner of every worker is the bot it runs for; this book only remembers which plugin started it (quota, who may
 // send or cancel it, who hears its report). A cancel or a send for a worker the plugin did not start gets the same
 // answer as for one that does not exist.
@@ -61,7 +61,8 @@ export interface WorkerPort {
 export interface OrchestrationWorld {
   /** Whether the user granted this plugin `orchestrate` (its own sheet, like a tier raise); absent in the world: nobody. */
   granted(plugin: string): boolean;
-  workers(bot: string): WorkerPort | string;
+  /** The port for a bot, or why not. `plugin` is the plugin asking (the world's per-plugin rules, e.g. who may target Maintainer); absent: no plugin is known, the strictest rules apply. */
+  workers(bot: string, plugin?: string): WorkerPort | string;
   /**
    * Whether the user installed this plugin, i.e. pressed Allow for it once in Settings › Plugins (the same approval that lets its program
    * part run). 2026-11-16 decision: an installed plugin is fully allowed, so its workers start with no card per worker or message.
@@ -312,7 +313,7 @@ export class PluginWorkers {
   /** `workers.start`: every check, then the worker. Returns the task id and run. */
   async start(plugin: string, params: StartParams): Promise<{ taskId: string; run: number }> {
     const facts = this.gate(plugin, params.model);
-    const port = this.deps.world.workers(params.bot);
+    const port = this.deps.world.workers(params.bot, plugin);
     if (typeof port === "string") throw new Error(port);
     this.mayWorkOn(facts, port.id);
     const args: Record<string, unknown> = { instructions: params.instructions, name: oneLine(params.name ?? "", 200) || undefined, ...(params.group ? { group: oneLine(params.group, 80) } : {}), ...(params.model ? { model: params.model } : {}), ...(params.effort ? { effort: params.effort } : {}) };
@@ -332,7 +333,7 @@ export class PluginWorkers {
     const text = (key: string) => (typeof args[key] === "string" ? (args[key] as string) : undefined);
     const params: StartParams = { bot: botId, instructions: text("instructions") ?? text("prompt") ?? text("task") ?? "", name: text("name") ?? text("description"), group: text("group"), model: text("model"), effort: text("effort") };
     const facts = this.gate(plugin, params.model);
-    const port = this.deps.world.workers(botId);
+    const port = this.deps.world.workers(botId, plugin);
     if (typeof port === "string") throw new Error(port);
     this.mayWorkOn(facts, port.id);
     args[PLUGIN_STARTED] = true;
@@ -369,7 +370,7 @@ export class PluginWorkers {
   async send(plugin: string, taskId: string, message: string): Promise<{ run: number; how: string }> {
     const entry = this.mine(plugin, taskId);
     const facts = this.allowed(plugin);
-    const port = this.deps.world.workers(entry.bot);
+    const port = this.deps.world.workers(entry.bot, entry.plugin);
     if (typeof port === "string") throw new Error(port);
     this.refuseWhileStopping(entry);
     this.refuseWhileBotOwed(port, taskId); // before a card is shown for it (and again after the answer, below)
@@ -422,7 +423,7 @@ export class PluginWorkers {
 
   async cancel(plugin: string, taskId: string): Promise<{ stopped: boolean }> {
     const entry = this.mine(plugin, taskId);
-    const port = this.deps.world.workers(entry.bot);
+    const port = this.deps.world.workers(entry.bot, entry.plugin);
     if (typeof port === "string") throw new Error(port);
     // O05 (the model's CancelAsk needs no send in flight): a stop now could end the run the send is about to start, and the send's answer would
     // then reopen what the stop closed. Refused; the plugin asks again once the send has returned.
@@ -551,7 +552,7 @@ export class PluginWorkers {
       if (!entry.open || entry.task === null || entry.stopped) continue;
       let seen: ReturnType<NonNullable<WorkerPort["look"]>>;
       try {
-        const port = this.deps.world.workers(entry.bot);
+        const port = this.deps.world.workers(entry.bot, entry.plugin);
         if (typeof port === "string" || !port.look) continue;
         seen = port.look(entry.task);
       } catch { continue; }
