@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseInbound } from "../../src/contract";
+import { MessageView, parseInbound } from "../../src/contract";
 import { Core } from "../../src/core/server";
 import { saveProjectRow } from "../../src/core/projects";
 import { messageView } from "../../src/core/bot";
@@ -17,7 +17,7 @@ const questions = [
   { question: "Which features?", multiple: true, options: [{ label: "Login", recommended: false }, { label: "Export", recommended: false }, { label: "Search", recommended: false }] },
 ];
 
-function fixture() {
+function fixture(own?: { questions: typeof questions; choices: { label: string; recommended: boolean }[] }) {
   const dir = tempDir("question-group");
   const folder = tempDir("question-group-project");
   mkdirSync(join(folder, ".bot"), { recursive: true });
@@ -25,7 +25,7 @@ function fixture() {
   const store = join(dir, "projects", PROJECT);
   mkdirSync(store, { recursive: true });
   const file = join(store, "chat.json");
-  const question = { id: QUESTION, role: "bot", text: "Two things first.", date: 814897456.479, engine: "claude", choices: questions[0]!.options, questions };
+  const question = { id: QUESTION, role: "bot", text: "Two things first.", date: 814897456.479, engine: "claude", choices: own?.choices ?? questions[0]!.options, questions: own?.questions ?? questions };
   writeFileSync(file, JSON.stringify([question]));
   const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
     routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
@@ -41,7 +41,28 @@ describe("question group answers", () => {
     const cmd = { type: "chat.answer", botId: PROJECT, messageId: QUESTION, text: "" };
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [0] }, { options: [], skipped: true }] } }).ok).toBe(true);
     expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: Array(6).fill({ options: [0] }) } }).ok).toBe(false);
-    expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [6] }] } }).ok).toBe(false);
+    expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [6] }] } }).ok).toBe(true); // up to 12 options now
+    expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [7, 11], notes: { "7": "n", "11": "m" } }] } }).ok).toBe(true);
+    expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: [12] }] } }).ok).toBe(false);
+    expect(parseInbound({ v: 10, id: "a", cmd: { ...cmd, picks: [{ options: Array.from({ length: 13 }, (_, i) => i % 12) }] } }).ok).toBe(false);
+  });
+
+  it("a question of 9 options, picking the 8th (single and multiple), goes through the page, the contract, the bot and the view", async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => ({ label: `option ${i + 1}`, recommended: false }));
+    const group = [{ question: "Which one?", multiple: false, options: nine }, { question: "Which ones?", multiple: true, options: nine }];
+    const action = { picks: [{ options: [7] }, { options: [1, 7, 8], notes: { "7": "the eighth" } }] };
+    const picks = actionPicks(action.picks)!;
+    expect(picks).toEqual([{ options: [7] }, { options: [1, 7, 8], notes: { "7": "the eighth" } }]);
+    expect(parseInbound({ v: 10, id: "a", cmd: { type: "chat.answer", botId: PROJECT, messageId: QUESTION, text: "", picks } }).ok).toBe(true);
+    const h = fixture({ questions: group, choices: nine });
+    try {
+      expect(await h.handle({ type: "chat.answer", text: "", picks })).toEqual({ accepted: true });
+      expect(h.send.mock.calls[0]![0]).toBe("1. Which one?\n→ option 8\n2. Which ones? (several allowed)\n→ option 2; option 8 (Note: the eighth); option 9");
+      const view = messageView(h.bot.line(QUESTION));
+      expect(view.questions!.map((q) => q.options.length)).toEqual([9, 9]);
+      expect(view.picks![0]!.options).toEqual([7]);
+      expect(MessageView.safeParse(view).success).toBe(true);
+    } finally { await h.core.shutdown(); }
   });
 
   it("sends the bot one message with each question and its answer, keeps the picks and closes the decision", async () => {

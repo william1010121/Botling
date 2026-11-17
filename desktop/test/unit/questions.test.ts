@@ -45,12 +45,26 @@ describe("reply parser: question groups", () => {
     expect(parsed.body).toBe("Before I start:");
   });
 
-  it("keeps at most 5 questions and 6 options each", () => {
-    const many = Array.from({ length: 7 }, (_, i) => block(`Q${i + 1}`, ["- a", "- b", "- c", "- d", "- e", "- f", "- g", "- h"])).join("\n");
+  it("keeps at most 5 questions and 12 options each", () => {
+    const letters = "abcdefghijklmn".split("").map((c) => `- ${c}`);
+    const many = Array.from({ length: 7 }, (_, i) => block(`Q${i + 1}`, letters)).join("\n");
     const parsed = parseReply(many);
     expect(parsed.questions).toHaveLength(5);
-    expect(parsed.questions!.every((q) => q.options.length === 6)).toBe(true);
+    expect(parsed.questions!.every((q) => q.options.length === 12)).toBe(true);
     expect(parsed.body).toBe("");
+  });
+
+  it("reads a block of 9 options whole, single-choice and multiple, and keeps a pick of the 8th", () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `- option ${i + 1}`);
+    const parsed = parseReply(`${block("Which one?", nine)}\n${block("Which ones?", nine, " multiple=\"true\"")}`);
+    expect(parsed.questions!.map((q) => q.options.length)).toEqual([9, 9]);
+    expect(parsed.questions![1]!.options[7]!.label).toBe("option 8");
+    const picks = [{ options: [7] }, { options: [0, 7, 8] }];
+    expect(validPicks(parsed.questions!, picks)).toEqual(picks);
+    expect(answerMessage(parsed.questions!, picks)).toBe("1. Which one?\n→ option 8\n2. Which ones? (several allowed)\n→ option 1; option 8; option 9");
+    expect(validPicks(parsed.questions!, [{ options: [9] }, { options: [0] }])).toBeNull(); // no 10th option
+    // saved on disk and read back, all nine stay
+    expect(savedQuestions(JSON.parse(JSON.stringify(parsed.questions)))![0]!.options).toHaveLength(9);
   });
 
   it("drops a malformed question (fewer than 2 options) and keeps the rest", () => {
