@@ -296,7 +296,7 @@ export function pluginGuideFiles(): Record<string, string> {
     "  Use it for anything that refreshes: a \"test progress + CPU\" card is a Command printing JSON such as",
     "  `{\"passed\":120,\"failed\":2,\"total\":300,\"cpu\":37}`, a `Refresh: every 2s` line, and a template that draws once and updates in `onData`;",
     "  the bot can also keep a card up to date itself with `<show name=\"build\" id=\"build\">` (below).",
-    "- about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.",
+    "- about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers. A `Built-in: yes` line (optional `Built-in order: 3`, lowest first) makes it every bot's own, on no list and outside the limit of 20; taking the line away takes it back, and bots hear of either in their next message.",
     "",
   ].join("\n"),
   "reference/components-layout.md": [
