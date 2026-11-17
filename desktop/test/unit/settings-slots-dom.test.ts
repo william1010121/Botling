@@ -292,7 +292,7 @@ describe("the gear is drawn from settings/quick", () => {
     shell = await loadSettingsShell(view);
     await openGear({ ...view, quickSettings: [], settingsSections: [] });
     expect(frames()).toEqual(["botling.usage/botling.usage.quota", "zed.tools/zed.tools.quick"]);
-    expect(links()).toEqual(["Plugins18 on", "Usage by bot›", "Zed by bot›", "Developer settings…›", expect.stringMatching(/^All settings…/)]);
+    expect(links()).toEqual(["Plugins20 on", "Usage by bot›", "Zed by bot›", "Developer settings…›", expect.stringMatching(/^All settings…/)]);
   });
 
   it("follows a plugin being switched off and on, live, in the plugin list's order", async () => {
