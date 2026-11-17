@@ -58,6 +58,9 @@ export const tagKey = (pin: Pick<PinView, "source">): "tag.user" | "tag.bot" | "
 /** "HH:MM" of a time. */
 export const clock = (at: number): string => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
+/** What a worker's line in a card's thread says it is. */
+const WORKER_WORD = { final: "worker.final", failed: "worker.failed", note: "worker.note", question: "worker.question" } as const;
+
 export class PinUi {
   private botId = "";
   private data: PinsView = { v: 1, pins: [] };
@@ -530,7 +533,7 @@ export class PinUi {
         const worker = turn.via === "worker";
         const bot = el("div", `pt-msg pt-bot${worker ? " pt-worker" : ""}`);
         // what a worker said (its whole report, a note, a question) is the worker's, not the bot's
-        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${worker ? words(`worker.${turn.wkind ?? "final"}`) : words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
+        bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${worker ? words(WORKER_WORD[turn.wkind ?? "final"]) : words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
         // a report whose reply in the chat was folded to one line: one tap brings it back
         if (worker && turn.msgId) {
           const back = el("button", "pt-mv-act", words("trace.backBtn"));

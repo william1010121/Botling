@@ -745,6 +745,31 @@ describe("a line the bot put into a card, in the card's thread", () => {
   });
 });
 
+describe("what a worker said, in the card's thread and as a trace in the chat", () => {
+  const report = (over: Partial<import("../src/model").Turn> = {}) => ({ rid: "w1", q: "", a: "完整報告\n第二行", qAt: clock, postedAt: null, seenAt: null, aAt: clock, via: "worker" as const, worker: "t-1", wkind: "final" as const, ...over });
+
+  it("shows the whole report as the worker's own words (labelled by what it is), and a 移回聊天 only once the bot's reply was folded", async () => {
+    ui.update("B1", view(pin("p-0001", { thread: [report(), report({ rid: "w2", wkind: "question", a: "用 A 還是 B？" }), report({ rid: "w3", wkind: "failed", a: "壞了", msgId: "m1" })] })));
+    ui.open("p-0001");
+    const bubbles = [...panel()!.querySelectorAll<HTMLElement>(".pt-worker")];
+    expect(bubbles.map((node) => node.querySelector(".pt-bubble")!.textContent)).toEqual(["完整報告\n第二行", "用 A 還是 B？", "壞了"]);
+    expect(bubbles.map((node) => node.querySelector(".pt-receipt")!.textContent!.split(" · ")[0])).toEqual(["worker 回報", "worker 提問", "worker 沒做完"]);
+    expect(bubbles.map((node) => node.querySelectorAll(".pt-mv-act").length)).toEqual([0, 0, 1]);
+    bubbles[2]!.querySelector<HTMLButtonElement>(".pt-mv-act")!.click();
+    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "w3" }]]);
+    await flush();
+  });
+
+  it("the trace of a worker's report says where the full words are, and offers only 移回聊天 (no other card to move it to)", () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
+    ui.trace(root, { kind: "moved", rid: "w1", pin: "p-0001", title: "Title p-0001", q: "完整報告", by: "bot", worker: true });
+    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("worker 回報「完整報告」→ 完整內容在「Title p-0001」的卡片");
+    expect([...root.querySelectorAll(".pt-mv-act")].map((node) => node.textContent)).toEqual(["移回聊天"]);
+  });
+});
+
 describe("「你不在時」: the digest above the strip", () => {
   const H = 3_600_000;
   beforeEach(() => { clock = 20_000_000; });

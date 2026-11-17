@@ -105,7 +105,7 @@ a sub bot's reply comes from `messagePosted` of the sub bot, and counts only whi
 (checked at the moment of use, cached 60 s). `applyNews` rewrites the status line in place (keeping 原本) and logs to `updates[]`, which the card
 shows in its folded "N 則更新". Rules: a done card ignores news; a waiting card only logs; a failed / stopped / interrupted worker turns a
 running card into wait; a completed worker never makes a card done (the bot says that). A worker that ended before the card named it is replayed (`ends`, 50 kept).
-Limit: plugins see only a worker's run end, not its progress.
+Phase 4a adds a worker's notes and a binding by job name (below).
 
 **Automatic routing.** `beforeSend` appends the briefing (`withBriefing`) to a plain message; `userText` strips it, so the bubble is the user's words.
 `messagePosted` remembers that line (`lastLine`), `turnStarted` binds it to the turn (`turnLine`). With `move="yes"` the host calls `takeAuto`: a turn
@@ -114,6 +114,33 @@ one-line trace 「→ 放進 X 的卡片 · 移回聊天 · 改到…」. A `<pi
 **Undo** (`moveBack` / `moveTo` in the host, one tap each): the turn is marked `moved`, the line comes back, and the trace shows the bot's answer under it,
 so nobody asks twice; the correction (`Book.fixes`, 3 kept) goes into the next briefing so the bot learns. Wrong guesses cost one tap.
 Bounds: 120 traces, 4 `from` per card, 3 fixes. Every plain message in a chat with cards carries about 1 KB of note.
+
+## Phase 4 (routing by code: workers, auto-close, a classifier for the user's lines)
+
+Source: the investigation report `.bot/artifacts/pin-routing-report.html` (today the user's line went into a card only if the head bot said
+`move="yes"`; a worker's report entered a card only when the bot had tagged `worker=`, as one 80-character line; cards never closed). Done in three steps, one commit each.
+
+### 4a. A worker is bound to a card by code; its words go into the card
+
+App hooks added (the user allowed missing hooks; all additive, no permission change):
+- `events.workerStarted {botId, workerId, group, title}`: a worker run began for a job its bot **named** with `app_handoff`'s `group` (a worker with no named job is not announced;
+  once per run, from `subagent.updated` in `CorePluginSide`).
+- `events.workerNote {botId, workerId, kind, message}`: the owner's side of `app_notify_owner` (`Bot.workerNote` → `options.workerNoted`; also the owner of a worker another bot runs).
+- `events.turnStarted.reports?: string[]`: the task ids named by the `<app_task_result>` / `<app_worker_note>` messages the turn carries (read from the turn's words). This is how the
+  plugin knows which of the bot's replies is the reply to a worker's report.
+
+Rules (`model.ts` `cardForGroup`, `pins.ts` `bind`):
+- **Not every worker gets a card.** A worker joins the open card whose p-0001 id, or title / key / handle (exact, ignoring case and punctuation), equals its `group`; failing that a
+  title or key that contains the group or is contained in it (3 characters or more). The best kind of match wins; two cards tied, none, or a done card: no binding, the worker stays in the chat as before.
+- A bound worker is in `Pin.from` (up to `MAX_LINKED` 12; a bot's `worker=` tag keeps its cap of 4) so everything that already follows `from` (status line, `ends` replay) applies.
+- **Final report** (`workerDone`): the status line gets the first line as before, and the whole report (cut at `MAX_REPORT` 12,000) goes into the card's thread as a `via:"worker"` turn
+  (`worker`, `wkind: final|failed`; no question). A done card keeps the report without changing its words. The same words twice are one.
+- **Notes** (`workerNote`): thread turn (`note`/`question`) and a 過程 log line. A question turns a running card into 等你.
+- **Main chat shows one line.** The bot's reply to the report turn (`turnStarted.reports`, then the next `messagePosted` of that bot) is filed with the newest unfiled worker turn
+  (`attachReply`: `msgId`, `say`), and `tracesOf` folds that message behind 「worker 回報「…」→ 完整內容在「X」的卡片 · 移回聊天」. 移回聊天 reuses `moveBack`
+  (not a correction of the bot's routing, so no `fixes` entry; no 改到… for a worker). If the bot says `<no-reply/>` there is no line and nothing to fold.
+- The bot's prompt section says: give `group` the card's title / key / id when a worker is for a card; its reply to the report is one sentence.
+Bounds: a book is still `MAX_BOOK_BYTES`; `fit()` drops the oldest answered turns first, which may be old reports.
 
 ## Phase 3 (「你不在時」: what happened while you were away)
 
@@ -157,7 +184,7 @@ last read (30 s while the user is active). No phone yet.
 
 | Later | Seam |
 |---|---|
-| worker progress (not only the run end) | needs a plugin event for a worker's progress; the app has none. |
+| a worker's tool-by-tool progress | only the run end and `app_notify_owner` notes are events (4a); the steps inside a run are not. |
 
 Not covered: the phone / web bundle (the page slots and `chat.setData` are the desktop chat frame's; `Web/src/chat.html` has the slot
 too, the mobile page has no plugin host for it yet). Every send of every chat now makes one round trip to the plugin host (`beforeSend`

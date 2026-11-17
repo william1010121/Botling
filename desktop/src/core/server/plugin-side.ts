@@ -97,7 +97,8 @@ export class CorePluginSide {
       this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
     } else if (event.type === "turn.started") {
       // The workers whose report or note this turn carries (the app's own message names them): the pin area files the bot's reply with them.
-      const reports = this.reportsOf(() => this.bots.get(event.botId)?.turn);
+      const owner = event.botId;
+      const reports = this.reportsOf(() => this.bots.get(owner)?.turn);
       this.plugins.event("turnStarted", { botId, turnId: event.turnId, ...(reports.length ? { reports } : {}) });
     } else if (event.type === "turn.finished") {
       if (event.status === "done" && event.text) this.plugins.event("messagePosted", { botId, role: "bot", text: event.text, id: event.messageId });
