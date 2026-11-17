@@ -43,7 +43,7 @@ export interface HeadTurnFacts {
 /** What a finished head turn has to show, for hasVisibleContent. */
 export function headTurnContent(f: HeadTurnFacts): TurnContent {
   const { parsed } = f;
-  const nothing = !parsed.body && !parsed.choices?.length && !parsed.displays.length && !parsed.requests.length;
+  const nothing = !parsed.body && !parsed.choices?.length && !parsed.displays.length && !parsed.requests.length && !parsed.cards?.length;
   const reacts = parsed.reactions.length > 0 || !!parsed.pluginTags?.length;
   // What the head keeps out of the chat, its steps too: a reply that only reacts; a turn claude started itself that
   // says <no-reply/> or nothing; <no-reply/> to the app's note or, with two heads, to your message.
@@ -54,7 +54,8 @@ export function headTurnContent(f: HeadTurnFacts): TurnContent {
   return {
     status: f.status, handoff: f.handoff, error: f.error, reactionsOnly: nothing && reacts,
     body: keptOut ? "" : f.body,
-    cards: 0, // drawn from the body
+    // The worker cards of `<card>` tags; the old task cards are gone (drawn from the body).
+    cards: keptOut ? 0 : parsed.cards?.length ?? 0,
     choices: keptOut ? 0 : parsed.choices?.length ?? 0,
     displays: keptOut ? 0 : parsed.displays.length,
     requests: keptOut ? 0 : parsed.requests.length,

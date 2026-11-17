@@ -5,7 +5,7 @@
 // `briefedComponents`, `componentsMayHaveChanged`. It follows the bridge convention of `core/bot/context.ts`: the moved
 // bodies are what they were in `Bot` and say `this.options`, `this.records`, `this.changed(...)`; the BRIDGE BLOCK below is
 // every name it borrows from `Bot`, one forwarder each. `Bot` keeps a one-line delegate for every name moved here.
-import type { ApprovalAskView, Event, MessageView, ResultOf } from "../../contract";
+import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } from "../../contract";
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
@@ -18,6 +18,7 @@ import type { BotStore } from "../store/bot-store";
 import { toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
 import { keepable, resolvePath } from "./view-functions";
+import { readCards } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -190,6 +191,28 @@ export class BotCards {
     const displays = (record.displays ?? []) as Display[];
     if (!context || !displays.length) return undefined;
     return displays.slice(0, 20).map((display, index) => displayView(context, display, `${record.id}/${index}`, record.role, this.commandFolder));
+  }
+
+  /**
+   * A line's worker cards as the page draws them (worker-cards.ts). Their components are drawn as a reply's are, with the pictures
+   * their data names; each is given a card id of its own and never a command, so nothing a worker wrote runs.
+   */
+  workerCardViews(record: ChatRecord): WorkerCardView[] | undefined {
+    const cards = readCards(record.workerCards);
+    if (!cards.length) return undefined;
+    const context = this.context;
+    return cards.map((card, index): WorkerCardView => {
+      const shown = context && card.shows?.length
+        ? card.shows.map((show, at) => displayView(context, { name: show.name, data: show.data, ...(show.at !== undefined ? { at: show.at } : {}) }, `${record.id}/card-${index}-${at}`, "bot", this.commandFolder))
+          .map((display) => ({ ...display, command: null, folder: null, detail: null, card: null, status: null, error: null, ranAt: null, every: null }))
+        : [];
+      return {
+        id: card.id, title: card.title.slice(0, 200), status: card.status, run: card.run,
+        ...(card.taskId ? { taskId: card.taskId.slice(0, 200) } : {}), ...(card.at !== undefined ? { at: card.at } : {}),
+        ...(card.text ? { text: card.text.slice(0, 200_000) } : {}), ...(shown.length ? { displays: shown } : {}),
+        ...(card.error ? { error: card.error.slice(0, 2_000) } : {}),
+      };
+    });
   }
 
   /**

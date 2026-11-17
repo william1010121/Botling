@@ -424,6 +424,12 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
           }).catch(onError);
           return;
         }
+        case "cardSend": {
+          // A worker card's reply box: the words go to its worker, as "Send a message…" on its row does (the core checks the owner again).
+          if (!chat || typeof action.taskID !== "string" || typeof action.text !== "string" || !action.text.trim()) return;
+          void client.request({ type: "agent.message", botId: chat.botId, subagentId: action.taskID, text: action.text.slice(0, 64_000) }).catch(onError);
+          return;
+        }
         case "openSubagent": {
           if (!chat || typeof action.id !== "string") return;
           const botId = chat.botId;

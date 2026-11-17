@@ -30,6 +30,7 @@ import type { RequestEvent } from "../token-speed";
 import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
+import { cardInstructions, followWorker, projectCard } from "../worker-cards";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
 import { subagentView } from "./view-functions";
@@ -458,6 +459,9 @@ export class BotWorkers {
     const pending = this.turn?.tasks?.some((task) => task.id === record.id) ? { backgroundTasks: this.turn.tasks } as unknown as ChatRecord : null;
     const projected = projectWorker(this.subagents, pending ? [...this.records, pending] : this.records, record);
     if (projected.chip && projected.chip !== pending) this.changed(projected.chip);
+    // The card a `<card>` tag drew for it follows (worker-cards.ts).
+    const drawn = projectCard(this.records, record);
+    if (drawn) this.changed(drawn);
     const row = projected.row;
     if (!row || atStart || (!projected.rowChanged && !this.options.agents)) return;
     if (projected.ended) this.subagentEnded(record.id);
@@ -465,6 +469,46 @@ export class BotWorkers {
     // A row that did not change (every old worker, re-projected when its head starts) is told to the registry, but
     // the line that sent it is not drawn again: nothing on it changed.
     this.subagentChanged(row, false, projected.rowChanged || projected.ended);
+  }
+
+  /**
+   * The cards a reply's `<card>` tags drew (`record.workerCards`) start their workers, each through the `app_handoff` a bot's own tool call takes:
+   * the same worker limit and the same admission. Only a Claude bot's Claude-process workers can be started from here; a card that cannot
+   * start says why on itself. The worker's report reaches this bot as any worker's does.
+   */
+  startCards(record: ChatRecord) {
+    for (const card of record.workerCards ?? []) if (card.status === "starting" && !card.taskId) void this.startCard(record, card);
+  }
+
+  /** At start: a card whose worker was never started (the app went away first) says so; nothing starts it later. */
+  private endStaleCards() {
+    let changed = false;
+    for (const record of this.records) for (const card of record.workerCards ?? []) {
+      if (card.status !== "starting" || card.taskId) continue;
+      card.status = "failed";
+      card.error = "The app went away before the worker started.";
+      changed = true;
+    }
+    if (changed) this.persist(true);
+  }
+
+  private async startCard(record: ChatRecord, card: NonNullable<ChatRecord["workerCards"]>[number]) {
+    try {
+      if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new Error("A card needs a Claude bot with app-managed Claude workers; nothing was started.");
+      if (this.shuttingDown) throw new Error("The app is stopping; nothing was started.");
+      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: card.title, instructions: cardInstructions(card), group: card.title }) as { task_id: string; run: number };
+      card.taskId = started.task_id;
+      card.status = "running";
+      card.run = started.run;
+      // Its ledger may have moved on while the tool call was answered (a run that ended at once).
+      const worker = this.workerViews.get(started.task_id);
+      if (worker) followWorker(card, worker);
+    } catch (error) {
+      card.status = "failed";
+      card.error = (error as Error).message.slice(0, 1_000);
+      this.log(`card "${card.title}" did not start a worker: ${card.error}`);
+    }
+    this.changed(record);
   }
 
   /** The step that started a worker shows how its latest run ended (a report left unresolved later fails it too). */
@@ -499,6 +543,7 @@ export class BotWorkers {
   restoreAtStart() {
     // Subagents that were running when the app went away went with their process. App-managed workers are their
     // ledger's: shown as it says (one it still lists at work was cut off), until their core is up.
+    this.endStaleCards();
     this.projectLedgerAtStart();
     // A worker its ledger does not have yet (an old journal not imported until its core is up) stopped, as before.
     if (this.subagents.stopRunning(undefined, (subagent) => this.workerViews.has(subagent.id))) this.saveSubagents();

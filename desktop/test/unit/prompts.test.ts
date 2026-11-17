@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { FILES_TOUCHED_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
+import { CARD_TAG_RULE } from "../../src/core/card-rule";
 import { CLAUDE_WORKER_POLICY } from "../../src/core/agent/claude-workers";
 import { AGY_WORKER_POLICY } from "../../src/core/prompts-agy";
 import { codexWorkerInstructions, desktopPrompts } from "../../src/core/prompts";
@@ -87,6 +88,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace("\n\nThe app delivers worker execution reports through app_task_result", `\n\n${workerNoteRule({ steerWorkerRun: true })}\n\nThe app delivers worker execution reports through app_task_result`);
   // Approved 2026-11-16 (the user, M7-F02): a worker sends independent lookups together and finds a symbol with where.mjs.
   expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- ${WORKER_LOOKUP_RULE}\n- Complete the task before returning your final report.`);
+  // Approved 2026-11-18 (the user): a worker card (<card>), told to a Claude bot on its own line before the /design line (a Codex head loses it below).
+  expected = expected.replace(/^(- When the user says "\/design" or asks for a design)/m, `${CARD_TAG_RULE}\n$1`);
   // Approved 2026-11-08 (the user): task cards are gone, so no bot is told to write <task …/> lines any more.
   expected = expected.replace(/^- The app keeps a task card for each piece of work[^\n]*\n/m, "");
   // Approved 2026-11-16 (the user, M7-F03): the earlier worker's "Files touched" block goes to the next worker on the same work.
@@ -99,6 +102,7 @@ function withoutClaudeOnly(swift: string): string {
   return swift
     .replace(/- When auto mode blocks a tool call you need \("denied by the Claude Code auto mode classifier"\),/, "- When Codex's reviewer refuses a tool call you need,")
     .replace(/^- When the user says "\/design" or asks for a design[^\n]*\n/m, "")
+    .replace(`${CARD_TAG_RULE}\n`, "")
     .replace("The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours:", "The Artifact tool, Claude Design and Claude Code's own tools are not yours:");
 }
 

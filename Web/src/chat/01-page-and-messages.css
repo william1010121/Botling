@@ -191,6 +191,24 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 /* A turn cut off before it answered: what it had said and done so far stays, marked. */
 .interrupted-note { margin-top: 6px; font-size: 12px; color: var(--faint); font-style: italic; }
 
+/* A worker card (`<card>` tag): its worker's state, its latest report, and a box for words to that worker. */
+.worker-card { margin-top: 10px; border: 1px solid var(--card-line); background: var(--card); border-radius: 12px; overflow: hidden; min-width: 0; }
+.worker-card-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--card-line); }
+.worker-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.worker-card-status { flex-shrink: 0; font-size: 12px; color: var(--muted); }
+.worker-card.status-running .worker-card-status, .worker-card.status-starting .worker-card-status { color: var(--orange-text); }
+.worker-card.status-done .worker-card-status { color: var(--green); }
+.worker-card.status-failed .worker-card-status { color: var(--error); }
+.worker-card-body { padding: 10px 12px; min-width: 0; overflow-wrap: anywhere; }
+.worker-card-body > :first-child { margin-top: 0; }
+.worker-card-wait, .worker-card-error { padding: 10px 12px; font-size: 13px; color: var(--faint); }
+.worker-card-error { color: var(--error); }
+.worker-card-reply { display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--card-line); }
+.worker-card-reply input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--ground); color: var(--text); font: inherit; font-size: 13px; }
+.worker-card-reply input:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+.worker-card-reply button { height: 30px; padding: 0 12px; border: none; border-radius: 8px; background: var(--accent-bg); color: var(--link); font: inherit; font-size: 13px; cursor: pointer; }
+.worker-card-reply button:disabled, .worker-card-reply input:disabled { opacity: 0.5; cursor: default; }
+
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
 /* New data drawing behind the frame on screen (keepFrames), until it is ready to take its place. */

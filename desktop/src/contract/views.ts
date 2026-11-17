@@ -304,6 +304,28 @@ export const BackgroundTaskView = z.strictObject({
 });
 export type BackgroundTaskView = z.infer<typeof BackgroundTaskView>;
 
+/**
+ * A worker card of a reply (`<card title="…">prompt</card>`, worker-cards.ts): its worker's state and, once a run has finished,
+ * its report as a reply is drawn (words, and components with the JSON they were given). Words typed on it go to the worker
+ * `taskId` as `agent.message` does.
+ */
+export const WorkerCardView = z.strictObject({
+  id: z.string().max(64),
+  title: z.string().max(200),
+  status: z.enum(["starting", "running", "done", "failed", "stopped", "interrupted"]),
+  run: z.number().int().nonnegative(),
+  /** The worker's task id once it is started. */
+  taskId: z.string().max(200).optional(),
+  /** Where in the reply's text it is drawn (UTF-16 offset); absent: after the text. */
+  at: z.number().int().nonnegative().optional(),
+  /** The latest finished run's words. */
+  text: z.string().max(200_000).optional(),
+  /** Its components, each at `at` in `text`. */
+  displays: z.array(DisplayView).max(10).optional(),
+  error: z.string().max(2_000).optional(),
+});
+export type WorkerCardView = z.infer<typeof WorkerCardView>;
+
 export const MessageView = z.strictObject({
   id,
   role: z.enum(["user", "bot", "divider", "error", "relay", "notice"]),
@@ -348,6 +370,8 @@ export const MessageView = z.strictObject({
   decisionId: id.optional(),
   /** Components it shows (`<show>`). */
   displays: z.array(DisplayView).max(20).optional(),
+  /** Worker cards its `<card>` tags drew. */
+  workerCards: z.array(WorkerCardView).max(20).optional(),
   /** The result pages it links to, as 「網頁預覽卡片」 cards under its text (Phase 5c, 1.x's `previews`). */
   previews: z.array(z.strictObject({ name: z.string().max(200), data: z.string().max(20_000) })).max(3).optional(),
   /** The bot that said it, when it is not this chat's own (a bot called in with @, a group's member; 1.x's `sourceID`). */

@@ -7,6 +7,7 @@
 // `this.finishTurn(...)`; the BRIDGE BLOCK below is every name they borrow, one forwarder each. The names every part of a
 // bot shares go to `ctx`; the fields and methods of `Bot` itself go to `host`. `Bot` keeps a one-line delegate for every
 // name moved here (`monitorState` is `monitorStateOf` below: monitor-policy.test.ts calls `Bot.prototype.monitorState` on a bare object as `this`).
+import { randomUUID } from "node:crypto";
 import { isAgyConversationGone } from "../agent/agy-acp";
 import type { CodexItem } from "../agent/codex";
 import { monitorTask, type CommandMonitor } from "../agent/monitors";
@@ -33,6 +34,7 @@ import { SUBAGENT_TOOLS, type SubagentBook, type SubagentRecord } from "../subag
 import type { RequestEvent } from "../token-speed";
 import { totalTokens } from "../usage";
 import { costDelta, hasVisibleContent } from "../worker-core";
+import { newCards } from "../worker-cards";
 import type { BotContext } from "./context";
 import { NEW_SESSION_DIVIDER, NO_LONGER_NEEDED, type AgentHead, type BotOptions, type Origin, type PresetTurnIds, type Turn } from "./types";
 import { stepView, streamingText, subagentOf, union } from "./view-functions";
@@ -486,8 +488,9 @@ export class HeadEvents {
         this.owner.cards.drewComponents((parsed.displays as Display[]).map((display) => display.name));
       }
       this.associateDecision(record, parsed.decisionReference, turn);
+      if (parsed.cards?.length) this.drawCards(record, parsed.cards, turn);
       // <show id="tests"> updates that card in place; a reply that is only that shows no line of its own.
-      if (record.displays?.some((display) => (display as Display).id)) {
+      if (record.displays?.some((display) => (display as Display).id) && !record.workerCards?.length) {
         record.text = text;
         if (this.owner.cards.updateCards(record) && !turn.steps.length) {
           if (!fresh) this.remove(record);
@@ -524,6 +527,7 @@ export class HeadEvents {
     turn.resolve(status);
     if (status === "done") {
       this.bumpUnread();
+      this.host.workers.startCards(record);
       const left = this.handleRequests(parsed.requests);
       if (left.length) {
         const what = [...new Set(left.map(unsupportedRequest))];
@@ -541,6 +545,17 @@ export class HeadEvents {
     if (status === "done" && (this.sharesChat || tags.handoff)) this.owner.group.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
     else if (this.sharesChat) this.headStopped(this.engine);
     this.next();
+  }
+
+  /**
+   * The `<card>` tags of a reply: its cards, bound to no worker yet (`BotWorkers.startCards` starts them once the line is shown). A turn that
+   * began with a plugin's message starts none (the checks of a worker a plugin asked for run on the turn under way, which is over here).
+   */
+  private drawCards(record: ChatRecord, requests: NonNullable<ReturnType<typeof parseReply>["cards"]>, turn: Turn) {
+    const refusal = turn.plugin ? "This turn began with a plugin's message, and a plugin's worker needs the checks of its own. Nothing was started." : undefined;
+    const { cards, dropped } = newCards(requests, () => randomUUID().toLowerCase(), refusal);
+    record.workerCards = cards;
+    if (dropped) this.owner.queueNote(`(App: Only ${cards.length} of the ${requests.length} cards in your last reply started a worker; the other ${dropped} were not started.)`);
   }
 
   /** claude waits on nothing once its turn ended: no approval stays open. */

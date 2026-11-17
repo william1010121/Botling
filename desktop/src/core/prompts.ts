@@ -10,6 +10,7 @@
 // The Maintainer's component-editor rule is not here (2.0 has no Maintainer).
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
+import { CARD_TAG_RULE } from "./card-rule";
 import { INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
@@ -415,6 +416,8 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     "  Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.",
     "  When what you just showed is something the user will likely ask for again (a status, a summary of a command's output), you may offer to make it a component: end that reply with <suggest-component name=\"short-english-name\">one line: what it would show and the command that gives its data</suggest-component>. The app only adds a small chip under your reply; nothing happens until the user presses it, and only then does Maintainer build a first version. At most one per reply, not for one-off answers, and never inside code or examples.",
     ...(inlineBlocks ? [INLINE_BLOCK_GUIDANCE] : []),
+    // A card starts a Claude-process worker (bot/workers.ts `startCards`): only a Claude bot is told.
+    ...(engine === "claude" ? [CARD_TAG_RULE] : []),
     // Codex has no Artifact tool: its note hands a Design to Claude instead (audit 2026-11-11).
     ...(codex ? [] : [`- When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: ${DESIGN_STEPS}, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.`]),
     "- Botling's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.",
