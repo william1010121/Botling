@@ -1,7 +1,7 @@
 import type { CcbWeb } from "../../../../Web/src/plugins";
 import type { ChatState } from "../../../../Web/src/types";
 import type { PinsView } from "./digest";
-import { parseAsk, stripBriefing, type TraceData } from "./model";
+import { parseAsk, stripBriefing } from "./model";
 import { PinUi, closeIcon, pinIcon } from "./ui";
 import { wordsFor } from "./words";
 
@@ -17,15 +17,6 @@ export const PRESENT_EVERY_MS = 60_000;
 export function bookOf(state: ChatState): PinsView | null {
   const data = state.pluginData?.[PLUGIN] as PinsView | undefined;
   return data && typeof data === "object" && Array.isArray(data.pins) ? data : null;
-}
-
-/** A decoration's data as the program part wrote it, or null (anything else is not drawn). */
-export function traceOf(raw: unknown): TraceData | null {
-  if (!raw || typeof raw !== "object") return null;
-  const d = raw as Record<string, unknown>;
-  const text = (value: unknown) => typeof value === "string";
-  if ((d.kind !== "moved" && d.kind !== "back") || !text(d.rid) || !text(d.pin) || !text(d.title) || !text(d.q) || (d.a !== undefined && !text(d.a))) return null;
-  return { kind: d.kind, rid: d.rid as string, pin: d.pin as string, title: d.title as string, q: d.q as string, by: d.by === "user" ? "user" : d.by === "app" ? "app" : "bot", ...(typeof d.a === "string" ? { a: d.a } : {}), ...(d.worker === true ? { worker: true as const } : {}) };
 }
 
 /**
@@ -107,13 +98,6 @@ export function activate(ccb: CcbWeb): () => void {
     const asked = parseAsk(own);
     return asked ? `@${asked.title} ${asked.text}` : own;
   });
-  // Where a line the bot put into a card went: a one-line trace in its place (a decoration the program part asked for), with 移回聊天 and 改到….
-  const traces = ccb.decorations.register({
-    draw: (root, decoration) => {
-      const data = traceOf(decoration.data);
-      if (data) ui.trace(root, data);
-    },
-  });
   // The 釘選 button of any message: in a reply's hover column, beside your own message otherwise.
   const pinning = ccb.messages.afterRender((element, message) => {
     if (element.querySelector(".pt-pin-msg") || !message.text.trim() || parseAsk(message.text)) return;
@@ -137,5 +121,5 @@ export function activate(ccb: CcbWeb): () => void {
     const actions = element.querySelector(":scope > .message-actions");
     if (actions) actions.append(button); else element.append(button);
   });
-  return () => { signs.abort(); mentions(); bubbles(); traces(); pinning(); ui.dispose(); };
+  return () => { signs.abort(); mentions(); bubbles(); pinning(); ui.dispose(); };
 }

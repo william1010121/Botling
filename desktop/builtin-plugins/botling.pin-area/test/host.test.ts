@@ -59,9 +59,9 @@ function setup(seed: Record<string, unknown> = {}, ask: Ask | null = null) {
 }
 
 describe("the program part", () => {
-  it("registers the eleven methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
+  it("registers the ten methods, the six events, the two tags and one beforeSend, and `activate` adds them to the plugin's subscriptions", () => {
     const { api, exposed, events, tags, hooks } = setup();
-    expect([...exposed.keys()].sort()).toEqual(["acceptSuggest", "collapse", "dismissSuggest", "moveBack", "moveTo", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
+    expect([...exposed.keys()].sort()).toEqual(["acceptSuggest", "collapse", "dismissSuggest", "dropCopy", "pinMessage", "repin", "seen", "touch", "unpin", "view"]);
     expect([...events.keys()].sort()).toEqual(["messagePosted", "turnFinished", "turnStarted", "workerDone", "workerNote", "workerStarted"]);
     expect([...tags.keys()].sort()).toEqual(["pin-card", "pin-say"]);
     expect(hooks).toHaveLength(1);
@@ -544,7 +544,7 @@ describe("a sub bot's reply into a card", () => {
   });
 });
 
-describe("a plain message the bot moves into a card", () => {
+describe("a plain message of a chat with cards (the note it carries; the bot no longer moves anything)", () => {
   const withCards = () => {
     const t = setup();
     t.call("pinMessage", { botId: "B1", messageId: "m1", text: "Deploy" });
@@ -558,7 +558,6 @@ describe("a plain message the bot moves into a card", () => {
     t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id });
     return sent;
   };
-  const moveTag = (t: ReturnType<typeof setup>, id: string, body = "還沒好。") => t.tag("B1", "pin-say", { id, move: "yes" }, body);
 
   it("a plain message of a chat with cards goes to the bot with the note of the cards after the user's words; nothing else changes", () => {
     const t = withCards();
@@ -587,158 +586,39 @@ describe("a plain message the bot moves into a card", () => {
     expect(t.send("B1", "〔陪讀提問 q-0001〕 這句")).toBeUndefined();
   });
 
-  it("<pin-say move=\"yes\"> puts the user's line and the answer into that card (via auto, with the chat line's id), draws it and folds the line behind a trace", () => {
+  it("<pin-say move=\"yes\"> is gone (it took the answer out of the chat): the attribute is ignored, the body is a plain pin-say answer, and the user's line is never put in the card by the bot", () => {
     const t = withCards();
     plain(t, "部署那個好了嗎");
     t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001");
-    const pin = t.book("B1").pins[0]!;
-    expect(pin.thread).toHaveLength(1);
-    expect(pin.thread[0]).toMatchObject({ q: "部署那個好了嗎", a: "還沒好。", via: "auto", msgId: "u1" });
-    expect(t.book("B1").pins[1]!.thread).toEqual([]);
-    const view = t.setData.mock.calls.at(-1)![1] as M.BookView;
-    expect(view.pins.find((p) => p.id === "p-0001")!.thread).toHaveLength(1);
-    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
-    expect(traces).toHaveLength(1);
-    expect(traces[0]).toMatchObject({ key: `mv-${pin.thread[0]!.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", title: "Deploy", by: "bot" } });
-    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
-  });
-
-  it("a line moves once: a second move tag in the same turn, or in a later turn, moves no line (its answer is kept in that card as its own turn)", () => {
-    const t = withCards();
-    plain(t, "部署那個好了嗎");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001");
-    moveTag(t, "p-0002", "again");
-    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
-    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
-    moveTag(t, "p-0002", "a routine's turn");
+    t.tag("B1", "pin-say", { id: "p-0001", move: "yes" }, "還沒好。");
+    t.tag("B1", "pin-say", { id: "p-0002", move: "yes" }, "again");
     const [deploy, docs] = t.book("B1").pins;
-    expect(deploy!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["部署那個好了嗎", "u1"]]);
-    expect(docs!.thread.map((turn) => [turn.q, turn.a, turn.via, turn.msgId])).toEqual([["", "again", "at", undefined], ["", "a routine's turn", "at", undefined]]);
-    const traces = t.decorate.mock.calls.at(-1)![1] as unknown[];
-    expect(traces).toHaveLength(1);
-  });
-
-  it("a wrong card id keeps the line free for the right one in the same turn", () => {
-    const t = withCards();
-    plain(t, "文件寫好了嗎");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0099");
-    moveTag(t, "constructor");
-    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 0]);
-    moveTag(t, "p-0002", "快好了");
-    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ a: "快好了", msgId: "u1" });
-  });
-
-  it("with no plain line behind the turn (none sent, or the turn began for something else) a move tag moves nothing but its answer is not lost, and a plain pin-say still answers an open turn as before", () => {
-    const t = withCards();
-    t.emit("turnStarted", { botId: "B1", turnId: "t0" });
-    moveTag(t, "p-0001");
-    // review probe: the core already took the tag out of the reply, so a dropped answer would be gone from the chat and the card
-    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.a, turn.via])).toEqual([["", "還沒好。", "at"]]);
+    // each answer with nothing waiting is a turn of its own with no question: the user's line is not in a card, and nothing is folded or decorated in the chat
+    expect(deploy!.thread.map((turn) => [turn.q, turn.a, turn.via, turn.msgId])).toEqual([["", "還沒好。", "at", undefined]]);
+    expect(docs!.thread.map((turn) => [turn.q, turn.a, turn.via, turn.msgId])).toEqual([["", "again", "at", undefined]]);
     expect(t.decorate).not.toHaveBeenCalled();
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
+    // and a plain pin-say still answers an open turn as before
     const sent = t.send("B1", "@Deploy 先停一下") as string;
     t.emit("messagePosted", { botId: "B1", role: "user", text: sent, id: "u9" });
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
+    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
     t.tag("B1", "pin-say", { id: "p-0001" }, "好");
     expect(t.book("B1").pins[0]!.thread[1]).toMatchObject({ q: "先停一下", a: "好", via: "at" });
   });
 
-  it("a line that comes while a turn is running waits for its own turn: the running turn cannot take it", () => {
-    const t = withCards();
-    plain(t, "第一句", "u1");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    plain(t, "第二句", "u2");
-    moveTag(t, "p-0001", "答第一句");
-    expect(t.book("B1").pins[0]!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["第一句", "u1"]]);
-    t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
-    t.emit("turnStarted", { botId: "B1", turnId: "t2" });
-    moveTag(t, "p-0002", "答第二句");
-    expect(t.book("B1").pins[1]!.thread.map((turn) => [turn.q, turn.msgId])).toEqual([["第二句", "u2"]]);
-  });
-
-  it("only a line that carried the note counts (a worker's report posted as a user line, a routed @ line, are never moved)", () => {
-    const t = withCards();
-    t.emit("messagePosted", { botId: "B1", role: "user", text: "<app_task_result task_id=\"t\" run=\"1\" status=\"completed\">ok</app_task_result>", id: "w1" });
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001");
-    expect(t.book("B1").pins[0]!.thread.filter((turn) => turn.via === "auto" || turn.msgId)).toEqual([]);
-  });
-
-  it("移回聊天: the line leaves the card's view, the chat shows the answer under its line, a second tap changes nothing, and only that bot's book is touched", () => {
+  it("nothing a plain line does ever asks the chat to draw, fold or hide anything: no decoration at all, before or after a restart", () => {
     const t = withCards();
     plain(t, "部署那個好了嗎");
     t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001");
-    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
-    t.call("pinMessage", { botId: "B2", messageId: "x", text: "Other" });
-    expect(t.call("moveBack", { botId: "B2", rid })).toEqual({ unchanged: true });
-    expect(t.book("B1").pins[0]!.thread[0]!.moved).toBeUndefined();
-    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ moved: "chat" });
-    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ unchanged: true });
-    expect((t.call("view", { botId: "B1" }) as M.BookView).pins[0]!.thread).toEqual([]);
-    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; after?: string; fold?: string[]; data: M.TraceData }[];
-    expect(traces[0]).toMatchObject({ key: `mv-${rid}`, after: "u1", data: { kind: "back", a: "還沒好。" } });
-    expect(traces[0]!.fold).toBeUndefined();
-    // the bot is told, in the next note, that this was a wrong guess
-    expect(M.stripBriefing(t.send("B1", "下一句") as string)).toBe("下一句");
-    expect(t.send("B1", "下一句")).toContain("最近被使用者更正：「部署那個好了嗎」不是 p-0001「Deploy」，是 聊天");
-  });
-
-  it("改到…: the line and its answer go to the other card, marked as the user's choice, the trace follows, and a missing or same card changes nothing", () => {
-    const t = withCards();
-    plain(t, "文件那個好了嗎");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001", "不確定");
-    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
-    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0001" })).toEqual({ unchanged: true });
-    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0099" })).toEqual({ unchanged: true });
-    expect(t.call("moveTo", { botId: "B1", rid, to: "__proto__" })).toEqual({ unchanged: true });
-    expect(t.call("moveTo", { botId: "B1", rid: "nope", to: "p-0002" })).toEqual({ unchanged: true });
-    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0002" })).toEqual({ moved: "p-0002" });
-    expect(t.book("B1").pins.map((pin) => pin.thread.length)).toEqual([0, 1]);
-    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "文件那個好了嗎", a: "不確定", redirected: true, msgId: "u1" });
-    const traces = t.decorate.mock.calls.at(-1)![1] as { fold?: string[]; data: M.TraceData }[];
-    expect(traces[0]).toMatchObject({ fold: ["u1"], data: { kind: "moved", pin: "p-0002", title: "Docs", by: "user" } });
-    expect(t.send("B1", "再一句")).toContain(`不是 p-0001「Deploy」，是 p-0002「Docs」`);
-  });
-
-  it("a card taken down gives the lines back to the chat with their answers; 釘回 folds them again", () => {
-    const t = withCards();
-    plain(t, "部署那個好了嗎");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(t, "p-0001");
-    t.call("unpin", { botId: "B1", id: "p-0001" });
-    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("back");
-    t.call("repin", { botId: "B1", id: "p-0001" });
-    expect((t.decorate.mock.calls.at(-1)![1] as { data: M.TraceData }[])[0]!.data.kind).toBe("moved");
-  });
-
-  it("a chat with no moved line is never asked to draw traces, and a chat that cannot draw them does not break a save", async () => {
-    const t = withCards();
-    expect(t.decorate).not.toHaveBeenCalled();
-    t.decorate.mockImplementation(() => { throw new Error("sync"); });
-    plain(t, "部署那個好了嗎");
-    t.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    expect(() => moveTag(t, "p-0001")).not.toThrow();
-    t.decorate.mockRejectedValue(new Error("gone"));
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "還沒好。", id: "b1" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "還沒好。" });
     t.call("unpin", { botId: "B1", id: "p-0002" });
-    await flush();
-    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    t.call("repin", { botId: "B1", id: "p-0002" });
+    expect(t.decorate).not.toHaveBeenCalled();
+    expect(setup(Object.fromEntries(t.stored)).decorate).not.toHaveBeenCalled();
   });
 
-  it("the moved lines come back after a restart: the traces are drawn again from the book", () => {
-    const first = withCards();
-    plain(first, "部署那個好了嗎");
-    first.emit("turnStarted", { botId: "B1", turnId: "t1" });
-    moveTag(first, "p-0001");
-    const second = setup(Object.fromEntries(first.stored));
-    expect((second.decorate.mock.calls.at(-1)![1] as { fold: string[] }[])[0]!.fold).toEqual(["u1"]);
-  });
-
-  it("the briefing carries cards the user pinned and the bot's own, so the bot can route into and update either", () => {
+  it("the briefing carries cards the user pinned and the bot's own, so the bot can update either", () => {
     const t = withCards();
     t.tag("B1", "pin-card", { id: "mine", title: "Bot card", state: "wait" }, "等你確認");
     const sent = t.send("B1", "嗨") as string;
@@ -1042,47 +922,41 @@ describe("a worker bound to a card by its job name", () => {
     expect(JSON.stringify(t.book("B1"))).toBe(before);
   });
 
-  it("the bot's reply to a bound worker's report is folded behind one line (移回聊天 brings it back); a reply to anything else is not", () => {
+  it("the main chat keeps the worker's full report and the bot's reply to it: the card gets a copy, nothing is folded, hidden or decorated, and the bot's reply is not touched", () => {
     const t = card();
     t.emit("workerStarted", started("B1", "t-1", "build 報告"));
     t.emit("workerDone", ended("B1", "t-1", "完整報告\n很長"));
-    // a turn that carries no report: its reply stays in the chat
-    t.emit("turnStarted", { botId: "B1", turnId: "u1" });
-    t.emit("messagePosted", { botId: "B1", role: "bot", text: "一般回覆", id: "m0" });
-    t.emit("turnFinished", { botId: "B1", ok: true, reply: "一般回覆" });
-    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
-    // the turn of the app's message for that worker
+    // a turn that carries the report: its reply is the bot's own words, the chat shows it as it always did
     t.emit("turnStarted", { botId: "B1", turnId: "u2", reports: ["t-1"] });
     t.emit("messagePosted", { botId: "B1", role: "bot", text: "做完了，細節在卡片裡", id: "m1" });
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "做完了，細節在卡片裡" });
     const turn = t.book("B1").pins[0]!.thread[0]!;
-    expect([turn.msgId, turn.say]).toEqual(["m1", "做完了，細節在卡片裡"]);
-    const traces = t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; data: M.TraceData }[];
-    expect(traces).toHaveLength(1);
-    expect(traces[0]).toMatchObject({ fold: ["m1"], data: { kind: "moved", worker: true, pin: "p-0001", q: "完整報告" } });
-    // another message of that turn's chat does not fold again
-    t.emit("messagePosted", { botId: "B1", role: "bot", text: "又一句", id: "m2" });
-    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBe("m1");
-    // one tap: back in the chat, the card no longer shows it, the bot's words come back under the trace
-    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ moved: "chat" });
-    const back = t.decorate.mock.calls.at(-1)![1] as { after?: string; data: M.TraceData }[];
-    expect(back[0]).toMatchObject({ after: "m1", data: { kind: "back", a: "做完了，細節在卡片裡" } });
-    expect((t.setData.mock.calls.at(-1)![1] as M.BookView).pins[0]!.thread).toHaveLength(0);
-    // taking a worker line back is not a correction of the bot's routing guess
+    expect(turn).toMatchObject({ via: "worker", worker: "t-1", wkind: "final", a: "完整報告\n很長" });
+    expect(turn.msgId).toBeUndefined();
+    expect(turn.replyId).toBeUndefined();
+    // the chat is not asked to fold, hide or draw anything (the core shows the report and the reply as they are)
+    expect(t.decorate).not.toHaveBeenCalled();
+    // the card's copy can be taken out of the card by hand: the chat is untouched, and it is not a correction of the sorter (a report is not a guess)
+    expect(t.call("dropCopy", { botId: "B1", rid: turn.rid })).toEqual({ dropped: true });
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(0);
     expect(t.book("B1").fixes).toBeUndefined();
-    expect(t.call("moveBack", { botId: "B1", rid: turn.rid })).toEqual({ unchanged: true });
+    expect(t.decorate).not.toHaveBeenCalled();
+    expect(t.call("dropCopy", { botId: "B1", rid: turn.rid })).toEqual({ unchanged: true });
   });
 
-  it("a worker's turn with no reply of the bot yet cannot be moved back, and a reply never folds when the bot sent <no-reply/> (no message)", () => {
+  it("a plain reply (no report in the turn) and a turn with no reply at all leave the card's copy of a report as it was", () => {
     const t = card();
     t.emit("workerStarted", started("B1", "t-1", "build 報告"));
     t.emit("workerDone", ended("B1", "t-1", "報告"));
-    const rid = t.book("B1").pins[0]!.thread[0]!.rid;
-    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ unchanged: true });
+    const before = JSON.stringify(t.book("B1").pins[0]!.thread);
+    t.emit("turnStarted", { botId: "B1", turnId: "u1" });
+    t.emit("messagePosted", { botId: "B1", role: "bot", text: "一般回覆", id: "m0" });
+    t.emit("turnFinished", { botId: "B1", ok: true, reply: "一般回覆" });
     t.emit("turnStarted", { botId: "B1", turnId: "u3", reports: ["t-1"] });
     t.emit("turnFinished", { botId: "B1", ok: true, reply: "" });
     t.emit("messagePosted", { botId: "B1", role: "bot", text: "之後的別件事", id: "m9" });
-    expect(t.book("B1").pins[0]!.thread[0]!.msgId).toBeUndefined();
+    expect(JSON.stringify(t.book("B1").pins[0]!.thread)).toBe(before);
+    expect(t.decorate).not.toHaveBeenCalled();
   });
 
   it("after a restart the binding and the thread are still there", () => {
@@ -1191,7 +1065,8 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
   const started = (t: T, extra: Record<string, unknown> = {}) => t.emit("turnStarted", { botId: "B1", turnId: "t", ...extra });
   const replied = (t: T, id: string, text: string) => t.emit("messagePosted", { botId: "B1", role: "bot", text, id });
   const finished = (t: T, reply: string) => t.emit("turnFinished", { botId: "B1", ok: true, reply });
-  const traces = (t: T) => t.decorate.mock.calls.at(-1)![1] as { key: string; fold?: string[]; after?: string; data: M.TraceData }[];
+  /** The chat is the core's: the plugin never asks it to fold, hide or draw a line (the only thing it could do to the chat). */
+  const chatUntouched = (t: T) => expect(t.decorate).not.toHaveBeenCalled();
   const threads = (t: T) => t.book("B1").pins.map((pin) => pin.thread);
   const assign = (card: string, confidence = 0.9) => ({ action: "assign", card, confidence });
 
@@ -1217,7 +1092,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(threads(t)).toEqual([[], []]);
   });
 
-  it("a confident assign while the bot is still answering (its reply streaming) moves the line into the card at once; the reply, when it is posted, follows it, and both fold behind one trace", async () => {
+  it("a confident assign while the bot is still answering (its reply streaming) COPIES the line into the card at once; the reply, when it is posted, is copied after it; the chat keeps both, whole", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1226,20 +1101,21 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     m.answers[0]!.resolve(assign("p-0001"));
     await flush();
     const turn = t.book("B1").pins[0]!.thread[0]!;
-    expect(turn).toMatchObject({ q: "部署那個好了嗎", via: "auto", late: true, msgId: "u1", a: null });
+    expect(turn).toMatchObject({ q: "部署那個好了嗎", via: "auto", msgId: "u1", a: null });
     expect(t.book("B1").pins[1]!.thread).toEqual([]);
-    expect(traces(t)[0]).toMatchObject({ key: `mv-${turn.rid}`, fold: ["u1"], data: { kind: "moved", pin: "p-0001", by: "app" } });
-    // the reply is posted: it is filled into the same turn and folds with the line
+    chatUntouched(t);
+    // the reply is posted: its copy is filled into the same turn
     replied(t, "b1", "還沒好，還在跑。");
     finished(t, "還沒好，還在跑。");
     expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
-    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ a: "還沒好，還在跑。", replyId: "b1", late: true });
-    expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"] });
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ a: "還沒好，還在跑。", replyId: "b1", msgId: "u1" });
     // the answer was not a <pin-say>: the card did not take it a second time
     expect(t.book("B1").pins[0]!.updates.at(-1)!.source).not.toBe("bot");
+    // and the chat was never asked to fold, hide or replace the line or the reply
+    chatUntouched(t);
   });
 
-  it("a verdict that comes after the reply (and after the turn ended) moves the line and the reply together; one that comes before the line shows moves it as soon as it shows", async () => {
+  it("a verdict that comes after the reply (and after the turn ended) copies the line and the reply together; the chat keeps both", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1249,8 +1125,8 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     m.answers[0]!.resolve(assign("p-0001"));
     await flush();
-    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", replyId: "b1", a: "好了。", late: true });
-    expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"] });
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", replyId: "b1", a: "好了。", via: "auto" });
+    chatUntouched(t);
   });
 
   it("the sort starts only when the core has shown the line (it was sent): a send that was blocked after beforeSend leaves no job, no model call and no suggestion; an old intent is forgotten", async () => {
@@ -1280,10 +1156,10 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     started(t);
     m.answers[0]!.resolve(assign("p-0001"));
     await flush();
-    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", late: true });
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", via: "auto" });
   });
 
-  it("a second line sent before the first one's verdict is its own job: lines answered by one turn move alone (their reply is not guessed), lines answered by their own turns move with their own reply, whatever order the verdicts come in", async () => {
+  it("a second line sent before the first one's verdict is its own job: lines answered by one turn are copied alone (their reply is not guessed), lines answered by their own turns are copied with their own reply, whatever order the verdicts come in", async () => {
     const m = manual();
     const together = withCards(m.ask);
     send(together, "部署那個好了嗎", "u1");
@@ -1298,7 +1174,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(together.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", msgId: "u1", a: null });
     expect(together.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "文件那個呢", msgId: "u2", a: null });
-    expect(traces(together).map((trace) => trace.fold)).toEqual([["u1"], ["u2"]]);
+    chatUntouched(together);
 
     const apart = withCards(m.ask);
     send(apart, "部署那個好了嗎", "u1");
@@ -1315,6 +1191,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(apart.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", a: "部署好了", replyId: "b1" });
     expect(apart.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "文件那個呢", a: "文件在寫", replyId: "b2" });
+    chatUntouched(apart);
   });
 
   it("a bot turn that carries a worker's report is not the answer to a line: the line's own turn is the next one", async () => {
@@ -1333,7 +1210,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ a: "好了", replyId: "b1" });
   });
 
-  it("a line written while the bot answers is read into that turn: one reply answers both lines, so neither line's card takes it (the lines move, the reply stays in the chat), and no later, unrelated turn is taken for the second line's answer", async () => {
+  it("a line written while the bot answers is read into that turn: one reply answers both lines, so neither card gets that reply's copy (the lines are copied, the chat keeps the reply), and no later, unrelated turn is taken for the second line's answer", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1351,19 +1228,18 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     m.answers[0]!.resolve(assign("p-0001"));
     m.answers[1]!.resolve(assign("p-0002"));
     await flush();
-    // both lines are in their cards, alone; no reply is in a card (the shared reply, and the reply to "ok", stay in the chat)
-    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", msgId: "u1", late: true, a: null });
-    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "順便文件那個呢", msgId: "u2", late: true, a: null });
+    // both lines are copied alone; no reply is in a card (the shared reply, and the reply to "ok", are only in the chat)
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", msgId: "u1", via: "auto", a: null });
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ q: "順便文件那個呢", msgId: "u2", via: "auto", a: null });
     expect(t.book("B1").pins[0]!.thread[0]!.replyId).toBeUndefined();
     expect(t.book("B1").pins[1]!.thread[0]!.replyId).toBeUndefined();
-    expect(traces(t).map((trace) => (trace.fold ?? []).join(",")).sort()).toEqual(["u1", "u2"]);
-    expect(traces(t).every((trace) => trace.data.by === "app")).toBe(true);
-    // the card says where the reply is: the view hands the turn over as a late one with no answer
+    chatUntouched(t);
+    // the card says where the reply is: the view hands the turn over as a copy with no answer
     const view = t.call("view", { botId: "B1" }) as M.BookView;
-    expect(view.pins.find((pin) => pin.id === "p-0001")!.thread[0]).toMatchObject({ late: true, a: null });
+    expect(view.pins.find((pin) => pin.id === "p-0001")!.thread[0]).toMatchObject({ via: "auto", a: null });
   });
 
-  it("two lines before one turn begins are answered together too (the reply stays in the chat); a verdict that comes before the reply changes nothing for the reply", async () => {
+  it("two lines before one turn begins are answered together too (no reply copy); a verdict that comes before the reply changes nothing for the reply", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1377,6 +1253,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", a: null });
     expect(t.book("B1").pins[0]!.thread[0]!.replyId).toBeUndefined();
+    chatUntouched(t);
   });
 
   it("lines written while a turn runs are freed with their turn: the 12-job limit is never filled by them, and the next line after is sorted", async () => {
@@ -1394,10 +1271,10 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(ask).toHaveBeenCalledTimes(16);
   });
 
-  it("a turn that ends with no reply (it failed, or was stopped) is over for its line: the next turn's reply is not taken for it, and a line already in a card goes back to the chat", async () => {
+  it("a turn that ends with no reply (it failed, or was stopped) is over for its line: the next turn's reply is not taken for it; a line already copied stays (it is in the chat too), with no reply", async () => {
     const m = manual();
     const t = withCards(m.ask);
-    // the verdict came while the turn ran: the line is in the card with no reply yet
+    // the verdict came while the turn ran: the line is copied into the card with no reply yet
     send(t, "部署那個好了嗎", "u1");
     started(t);
     await flush();
@@ -1405,9 +1282,9 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
     t.emit("turnFinished", { botId: "B1", ok: false, reply: "" });
-    expect(t.book("B1").pins[0]!.thread).toEqual([]);
-    expect(traces(t)).toEqual([]);
-    // the next line has its own turn and its own reply
+    expect(t.book("B1").pins[0]!.thread).toHaveLength(1);
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", a: null });
+    // the next line has its own turn and its own reply; the first line's turn is over, it does not take that reply
     send(t, "文件那個呢", "u2");
     started(t);
     replied(t, "b2", "文件在寫");
@@ -1415,9 +1292,10 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     m.answers[1]!.resolve(assign("p-0002"));
     await flush();
-    expect(t.book("B1").pins[0]!.thread).toEqual([]);
+    expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", a: null });
+    expect(t.book("B1").pins[0]!.thread[0]!.replyId).toBeUndefined();
     expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", replyId: "b2", a: "文件在寫" });
-    // the verdict of a line whose turn failed comes after the turn: the line stays where it was sent
+    // the verdict of a line whose turn failed comes after the turn: the line is copied alone, the other line's reply is not its own
     const late = withCards(m.ask);
     send(late, "部署那個好了嗎", "u1");
     started(late);
@@ -1430,8 +1308,9 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     m.answers[3]!.resolve(assign("p-0002"));
     m.answers[2]!.resolve(assign("p-0001"));
     await flush();
-    expect(late.book("B1").pins[0]!.thread).toEqual([]);
+    expect(late.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", a: null });
     expect(late.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", replyId: "b2" });
+    chatUntouched(late);
   });
 
   it("jobs whose turn is over are forgotten at once, so any number of lines in a row are sorted (a 13th line is not silently left out); jobs whose lines wait for a turn are 12 at most, and old ones expire after 15 minutes", async () => {
@@ -1458,7 +1337,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(ask).toHaveBeenCalledTimes(13);
   });
 
-  it("the sorter turned off while the model is thinking: the verdict moves nothing", async () => {
+  it("the sorter turned off while the model is thinking: the verdict copies nothing", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1477,7 +1356,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(u.book("B1").suggest).toBeUndefined();
   });
 
-  it("the card keeps the whole reply, even a long one (no cut at 4000 characters, the chat's copy is folded away); one too long to keep whole stays in the chat, the line alone moves", async () => {
+  it("the card copies the reply whole, even a long one (no cut at 4000 characters); one over the most a card keeps is cut there in the card's copy, and the chat still has all of it", async () => {
     const m = manual();
     const t = withCards(m.ask);
     const long = "長".repeat(9_000);
@@ -1490,9 +1369,9 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     expect(t.book("B1").pins[0]!.thread[0]).toMatchObject({ replyId: "b1" });
     expect(t.book("B1").pins[0]!.thread[0]!.a).toBe(long);
-    expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"] });
-    // over the most a card keeps whole: the reply is not folded, the line moves alone
-    const huge = "大".repeat(M.MAX_LATE_REPLY + 1);
+    chatUntouched(t);
+    // over the most a card copy keeps: the card's copy is cut there; nothing is taken from the chat
+    const huge = "大".repeat(M.MAX_COPY + 500);
     const u = withCards(m.ask);
     send(u, "文件那個呢", "u2");
     started(u);
@@ -1501,9 +1380,10 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     m.answers[1]!.resolve(assign("p-0002"));
     await flush();
-    expect(u.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", a: null });
-    expect(u.book("B1").pins[1]!.thread[0]!.replyId).toBeUndefined();
-    expect(traces(u)[0]).toMatchObject({ fold: ["u2"] });
+    const copy = u.book("B1").pins[1]!.thread[0]!;
+    expect(copy).toMatchObject({ msgId: "u2", replyId: "b2" });
+    expect(copy.a!.length).toBeLessThanOrEqual(M.MAX_COPY);
+    expect(copy.a!.length).toBeGreaterThan(M.MAX_COPY - 10);
     // and the same when the line is already in the card before the long reply comes
     const v = withCards(m.ask);
     send(v, "文件那個呢", "u3");
@@ -1513,11 +1393,13 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     replied(v, "b3", huge);
     finished(v, huge);
-    expect(v.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u3", a: null });
-    expect(traces(v)[0]).toMatchObject({ fold: ["u3"] });
+    expect(v.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u3", replyId: "b3" });
+    expect(v.book("B1").pins[1]!.thread[0]!.a!.length).toBeLessThanOrEqual(M.MAX_COPY);
+    chatUntouched(u);
+    chatUntouched(v);
   });
 
-  it("the card was taken down before the verdict: nothing moves; taken down after the line moved: line and reply are back in the chat (no trace), and 釘回 folds them again", async () => {
+  it("the card was taken down before the verdict: nothing is copied; taken down after the line was copied: 釘回 brings the copy back as it was, and the chat is never touched", async () => {
     const m = manual();
     const gone = withCards(m.ask);
     send(gone, "部署那個好了嗎", "u1");
@@ -1533,17 +1415,18 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     await flush();
     m.answers[1]!.resolve(assign("p-0002"));
     await flush();
-    expect(traces(t)).toHaveLength(1);
+    expect(t.book("B1").pins[1]!.thread).toHaveLength(1);
     t.call("unpin", { botId: "B1", id: "p-0002" });
-    expect(traces(t)).toEqual([]);
-    // the reply arrives while the card is down: it stays in the chat, nothing is written
+    // the reply arrives while the card is down: it is only in the chat, nothing is written
     replied(t, "b2", "文件在寫");
     expect(t.book("B1").removed[0]!.pin.thread[0]).toMatchObject({ a: null });
     t.call("repin", { botId: "B1", id: "p-0002" });
-    expect(traces(t)[0]).toMatchObject({ fold: ["u2"] });
+    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ msgId: "u2", a: null });
+    chatUntouched(t);
+    chatUntouched(gone);
   });
 
-  it("low confidence, action chat, a card that does not exist, a wrong shape, a refusal and a model that fails: the line stays where it was sent, nothing is written, nothing throws", async () => {
+  it("low confidence, action chat, a card that does not exist, a wrong shape, a refusal and a model that fails: the line is copied nowhere, nothing is written, nothing throws", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const answers: unknown[] = [assign("p-0001", 0.5), { action: "chat", confidence: 1 }, assign("p-0099", 1), assign("constructor", 1), { action: "assign", card: "p-0001" }, "not json", { action: "delete", confidence: 1 }, null];
@@ -1596,7 +1479,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(m.ask).toHaveBeenCalledTimes(4);
   });
 
-  it("a line whose shown text is not what was sent (another plugin changed it) is never moved, and the user's line is not folded", async () => {
+  it("a line whose shown text is not what was sent (another plugin changed it) is never copied", async () => {
     const m = manual();
     const t = withCards(m.ask);
     t.send("B1", "部署那個好了嗎");
@@ -1606,7 +1489,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(threads(t)).toEqual([[], []]);
   });
 
-  it("the host going away (the app quits) ends the model call and a late answer writes nothing; the line was sent long before, so nothing is lost", async () => {
+  it("the host going away (the app quits) ends the model call and a late answer writes nothing; the line is in the chat as it was sent, so nothing is lost", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "部署那個好了嗎", "u1");
@@ -1665,7 +1548,7 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     expect(manifest.ccb.contributes.settings[C.SETTING.timeoutMs]!.default).toBe(C.TIMEOUT_DEFAULT_MS);
   });
 
-  it("a moved line can be taken back (移回聊天: its line and the reply show in the chat again, no trace is drawn, the next verdict is told) or sent to another card (改到…: the trace stays, folding the same two messages)", async () => {
+  it("a copy can be taken out of the card by hand (從卡片移除): only the card's copy goes, the chat is not touched, and the next verdict is told that it does not belong there", async () => {
     const m = manual();
     const t = withCards(m.ask);
     send(t, "文件那個呢", "u1");
@@ -1676,17 +1559,47 @@ describe("a plain line sorted AFTER it is sent (4c; off until the user turns it 
     m.answers[0]!.resolve(assign("p-0001"));
     await flush();
     const rid = t.book("B1").pins[0]!.thread[0]!.rid;
-    expect(t.call("moveTo", { botId: "B1", rid, to: "p-0002" })).toEqual({ moved: "p-0002" });
-    expect(t.book("B1").pins[1]!.thread[0]).toMatchObject({ rid, via: "auto", late: true, redirected: true, replyId: "b1" });
-    expect(traces(t)[0]).toMatchObject({ fold: ["u1", "b1"], data: { by: "user", title: "Docs" } });
-    expect(t.call("moveBack", { botId: "B1", rid })).toEqual({ moved: "chat" });
-    expect(traces(t)).toEqual([]);
-    expect(t.book("B1").fixes).toHaveLength(2);
-    // the next question to the model carries what the user corrected
+    expect(t.call("dropCopy", { botId: "B1", rid })).toEqual({ dropped: true });
+    expect(threads(t)).toEqual([[], []]);
+    expect(t.book("B1").fixes).toEqual([expect.objectContaining({ text: "文件那個呢", from: "p-0001", to: "chat" })]);
+    expect(t.call("dropCopy", { botId: "B1", rid })).toEqual({ unchanged: true });
+    chatUntouched(t);
+    // the same line shown again is copied again only if the model says so; the question to the model carries what the user took out
     send(t, "文件那個呢，再說一次", "u2");
     await flush();
     const prompt = m.calls()[1]![0];
-    expect(JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).corrected).toEqual([{ text: "文件那個呢", wasIn: "p-0001", belongsIn: "p-0002" }, { text: "文件那個呢", wasIn: "p-0002", belongsIn: "chat" }]);
+    expect(JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).corrected).toEqual([{ text: "文件那個呢", notIn: "p-0001" }]);
+    // and the next briefing says it too
+    expect(M.briefing(t.book("B1"), t.now())).toContain("「文件那個呢」不屬於");
+  });
+
+  it("the main chat keeps everything after an assign: the line, the bot's reply and a worker's report are only copied; the plugin asks the chat for nothing but its own data, before and after a restart", async () => {
+    const m = manual();
+    const t = withCards(m.ask);
+    t.tag("B1", "pin-card", { id: "job", title: "Build 報告", state: "run", min: "30" }, "進行中");
+    t.tick(1_000);
+    send(t, "部署那個好了嗎", "u1");
+    started(t);
+    replied(t, "b1", "還沒好，還在跑。");
+    finished(t, "還沒好，還在跑。");
+    await flush();
+    m.answers[0]!.resolve(assign("p-0001"));
+    await flush();
+    t.emit("workerStarted", { botId: "B1", workerId: "t-1", group: "build 報告", title: "worker" });
+    t.emit("workerDone", { botId: "B1", workerId: "t-1", status: "completed", report: "完整報告\n很長" });
+    t.emit("turnStarted", { botId: "B1", turnId: "u2", reports: ["t-1"] });
+    replied(t, "b2", "worker 做完了");
+    finished(t, "worker 做完了");
+    const pins = t.book("B1").pins;
+    expect(pins[0]!.thread[0]).toMatchObject({ q: "部署那個好了嗎", a: "還沒好，還在跑。", msgId: "u1", replyId: "b1" });
+    expect(pins[2]!.thread[0]).toMatchObject({ via: "worker", a: "完整報告\n很長" });
+    // no fold, no hide, no trace, no restore: the chat's own lines are never asked to change
+    chatUntouched(t);
+    const after = setup(Object.fromEntries(t.stored));
+    expect(after.book("B1").pins[0]!.thread[0]).toMatchObject({ msgId: "u1", replyId: "b1" });
+    chatUntouched(after);
+    // the stored book has no memory of any trace or hidden line
+    expect(JSON.stringify(t.stored.get("pins:B1"))).not.toMatch(/"(moved|late|redirected|trace)"/);
   });
 
   it("\"new\" only suggests: the line stays in the chat, a tap makes the card, 不用 drops it, and the same line does not stack a second suggestion", async () => {

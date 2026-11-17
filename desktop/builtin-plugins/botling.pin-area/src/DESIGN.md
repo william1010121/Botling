@@ -3,6 +3,14 @@
 > **v7 (the page part of phases 1–3 is redrawn; the program part is unchanged).** The strip's faded two-line rows and the floating panel with its
 > own input box are gone. See "Page part, v7" below; "Page part" under Phase 1 is what it replaced.
 
+> **v8 (cards copy, they never take).** The user's decision (2026-11-17): 「主對話保留全部，卡片只放副本」. A card only ORGANISES messages: nothing the app or a bot files into a card
+> leaves the chat. A plain line the sorter assigns, the bot's reply to it and a bound worker's report stay in the chat in full, exactly as if there were no card; the card holds a
+> **copy**. There is no fold, no one-line trace in the chat, no 「移回聊天」 / 「改到…」 and no `chat.decorate` / `ccb.decorations` use (the plugin draws nothing into the chat's message list). The only undo is **從卡片移除** on a copy in the card (`dropCopy`): it removes the copy from the card and touches nothing in the chat. The head bot's
+> `<pin-say move="yes">` is gone (it was a way to take an answer out of the chat); a bot decides nothing about what goes where, the sorter (code) copies.
+> The explicit conversation the user starts (`@card words` / the 回覆到 chip) is a copy too: the user's line is in the chat as always, and the bot's `<pin-say>` answer is shown in the chat as a normal reply
+> (the core's `parseReply` takes only the tag's markup out, `BODY_STAYS_TAGS` in `src/core/reply.ts`) while the card's thread gets a copy. Nothing in a card is something the chat does not have.
+> Books of an older version: a turn the user had taken "back to the chat" is dropped on reading; the `msgId` / `say` a fold needed are no longer read.
+
 Phase 1 of the Pin area: a strip of cards above the chat, a floating panel per card, `@card` routing. Phases 2 and 3 are built on
 the seams listed at the end; they needed no rework of what is here (phase 3 is below).
 
@@ -36,7 +44,8 @@ One `Book` per bot in plugin storage `pins:<botId>` (index `pins:bots`, so a res
 `{ seq, pins: Pin[], removed: Removed[] }`. A `Pin` has `id` (`p-0001`, never reused), `botKey` (the bot's own name for it), `origin`
 (`user`|`bot`), `title`, `handle` (what follows `@`), `state` (`wait`|`run`|`done`), `status`, `prev` (the line before the last rewrite,
 shown as "原本"), `source` (`bot`|`app`|`user`: who vouches for the status line), `step`, `waitingSince`, `thread: Turn[]`,
-`updates: Update[]` (the "N 則更新" log), `msgRef`, `seenAt`. `fit()` keeps the book under 600 000 JSON bytes (older answers go first;
+`updates: Update[]` (the "N 則更新" log), `msgRef`, `seenAt`. A `Turn` is `via` "at" (the user wrote it into the card: the conversation), "auto" (a copy of a plain line the sorter chose, with a copy of the bot's reply; `msgId` / `replyId` are
+the ids of the originals in the chat, kept so one line goes into one card only) or "worker" (a copy of what a bound worker said). `fit()` keeps the book under 600 000 JSON bytes (older answers go first;
 an open turn never).
 
 The page draws `viewOf(book)` (order wait, run, done), published with `chat.setData` after every save and again after a restart.
@@ -50,12 +59,12 @@ The page draws `viewOf(book)` (order wait, run, done), published with `chat.setD
   not done) with the line 「…看過了，已取消釘選」 and 釘回.
 - **`@card words`** (main input box or the card's own box): both end in `beforeSend`. `route()` finds `@handle` / `@p-0001` at the start
   of the text in *that chat's* book, writes the words into the thread as an open turn, and returns the text the bot gets:
-  `〔Pin p-0001 · title〕\nwords\n\n（Pin 卡片：回覆請用 <pin-say id="p-0001">…</pin-say>，…）`. The user's bubble shows `@title words`
+  `〔Pin p-0001 · title〕\nwords\n\n（Pin 卡片：請用 <pin-say id="p-0001">…</pin-say> 包住你的回答；回答照常顯示在聊天裡，並複製一份到這張卡…）`. The user's bubble shows `@title words`
   (`userText` reads the header back with `parseAsk`). One path, so nothing is sent twice; the same words to the same card within 3 s
   are dropped (`false`).
 - **The answer** is matched back by `<pin-say id>`: to that card's oldest unanswered question whose line is in the chat (two
-  questions before an answer each get theirs); with nothing waiting it is a turn of its own (the core has already taken it out of the
-  chat, so it is never dropped). A turn that used `<pin-say>` leaves the rest of its reply to the chat. With no tag, the one card with an open turn whose line was in the chat before the
+  questions before an answer each get theirs); with nothing waiting it is a turn of its own (the chat shows the answer as it shows every reply; the card keeps a copy). A turn that used `<pin-say>` is
+  the card's: the rest of its reply is the chat's, and the tag's words are in the chat too. With no tag, the one card with an open turn whose line was in the chat before the
   bot's turn began takes the plain reply; with two waiting nothing is guessed. Receipts: 已送出 (written) → bot 已看到 (`turnStarted`
   after `messagePosted` showed the line).
 - A routed message that never reached the chat (stopped by another plugin) is forgotten after 2 minutes, so it cannot hold an answer.
@@ -97,7 +106,7 @@ Settled by the user (2026-11-17): plain chat organised into cards; **no input bo
 
 **What a bot can newly do, in addition to the list above** (nothing else was added to the bot):
 1. `<pin-card worker="w-1 w-2">`: a card follows up to 4 of the bot's own workers or sub bots (`Pin.from`). A tag with only the link changes no status.
-2. `<pin-say id="p-0001" move="yes">`: the user's last plain line (the one this turn answers) and this answer go into that card, once per line.
+2. ~~`<pin-say id="p-0001" move="yes">`~~ (removed in v8: it took the answer out of the chat). A `move` attribute is ignored; the body is a plain `<pin-say>` answer.
 3. It reads a note, `〔Pin 區現況〕`, appended to a plain message of a chat that has cards: title, id, state, status. Cards the user pinned are in it.
 
 **Worker news.** `events.workerDone` (any worker run end of that bot; `workerReport` is only for plugin-started workers) calls `news()`;
@@ -107,13 +116,9 @@ shows in its folded "N 則更新". Rules: a done card ignores news; a waiting ca
 running card into wait; a completed worker never makes a card done (the bot says that). A worker that ended before the card named it is replayed (`ends`, 50 kept).
 Phase 4a adds a worker's notes and a binding by job name (below).
 
-**Automatic routing.** `beforeSend` appends the briefing (`withBriefing`) to a plain message; `userText` strips it, so the bubble is the user's words.
-`messagePosted` remembers that line (`lastLine`), `turnStarted` binds it to the turn (`turnLine`). With `move="yes"` the host calls `takeAuto`: a turn
-with `via: "auto"` goes into the card, the answer is stored in it, and `chat.decorate(botId, tracesOf(book))` folds the chat line behind a
-one-line trace 「→ 放進 X 的卡片 · 移回聊天 · 改到…」. A `<pin-say>` of any kind marks the turn `saidInTurn`, so the rest of the reply stays in the chat.
-**Undo** (`moveBack` / `moveTo` in the host, one tap each): the turn is marked `moved`, the line comes back, and the trace shows the bot's answer under it,
-so nobody asks twice; the correction (`Book.fixes`, 3 kept) goes into the next briefing so the bot learns. Wrong guesses cost one tap.
-Bounds: 120 traces, 4 `from` per card, 3 fixes. Every plain message in a chat with cards carries about 1 KB of note.
+**The briefing.** `beforeSend` appends the briefing (`withBriefing`) to a plain message; `userText` strips it, so the bubble is the user's words. Nothing in the chat depends on the cards: a line is sent as it is.
+What the user took out of a card by hand (`Book.fixes`, 3 kept, `dropCopy`) goes into the next briefing (「最近被使用者更正：「…」不屬於 p-0001「…」」) and into the sorter's prompt, so lines like it are not copied there again.
+Bounds: 3 fixes. Every plain message in a chat with cards carries about 1 KB of note.
 
 ## Phase 4 (routing by code: workers, auto-close, a classifier for the user's lines)
 
@@ -135,13 +140,12 @@ Rules (`model.ts` `cardForGroup`, `pins.ts` `bind`):
   "build" must not land in a card "Build 報告" that another job's report belongs in). An id beats a title / key / handle; two cards tied, none, or a done card: no binding, the worker stays in the chat as before.
   A worker is bound once (a second start of the same worker adds nothing), and its id must be a plain id (`isFrom`).
 - A bound worker is in `Pin.from` (up to `MAX_LINKED` 12; a bot's `worker=` tag keeps its cap of 4) so everything that already follows `from` (status line, `ends` replay) applies.
-- **Final report** (`workerDone`): the status line gets the first line as before, and the whole report (cut at `MAX_REPORT` 12,000) goes into the card's thread as a `via:"worker"` turn
-  (`worker`, `wkind: final|failed`; no question). A done card keeps the report without changing its words. The same words twice are one.
+- **Final report** (`workerDone`): the status line gets the first line as before, and a **copy** of the whole report (cut at `MAX_REPORT` 12,000) goes into the card's thread as a `via:"worker"` turn
+  (`worker`, `wkind: final|failed`; no question). A done card keeps the copy without changing its words. The same words twice are one.
 - **Notes** (`workerNote`): thread turn (`note`/`question`) and a 過程 log line. A question turns a running card into 等你.
-- **Main chat shows one line.** The bot's reply to the report turn (`turnStarted.reports`, then the next `messagePosted` of that bot) is filed with the newest unfiled worker turn
-  (`attachReply`: `msgId`, `say`), and `tracesOf` folds that message behind 「worker 回報「…」→ 完整內容在「X」的卡片 · 移回聊天」. 移回聊天 reuses `moveBack`
-  (not a correction of the bot's routing, so no `fixes` entry; no 改到… for a worker). If the bot says `<no-reply/>` there is no line and nothing to fold.
-- The bot's prompt section says: give `group` the card's title / key / id when a worker is for a card; its reply to the report is one sentence.
+- **The main chat is untouched** (v8; until then it showed one folded line). The bot answers the report as it always did and the chat shows that in full; the plugin neither folds it nor draws a trace. The card's copy has a
+  **從卡片移除** (`dropCopy`) for a copy that does not belong there; it changes the card only.
+- The bot's prompt section says: give `group` the card's title / key / id when a worker is for a card; the app puts a copy of the report into the card; the bot answers the report as it normally would.
 Bounds: a book is still `MAX_BOOK_BYTES`; `fit()` drops the oldest answered turns first, which may be old reports.
 
 ### 4b. Cards close or go stale by themselves
@@ -167,29 +171,31 @@ every line waited ~4 s and was sent as it was (review R1). The user's decision: 
 **Off until the user tries it.** `botling.pin-area.sorter.enabled` defaults to **false**; the code treats anything but exactly `true` as off. Turn it on in **Settings › Plugins › Pin 區** ("Sort plain lines into cards after
 they are sent"), or by setting `botling.pin-area.sorter.enabled` to `true` in the plugin's settings; a change takes effect on the next line (the settings are read on every line). Off, the hook is exactly what it was without 4c.
 
+**Copy, not move (v8).** The line and the bot's reply stay in the chat; the card gets a copy (`copyLine`, `attachReply`). Nothing is folded, no trace is drawn, there is no 移回聊天 / 改到…. What the first versions needed to hide or give back
+is gone (`releaseLate`, `MAX_LATE_REPLY` "stays in the chat", `chat.decorate`, the `late` / `moved` / `redirected` / `say` fields).
+
 **Flow.** `beforeSend` for a plain line (`M.briefable`, at least 3 characters, the bot has cards, no @card hit; `@card` and the 回覆到 chip are routed by code first and never asked) answers **in the same call** with the line as it
 is plus the briefing, and leaves an *intent* (`pins.ts` `intents`, in memory, 2 minutes). **The sort starts only when the core has shown the line** (`messagePosted`, user, the text matching an intent): a send that another hook blocked, or
-that failed, never shows, so it leaves no job, no model call and no suggestion. The sort is a *job* (`Job`, one per line, in memory only): the model is asked beside the send (`sortAfter`; the cards, the chat's newest 6 lines without the line itself, what the user corrected lately
+that failed, never shows, so it leaves no job, no model call and no suggestion. The sort is a *job* (`Job`, one per line, in memory only): the model is asked beside the send (`sortAfter`; the cards, the chat's newest 6 lines without the line itself, the lines the user took out of a card lately
 (`Book.fixes`) and the line, as **one JSON document**; `askModel`, the settings' model / limit; the answer is parsed strictly, `parseVerdict`). The job is **bound to the turn it was sent into** and to no later one:
 - `messagePosted` (user, every line, sorted or not): while a turn runs (`running`, `turnStarted` .. `turnFinished`) a line is read into that turn or waits behind it, so the turn's reply is no longer one line's: the new job is `"shared"` and a
   `"mine"` job of that turn that has no reply yet becomes `"shared"` too. Otherwise the line is counted (`linesSince`). `turnStarted`: a turn that carries no worker's report binds the waiting jobs: it began after exactly one line (and
-  that is the job's) → `turn: "mine"` (its reply can move too); anything else → `"shared"` (the lines may move one by one, the reply stays in the chat; no guess about whose reply is whose). A turn that carries a worker's report answers no line (the
-  line waits for its own turn, which takes it only if it began after exactly that line). `messagePosted` (bot): only while the turn runs, the first reply goes to the turn's own, unfinished `"mine"` job (`job.reply`); a reply longer than
-  `MAX_LATE_REPLY` (12,000 characters) is not kept whole, so it stays in the chat (the job becomes `"shared"`). `turnFinished`: the job is finished and takes no later turn's reply; a `"mine"` job that got no reply (the turn failed or was stopped)
-  whose line already went into a card is released (`M.releaseLate`: the line shows in the chat again), and a verdict that comes after such a turn leaves the line in the chat.
-- The verdict is decided against the book **as it is then** (`decide`): `chat` / low confidence (the setting, 0.75) / a card that went / a wrong shape / a failure or timeout → **nothing happens**, the line is already in the chat.
-  `assign` → `moveJob`: once the line has shown, `M.takeLate` puts it into the card as one turn (`via: "auto"`, `late: true`, the line's id kept) and, if the reply is already there, the reply too (`replyId`); a reply that has not
-  come yet is filled in when it is posted (`attachLateReply`), so a reply that is still streaming while the move happens just follows. The chat's two messages (the line and the reply) fold behind **one line**
-  「→ 放進「X」的卡片 · 移回聊天 · 改到…」 (`tracesOf`: `fold: [line, reply]`). `new` / `merge` → only a **suggestion** as before (`Book.suggest`, a tap to make the card, a confirm to merge; undo of a merge is 釘回 of the folded card).
-- A late turn never waits for a `<pin-say>` (`waits` excludes it: the bot was not told about the card, so it will not say anything for it): no open-turn bookkeeping, no 「等回覆」, no double answer from `answerOnlyWaiting`.
-  The bot's next briefing lists the card as usual; the prompt section tells the bot the app may move a line and its reply (nothing for it to do).
-- **Undo.** 移回聊天 (`moveBack`) takes the turn out of the thread and **draws nothing**: the line and the reply are real chat messages that simply show again (a late turn has no "answer under the trace" to draw);
-  the correction goes into `Book.fixes` and so into the model's next prompt. 改到… (`moveTo`) keeps the trace with the new card's name. A card taken down gives the lines back the same way (no trace); 釘回 folds them again.
+  that is the job's) → `turn: "mine"` (its reply is copied too); anything else → `"shared"` (the lines are copied one by one, the replies are not: no guess about whose reply is whose). A turn that carries a worker's report answers no line (the
+  line waits for its own turn, which takes it only if it began after exactly that line). `messagePosted` (bot): only while the turn runs, the first reply goes to the turn's own, unfinished `"mine"` job (`job.reply`; copied whole up to
+  `MAX_COPY`). `turnFinished`: the job is finished and takes no later turn's reply.
+- The verdict is decided against the book **as it is then** (`decide`): `chat` / low confidence (the setting, 0.75) / a card that went / a wrong shape / a failure or timeout → **nothing happens**.
+  `assign` → `copyJob`: once the line has shown, `M.copyLine` puts a copy of it into the card as one turn (`via: "auto"`, the line's id kept so it is copied into one card only) and, if the reply is already there, a copy of the reply too (`replyId`); a reply that has
+  not come yet is copied when it is posted (`attachReply`). `new` / `merge` → only a **suggestion** as before (`Book.suggest`, a tap to make the card, a confirm to merge; undo of a merge is 釘回 of the folded card).
+- A copy never waits for a `<pin-say>` (`waits` is only the turns the user wrote into the card: the bot was not told about the card): no open-turn bookkeeping, no 「等回覆」, no double answer from `answerOnlyWaiting`. A copy whose reply is not copied
+  (shared turn, or it has not come) says 「回覆在聊天裡」. The bot's next briefing lists the card as usual; the prompt section tells the bot the app may copy a line and its reply (nothing for it to do, nothing leaves the chat).
+- **Undo.** Only the card is touched: 從卡片移除 (`dropCopy`) takes the copy out of the thread (a worker's copy too) and, for a line the app copied, notes it in `Book.fixes` (so the sorter and the next briefing know). The chat is not touched. A card taken down
+  takes its copies with it (釘回 brings them back); nothing in the chat changes either way.
 
-**The cases.** *A second line sent before the verdict*: its own job, in parallel (at most `MAX_SORTING` = 3 per bot; a fourth is sent and not sorted); lines answered by their own turns move with their own replies whatever order the verdicts
-come in. *Bot reply streaming while the move happens*: the line moves at once, the reply is attached when it is posted. *Card removed meanwhile*: before the verdict, the verdict is chat; after the move, the reply is not written
-into a card that is down (it stays in the chat), the line shows again. *App quits / host restarts*: the plugin's last disposer aborts every model call (`SorterCall.signal`: the child is killed) and drops the jobs; the line was sent
-before, so nothing is lost; a move that was never decided is simply not made. A job is forgotten when its verdict is in and it can do nothing more (its turn is over, the line stays in the chat, or its reply is not its to move), or after 15 minutes (`JOB_MS`); at most 12 per bot. A line whose shown text differs from what was sent (another plugin changed it) is never matched, so never sorted. **The sorter switch is read again when the verdict comes** (`settle`): turned off while the model thinks, nothing moves. The card keeps the whole reply (the chat's copy is folded away, so nothing is cut); a card turn whose reply stays in the chat says 「回覆在聊天裡」, and the receipt of a moved line says 「自動放進這裡」 (the app's sorter put it there, not the bot).
+**The cases.** *A second line sent before the verdict*: its own job, in parallel (at most `MAX_SORTING` = 3 per bot; a fourth is sent and not sorted); lines answered by their own turns are copied with their own replies whatever order the verdicts
+come in. *Bot reply streaming while the copy is made*: the line is copied at once, the reply's copy is added when it is posted. *Card removed meanwhile*: before the verdict, the verdict is chat; after the copy, the reply is not copied into a card that is down.
+*App quits / host restarts*: the plugin's last disposer aborts every model call (`SorterCall.signal`: the child is killed) and drops the jobs; the line was sent before, so nothing is lost; a copy that was never decided is simply not made. Copies persist with the book.
+A job is forgotten when its verdict is in and it can do nothing more (its turn is over, no card was chosen, or its reply is not its to copy), or after 15 minutes (`JOB_MS`); at most 12 per bot. A line whose shown text differs from what was sent (another plugin changed it) is never matched, so never sorted.
+**The sorter switch is read again when the verdict comes** (`settle`): turned off while the model thinks, nothing is copied. The receipt of a copied line says 「自動複製到這裡」.
 
 **How the app calls a model without tools (nothing new in the core).** `api.engines.cli("claude")` gives the CLI as Botling starts it; `sorter-call.ts` (`askModel`, the model passed in) runs it as the chat summaries do
 (botling.catchup): `claude -p --output-format json --model <the setting> --tools "" --strict-mcp-config --no-session-persistence --disable-slash-commands --setting-sources "" --system-prompt …`, in a fresh temporary folder, the question
@@ -266,10 +272,9 @@ is a hook of the whole chat, answered at once for a bot with no cards).
    dropped in the host, a card is pinned once per message id. Tests in `ui.test.ts`, `host.test.ts`. Phase 3: 看完了 is held for 2 s in the page after a tap (one `collapse` call however often it is tapped), and `collapse` in the host is idempotent (`{unchanged}`); `touch` is at most one call a minute, and the other bots' lines are read again only when 30 s old.
 9. **Authority at use**: done. The bot id comes from the tag (`tag.bot.id`) and the message (`message.bot.id`), the book is re-read at
    every use; `by:"seen"` is re-checked against the card's state in the host. Phase 2: news goes only to the book of the event's own bot;
-   a sub bot's parent is checked when its reply arrives; `moveBack` / `moveTo` re-read the book and the turn's `via`. Phase 3: the digest is built from the books at the moment of each publish (a message sent meanwhile has already cleared `presence`), and a bot's own items are never in its own list; the plugin writes only its own storage.
+   a sub bot's parent is checked when its reply arrives; `dropCopy` re-reads the book and refuses a turn the user wrote (`via` "at"). Phase 3: the digest is built from the books at the moment of each publish (a message sent meanwhile has already cleared `presence`), and a bot's own items are never in its own list; the plugin writes only its own storage.
 10. **Fail closed**: done. A bad tag, an unknown state, a missing id, a full strip, a rejected `setData` drop or refuse; nothing throws out
-    of an event or tag handler. Phase 2: an unknown worker id, a `worker=` that is not an id, a `move` with no line to move, or a full
-    trace list drops quietly (the line stays in the chat).
+    of an event or tag handler. Phase 2: an unknown worker id, a `worker=` that is not an id, or a `dropCopy` of a turn that is not a copy drops quietly (the chat is never touched).
     Phase 3: no `workspace.waiting` result, no stored `presence` and no `away` the page receives is trusted: each is read back to its shape
     (`readPresence`, `othersOf`, `readView`), a throwing or missing `waiting()` means no lines, and a failed save keeps the digest in memory.
 11. **Tests**: done. `model.test.ts`, `host.test.ts`, `ui.test.ts`, `web.test.ts`, `mention-source.test.ts`, and phase 3's `digest.test.ts` (the reducer),
@@ -280,7 +285,7 @@ is a hook of the whole chat, answered at once for a bot with no cards).
 
 **Phase 4c additions to the answers above.** 4 (text): the model is given one JSON document (cards, lines, the line: `oneLine`/`clean` each, quotes and newlines escaped by `JSON.stringify`), and the model's answer is read back to a verdict
 (`parseVerdict`: strict action, a card id only if `isId`, confidence 0–1). 5 (secrets): none passed; the CLI's own login is used, errors log a fixed word, never the text. 6 (sizes): line 1,500, recent lines 6 × 200, 2 suggestions × 80, the
-child's output capped at 1 MB; the settings are clamped. 8 (retries): at most 3 sorts in flight per bot, 12 jobs (the line is already sent, so a retry is never a second send); a line is moved once (`lineUsed`), a reply is filled once, the same words within 3 s are one send (`writeInto`), a suggestion is taken out of the book before it acts (a double tap acts once, the page also guards by id).
-9 (authority at use): the book is read again after the model's wait (the verdict is decided on it), the move re-reads it too; the host going away aborts the calls and a late answer writes nothing; the worker-report ids are read only from `origin: "app"` turns; a card that went, or a merge whose cards went, does nothing; a suggestion expires after 30 minutes. 10 (fail closed): a missing CLI, a timeout, a bad exit or answer,
-a low confidence, an engine that is not wired or any throw leaves the line in the chat where it was sent. 11 (tests): `classify.test.ts` (prompt, parse, decide, merge, the settings, the isolated call against a fake CLI script), `host.test.ts` (the after-send flow with a mocked model: verdict before / during / after the reply, two lines, a card removed meanwhile, undo, quit), `model.test.ts` (`takeLate`, `attachLateReply`, traces), `ui.test.ts`.
+child's output capped at 1 MB; the settings are clamped. 8 (retries): at most 3 sorts in flight per bot, 12 jobs (the line is already sent, so a retry is never a second send); a line is copied once (`lineUsed`), a reply's copy is filled once, the same words within 3 s are one send (`writeInto`), a suggestion is taken out of the book before it acts (a double tap acts once, the page also guards by id).
+9 (authority at use): the book is read again after the model's wait (the verdict is decided on it), the copy re-reads it too; the host going away aborts the calls and a late answer writes nothing; the worker-report ids are read only from `origin: "app"` turns; a card that went, or a merge whose cards went, does nothing; a suggestion expires after 30 minutes. 10 (fail closed): a missing CLI, a timeout, a bad exit or answer,
+a low confidence, an engine that is not wired or any throw leaves the line in the chat where it was sent. 11 (tests): `classify.test.ts` (prompt, parse, decide, merge, the settings, the isolated call against a fake CLI script), `host.test.ts` (the after-send flow with a mocked model: verdict before / during / after the reply, two lines, a card removed meanwhile, quit; v8: the chat keeps the line, the reply and a worker's report in every case, `dropCopy`), `model.test.ts` (`copyLine`, `attachReply`, `dropCopy`), `ui.test.ts`.
 13: the after-send redo (this step) is at most 2 `remote-test.sh` runs, no `--typecheck`; the earlier steps' runs are in their own notes.

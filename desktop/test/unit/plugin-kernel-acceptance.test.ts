@@ -93,19 +93,19 @@ it("the plugin set is the built-ins plus the two fixtures, with their real contr
 // ---------------------------------------------------------------------------------------------------------------------
 // §5 check 1: no visible change.
 
-/** The step-1 goldens' sha256, recorded on the unchanged code (commit de71d3a0) before any kernel change. */
+/** The step-1 goldens' sha256: first recorded on the unchanged code (commit de71d3a0) before any kernel change, and updated whenever a golden is re-recorded on purpose (see test/kernel-goldens.ts). */
 const GOLDENS: Record<string, string> = {
-  "contributions-after-disable.json": "ed83f7990a1b23146f98af4603dbafaf89748c90e5b2648e05b22c19db9e9776",
-  "contributions-with-keys.json": "c4ed9dfba176840c55359a1ee1231a1e2e316e39f68d240b98926585e80d4a30",
-  "contributions.json": "7086a04fff8b005af8ce8ee63d6f5ae217c4b8911ae2874e141275709899448a",
+  "contributions-after-disable.json": "b60d686008eb9b3410c03cfd22810cbfca4781cacfd98f0112c2b3d69ea25ff0",
+  "contributions-with-keys.json": "606245faa494842f04c3fea1a4453eb668633261dc105dd5c3f414bed10572ff",
+  "contributions.json": "ec152d12585353e8f40b8524cbd029715b6690dffe8d4cecb0f3295c827e4547",
   "frame-broker.json": "f67f7ec2d79045d56ed018b5f03b663da140217a2982942daa3f5afb0656e37d",
   "host-session.json": "8ac71e51dbc22cfbad46f5bc39ee8fa224488944a82e40f57f0a4901470ff02b",
-  "plugins-list.json": "17c6976d15bd78710dc47d1f5d61926a8483c093102f912b574d43ded31e26e2",
-  "plugins-panel.json": "f849021fec1ffc3b0c31893bb989030a95a8543c90ba429ed2625f5ec133e8f1",
-  "plugins-web.json": "c1b04565824bf16c9cbf51bcf1cc9e5162d967f86658b6e5be6b96cbc981673b",
-  "registry-plugins.json": "c7ffbf133fd277b5f75cb79e220575292aa64dc1e3de309998ee7a120f2c0241",
-  "view-surfaces-after-disable.json": "c9555a6a695dca2807a8194460ecc7631fe0bd73f96635c59e4ac6ed0402bdeb",
-  "view-surfaces.json": "be0ec3a9c245ae46d012c477809368136f090b6868a9e086be20ef8b518baf78",
+  "plugins-list.json": "53cb41fa05331d839065bbba72bbbb6315686600fad239c8273d917bf5a422df",
+  "plugins-panel.json": "39e47e75107595072f392d137dc610f36219ed36ff602848c28f48464a0dfa66",
+  "plugins-web.json": "36b0616c1168a223e0aced38f11ab51d87d37d861bdff33bdcc3a5fa8dce18f3",
+  "registry-plugins.json": "c10ae4efe15b4a6c89bf9d1bcef7894e1589c8fdf6003bb98f219daaadb0aa84",
+  "view-surfaces-after-disable.json": "38bf50ab0eb92ddfd3dd36a7b1fdaa54b37346de10f8d9924080ad746701a8d7",
+  "view-surfaces.json": "ffb4909260f33b17770ef8380c839961e1f4971e4800b8a8b6d21f47cc94a695",
 };
 
 describe("check 1: no visible change", () => {

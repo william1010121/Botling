@@ -306,56 +306,19 @@ describe("the cards' note on a plain message", () => {
   });
 });
 
-describe("where a line the bot moved went", () => {
-  const trace = (over: Record<string, unknown> = {}) => ({ plugin: PLUGIN, key: "mv-r1", fold: ["u1"], data: { kind: "moved", rid: "r1", pin: "p-0001", title: "Deploy", q: "部署好了嗎", by: "bot", ...over } });
-  const draw = (...decorations: unknown[]) => {
+describe("the chat keeps every line (a card only holds copies)", () => {
+  it("the page registers no chat decoration: even a stored trace of an older version folds and draws nothing", () => {
+    host.chatState(stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))));
     const list = document.createElement("div");
     const rows = new Map<string, HTMLElement>();
     for (const id of ["u0", "u1", "u2"]) { const row = document.createElement("div"); row.dataset.id = id; list.append(row); rows.set(id, row); }
     document.body.append(list);
-    host.decorations.update({ ...stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))), decorations } as never, (id) => rows.get(id) ?? null);
-    return { list, rows };
-  };
-
-  it("draws one line in place of the user's line, and folds that line behind it", () => {
-    host.chatState(stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))));
-    const { list, rows } = draw(trace());
-    const line = list.querySelector<HTMLElement>(".decoration-extra .pt-mv")!;
-    expect(line.textContent).toContain("Deploy");
-    expect(rows.get("u1")!.classList.contains("decoration-folded")).toBe(true);
-    expect(rows.get("u0")!.classList.contains("decoration-folded")).toBe(false);
-    expect(list.children[1]!.classList.contains("decoration-extra")).toBe(true);
-  });
-
-  it("its buttons call the program part for this chat's bot: 移回聊天 and 改到…", async () => {
-    host.chatState(stateOf(view(card("p-0001"), card("p-0002", { title: "Docs", handle: "Docs" }))));
-    const { list } = draw(trace());
-    const [back, other] = [...list.querySelectorAll<HTMLButtonElement>(".pt-mv-act")];
-    back!.click();
-    expect(calls().map((call) => [call.plugin, call.method, call.params])).toEqual([[PLUGIN, "moveBack", { botId: "B1", rid: "r1" }]]);
-    host.hostReply(calls()[0]!.callID, true, { unchanged: true });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    other!.click();
-    list.querySelector<HTMLButtonElement>(".pt-mv-alt")!.click();
-    expect(calls().map((call) => call.method)).toEqual(["moveBack", "moveTo"]);
-    expect(calls()[1]!.params).toEqual({ botId: "B1", rid: "r1", to: "p-0002" });
-  });
-
-  it("draws nothing for data that is not a trace, and the answer under the line once it is back in the chat", () => {
-    host.chatState(stateOf(view(card("p-0001"))));
-    const bad = draw({ plugin: PLUGIN, key: "x", fold: ["u1"], data: { kind: "other" } }, { plugin: PLUGIN, key: "y", fold: ["u2"] });
-    expect(bad.list.querySelector(".pt-mv")).toBeNull();
-    const back = draw({ plugin: PLUGIN, key: "mv-r1", after: "u1", data: { kind: "back", rid: "r1", pin: "p-0001", title: "Deploy", q: "x", by: "bot", a: "還沒好" } });
-    expect(back.list.querySelector(".pt-mv-ans")!.textContent).toBe("bot：還沒好");
-  });
-
-  it("is taken away with the plugin", async () => {
-    host.chatState(stateOf(view(card("p-0001"))));
-    const { list } = draw(trace());
-    expect(list.querySelector(".pt-mv")).not.toBeNull();
-    await host.sync([], async () => (() => {}) as never);
-    host.decorations.redraw();
+    const trace = { plugin: PLUGIN, key: "mv-r1", fold: ["u1"], data: { kind: "moved", rid: "r1", pin: "p-0001", title: "Deploy", q: "部署好了嗎", by: "bot" } };
+    host.decorations.update({ ...stateOf(view(card("p-0001"))), decorations: [trace] } as never, (id) => rows.get(id) ?? null);
+    expect(list.querySelector(".decoration-extra")).toBeNull();
     expect(list.querySelector(".pt-mv")).toBeNull();
+    expect([...rows.values()].some((row) => row.classList.contains("decoration-folded"))).toBe(false);
+    expect(list.children).toHaveLength(3);
   });
 });
 

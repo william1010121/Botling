@@ -5,7 +5,7 @@
 // Every word from a bot or a thread goes in with textContent, never as HTML. No Botling import: `Deps` is all this needs, so a test
 // draws it in jsdom with fakes (no window, no focus taken).
 import { readView, spanOf, type DigestRow, type DigestView, type PinsView } from "./digest";
-import type { PinView, TraceData, Turn } from "./model";
+import type { PinView, Turn } from "./model";
 import type { Words } from "./words";
 
 export interface Deps {
@@ -90,8 +90,7 @@ export class PinUi {
   private readonly fresh = new Set<string>();
   /** What the chat's input box shows now (`id|title`), so it is told only when that changes. */
   private chipKey: string | null = null;
-  /** Traces whose "改到…" list is open, and the moves under way (a double tap moves once). */
-  private readonly alts = new Set<string>();
+  /** Taps under way (a double tap acts once): a suggestion, a 釘回, a copy taken out of the card. */
   private readonly moving = new Set<string>();
   private lastThread = new Map<string, number>();
   /** 看完了 / the chip's reopen is under way (a double tap asks once); let go when the chat draws the answer or after a moment. */
@@ -588,13 +587,8 @@ export class PinUi {
       if (turn.q) {
         const mine = el("div", "pt-msg pt-me");
         mine.append(el("span", "pt-bubble", turn.q), el("span", `pt-receipt${turn.seenAt !== null ? " seen" : ""}`, `${clock(turn.qAt)} · ${this.receipt(turn)}`));
-        // a line the bot put here by itself: one tap takes it back to the chat
-        if (turn.via === "auto") {
-          const back = el("button", "pt-mv-act", words("trace.backBtn"));
-          back.type = "button";
-          back.addEventListener("click", () => this.moveBack(turn.rid));
-          mine.append(back);
-        }
+        // a line the app copied here: one tap takes the copy out of the card (the chat's own line stays)
+        if (turn.via === "auto") mine.append(this.dropButton(turn.rid));
         parts.thread.append(mine);
       }
       if (turn.a !== null) {
@@ -602,16 +596,11 @@ export class PinUi {
         const bot = el("div", `pt-msg pt-bot${worker ? " pt-worker" : ""}`);
         // what a worker said (its whole report, a note, a question) is the worker's, not the bot's
         bot.append(el("span", "pt-bubble", turn.a), el("span", "pt-receipt", `${worker ? words(WORKER_WORD[turn.wkind ?? "final"]) : words("bot.name")} · ${clock(turn.aAt ?? turn.qAt)}`));
-        // a report whose reply in the chat was folded to one line: one tap brings it back
-        if (worker && turn.msgId) {
-          const back = el("button", "pt-mv-act", words("trace.backBtn"));
-          back.type = "button";
-          back.addEventListener("click", () => this.moveBack(turn.rid));
-          bot.append(back);
-        }
+        // what a worker said is a copy of its report: one tap takes the copy out of the card (the chat is not touched)
+        if (worker) bot.append(this.dropButton(turn.rid));
         parts.thread.append(bot);
-      } else if (turn.late) {
-        // a line the app moved here whose reply stays in the chat (it answered several lines, was too long, or has not come yet)
+      } else if (turn.via === "auto") {
+        // a line the app copied here whose reply is not copied (it answered several lines, or has not come yet): the reply is in the chat
         parts.thread.append(el("div", "pt-empty", words("turn.inChat")));
       }
     }
@@ -622,64 +611,24 @@ export class PinUi {
 
   private receipt(turn: Turn): string {
     const { words } = this.deps;
-    if (turn.via === "auto") return turn.redirected ? words("receipt.redirected") : turn.late ? words("receipt.app") : words("receipt.auto");
+    if (turn.via === "auto") return words("receipt.app");
     return turn.a !== null || turn.seenAt !== null ? words("receipt.seen") : words("receipt.sent");
   }
 
-  // ---- the trace in the chat: where the user's line went (drawn by the page's decoration for it) ----
+  // ---- a copy in the card: the app put it there to organise, the user may take it out (the chat is not touched) ----
 
-  /** 移回聊天. */
-  moveBack(rid: string): void {
-    this.move(rid, "moveBack", {});
+  private dropButton(rid: string): HTMLElement {
+    const button = el("button", "pt-drop", this.deps.words("copy.remove"));
+    button.type = "button";
+    button.title = this.deps.words("copy.removeTip");
+    button.addEventListener("click", () => this.dropCopy(rid));
+    return button;
   }
-  /** 改到… (`to`: a card id). */
-  moveTo(rid: string, to: string): void {
-    this.alts.delete(rid);
-    this.move(rid, "moveTo", { to });
-  }
-  private move(rid: string, method: string, params: Record<string, unknown>): void {
+  /** 從卡片移除: only the card's copy goes. */
+  dropCopy(rid: string): void {
     if (this.moving.has(rid)) return;
     this.moving.add(rid);
-    void this.deps.call(method, { botId: this.botId, rid, ...params }).then(() => {}, (error) => this.failed(error)).finally(() => this.moving.delete(rid));
-  }
-
-  /** One line where the user's line was: "→ 放進「X」的卡片 · 移回聊天 · 改到…"; once moved back, the answer stays under it. */
-  trace(root: HTMLElement, data: TraceData): void {
-    const { words } = this.deps;
-    root.replaceChildren();
-    const line = el("div", `pt-mv pt-mv-${data.kind}`);
-    if (data.kind === "back") {
-      line.append(el("span", "pt-mv-text", words("trace.back")));
-      root.append(line);
-      if (data.a) root.append(el("div", "pt-mv-ans", `${words("bot.name")}：${data.a}`));
-      return;
-    }
-    const open = el("button", "pt-mv-open", data.worker ? words("trace.worker", { q: data.q, title: data.title }) : words(data.by === "user" ? "trace.moved" : "trace.put", { q: `“${data.q}”`, title: data.title }));
-    open.type = "button";
-    open.title = words("trace.open", { title: data.title });
-    open.addEventListener("click", () => this.open(data.pin));
-    const back = el("button", "pt-mv-act", words("trace.backBtn"));
-    back.type = "button";
-    back.addEventListener("click", () => this.moveBack(data.rid));
-    const other = el("button", "pt-mv-act", words("trace.other"));
-    other.type = "button";
-    other.setAttribute("aria-expanded", String(this.alts.has(data.rid)));
-    other.addEventListener("click", () => { if (this.alts.has(data.rid)) this.alts.delete(data.rid); else this.alts.add(data.rid); this.trace(root, data); });
-    // a worker's report has no other card to go to: only back to the chat
-    if (data.worker) line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back);
-    else line.append(pinIcon(), open, el("span", "pt-mv-sep", "·"), back, el("span", "pt-mv-sep", "·"), other);
-    root.append(line);
-    if (this.alts.has(data.rid)) {
-      const list = el("div", "pt-mv-alts");
-      for (const pin of this.data.pins.filter((candidate) => candidate.id !== data.pin)) {
-        const choice = el("button", "pt-mv-alt");
-        choice.type = "button";
-        choice.append(el("span", `pt-dot pt-dot-${pin.state}`), el("span", "", pin.title));
-        choice.addEventListener("click", () => this.moveTo(data.rid, pin.id));
-        list.append(choice);
-      }
-      root.append(list);
-    }
+    void this.deps.call("dropCopy", { botId: this.botId, rid }).then(() => {}, (error) => this.failed(error)).finally(() => this.moving.delete(rid));
   }
 
   private drawUpdates(pin: PinView, parts: NonNullable<PinUi["panelParts"]>): void {

@@ -92,17 +92,11 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     return { ...M.viewOf(book, now()), ...(away ? { away } : {}) };
   };
 
-  /** What the chat of `botId` draws from now on. A chat the app does not know (a bot that was removed) just takes nothing. */
-  const decorated = new Set<string>();
+  /** What the chat of `botId` draws from now on (the cards). A chat the app does not know (a bot that was removed) just takes nothing. */
   const published = new Set<string>();
   const publish = (botId: string, book = load(botId)) => {
     if (published.size < MAX_BOTS) published.add(botId);
     try { void Promise.resolve(api.chat.setData(botId, viewFor(botId, book) as never)).catch(() => {}); } catch { /* no page to draw it */ }
-    // the traces of lines the bot moved into cards (a chat with none and none before is not asked at all)
-    const traces = M.tracesOf(book);
-    if (!traces.length && !decorated.has(botId)) return;
-    if (traces.length) decorated.add(botId); else decorated.delete(botId);
-    try { void Promise.resolve(api.chat.decorate(botId, traces as never)).catch(() => {}); } catch { /* no page to draw it */ }
   };
   const save = (botId: string, book: M.Book) => {
     if (typeof api.storage?.set !== "function") throw new Error("unavailable: storage");
@@ -166,8 +160,6 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     const ended = ends.get(workerId);
     if (ended && ended.botId === botId) news(botId, workerId, { kind: ended.kind, from: "worker", text: ended.text });
   };
-  /** The worker reports (final or a note) a bot's turn carries, and the card ids they went into: the bot's reply is folded behind one line of trace. */
-  const carried = new Map<string, string[]>();
   // A sub bot is followed only by the card of the bot it works under: its parent is checked now, not when the card was made.
   const parents = { at: 0, byId: new Map<string, string | null>() };
   const parentOf = async (id: string): Promise<string | null> => {
@@ -181,9 +173,6 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
 
   // ---- which turn of the bot an answer can belong to ----
   const turnStart = new Map<string, number>();
-  // The plain line of the user that carried a briefing (the one a `move="yes"` answer is about), and the one the running turn answers.
-  const lastLine = new Map<string, { id: string; text: string; at: number }>();
-  const turnLine = new Map<string, { id: string; text: string; at: number }>();
   const lastBotLine = new Map<string, { text: string; at: number }>();
   /** Bots that used <pin-say> in the turn now running: the rest of that reply is meant for the chat, not for a waiting card. */
   const saidInTurn = new Set<string>();
@@ -201,10 +190,10 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   const ridOf = () => `r${now().toString(36)}-${(counter++).toString(36)}`;
 
   /**
-   * The user's words written into a card as a new turn, and what the bot is sent for it (the card's header). `via` "auto": the app chose the card, so the
-   * line gets a trace with 移回聊天 / 改到…. False: the same words just went (a double send). The book is read again here: it may have changed meanwhile.
+   * The user's words written into a card as a new turn, and what the bot is sent for it (the card's header). False: the same words just went (a double send).
+   * The book is read again here: it may have changed meanwhile.
    */
-  const writeInto = (botId: string, pinId: string, words: string, via: M.Via): string | false | undefined => {
+  const writeInto = (botId: string, pinId: string, words: string): string | false | undefined => {
     const book = load(botId);
     const pin = book.pins.find((candidate) => candidate.id === pinId);
     if (!pin) return undefined;
@@ -212,7 +201,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     if (M.pruneUnposted(book, at)) save(botId, book);
     // the same words again, at once: one send
     if (M.isDuplicate(pin, words, at)) return false;
-    M.addTurn(pin, ridOf(), words, at, via);
+    M.addTurn(pin, ridOf(), words, at, "at");
     save(botId, book);
     return M.askText(pin, M.clean(words, M.MAX_ROUTED));
   };
@@ -234,7 +223,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   };
   const readSetting = (key: string): unknown => (typeof api.settings?.get === "function" ? api.settings.get(key) : undefined);
 
-  // ---- the sort AFTER the send (4c): the line goes to the bot at once; the small model decides meanwhile; a confident assign moves the line and the bot's reply into the card ----
+  // ---- the sort AFTER the send (4c): the line goes to the bot at once; the small model decides meanwhile; a confident assign COPIES the line and the bot's reply into the card (the chat keeps them) ----
   /** One plain line being sorted: where it is in the chat, which bot turn answers it, and what has come of the verdict. */
   interface Job {
     botId: string; text: string; at: number;
@@ -243,16 +232,16 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     /** The line's id in the chat once it showed (`messagePosted`), and when. */
     lineId?: string; lineAt?: number;
     /**
-     * The bot turn that answers it: "mine" (the only line that turn began after: its reply can move with it), "shared" (the turn answers other lines too, or it
-     * is a turn the line was not sent for: the reply stays in the chat), or none yet. A job is bound to the turn it was sent into and to no later one.
+     * The bot turn that answers it: "mine" (the only line that turn began after: its reply is copied with it), "shared" (the turn answers other lines too, or it
+     * is a turn the line was not sent for: no reply is copied), or none yet. A job is bound to the turn it was sent into and to no later one.
      */
     turn: "none" | "mine" | "shared";
     /** That turn is over. */
     finished: boolean;
     /** The bot's reply to it (its message id and words), once posted. */
     reply?: { id: string; text: string };
-    /** The card the model chose, and the card's turn once the line was moved (the reply is filled into it). */
-    pinId?: string; rid?: string; moved: boolean;
+    /** The card the model chose, and the card's turn once the line was copied (the reply's copy is filled into it). */
+    pinId?: string; rid?: string; copied: boolean;
   }
   const jobs = new Map<string, Job[]>();
   /** The bots a turn is under way for (`turnStarted` .. `turnFinished`): a line the user writes meanwhile is read into that turn or waits behind it, so it never has a turn of its own to answer it alone. */
@@ -267,7 +256,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
   const MAX_JOBS = 12;
   const quit = new AbortController();
   const jobsOf = (botId: string): Job[] => jobs.get(botId) ?? [];
-  /** A job is forgotten when it is old, or when it can do nothing more: its verdict is in and its turn is over, the line stays in the chat, or its reply is not its to move. */
+  /** A job is forgotten when it is old, or when it can do nothing more: its verdict is in and its turn is over, no card was chosen, or its reply is not its to copy. */
   const prune = (botId: string): void => {
     const list = jobsOf(botId).filter((job) => now() - job.at < JOB_MS && !(!job.pending && (job.finished || !job.pinId || job.turn === "shared")));
     if (list.length) jobs.set(botId, list); else jobs.delete(botId);
@@ -278,27 +267,25 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     const last = lines[lines.length - 1];
     return last && last.who === "user" && last.text.trim() === text.trim() ? lines.slice(0, -1) : lines;
   };
-  /** The line is in the chat and the model chose `job.pinId`: line and reply (when it has come) go into that card, with the trace. Nothing moves if the card went or the line is in a card already. */
-  const moveJob = (job: Job): void => {
-    if (job.moved || !job.pinId || !job.lineId) return;
-    // the turn that was to answer it is over and said nothing (failed, stopped): the line stays in the chat, not in a card as a question nobody answers
-    if (job.turn === "mine" && job.finished && !job.reply) return;
-    job.moved = true;
+  /** The line is in the chat and the model chose `job.pinId`: the line (and the bot's reply, when it has come) is COPIED into that card; the chat keeps both. Nothing is copied if the card went or the line is in a card already. */
+  const copyJob = (job: Job): void => {
+    if (job.copied || !job.pinId || !job.lineId) return;
+    job.copied = true;
     const book = load(job.botId);
-    const turn = M.takeLate(book, job.pinId, { id: job.lineId, text: job.text, at: job.lineAt ?? now() }, job.turn === "mine" ? job.reply ?? null : null, ridOf(), now());
+    const turn = M.copyLine(book, job.pinId, { id: job.lineId, text: job.text, at: job.lineAt ?? now() }, job.turn === "mine" ? job.reply ?? null : null, ridOf(), now());
     if (!turn) return;
     job.rid = turn.rid;
     save(job.botId, book);
   };
-  /** The model's verdict, decided on the book as it is now: assign moves (once the line has shown), new / merge only suggest, anything else leaves the line where it is. */
+  /** The model's verdict, decided on the book as it is now: assign copies (once the line has shown), new / merge only suggest, anything else does nothing. */
   const settle = (job: Job, verdict: C.Verdict | null, confidence: number): void => {
-    // the user turned the sort off while the model was thinking: nothing moves (the settings are read again where they are used)
+    // the user turned the sort off while the model was thinking: nothing is copied (the settings are read again where they are used)
     if (!C.sorterSettings(readSetting).enabled) return;
     const fresh = load(job.botId);
     const decision = C.decide(fresh, verdict, confidence);
     if (decision.kind === "assign") {
       job.pinId = decision.pin.id;
-      moveJob(job);
+      copyJob(job);
     } else if (decision.kind === "new" || decision.kind === "merge") {
       const made = M.addSuggest(fresh, decision.kind === "new" ? { kind: "new", text: job.text } : { kind: "merge", text: job.text, card: decision.keep.id, card2: decision.drop.id }, ridOf(), now());
       if (made) save(job.botId, fresh);
@@ -310,7 +297,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       const answer = await ask!(C.classifyPrompt(load(job.botId), recent, job.text), { engine: settings.engine!, model: settings.model, timeoutMs: settings.timeoutMs, signal: quit.signal });
       if (!quit.signal.aborted) settle(job, C.parseVerdict(answer), settings.confidence);
     } catch (error) {
-      // a slow or failed model: the line is already in the chat where it was sent, nothing else happens
+      // a slow or failed model: the line is already in the chat, nothing else happens
       if (!quit.signal.aborted) console.error("botling.pin-area: sort", error instanceof Error ? error.message : "failed");
     } finally {
       job.pending = false;
@@ -344,7 +331,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       prune(botId);
       const list = jobsOf(botId);
       if (list.length >= MAX_JOBS || list.filter((job) => job.pending).length >= C.MAX_SORTING) return;
-      const job: Job = { botId, text, at: now(), pending: true, lineId, lineAt: now(), turn: underway ? "shared" : "none", finished: false, moved: false };
+      const job: Job = { botId, text, at: now(), pending: true, lineId, lineAt: now(), turn: underway ? "shared" : "none", finished: false, copied: false };
       jobs.set(botId, [...list, job]);
       void sortAfter(job, settings);
     } catch (error) {
@@ -357,12 +344,8 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     api.events.on("turnStarted", ({ botId, reports }) => {
       if (!bots.has(botId)) return;
       turnStart.set(botId, now());
-      // the line that was in the chat before this turn began is the one it answers; a line that comes while it runs waits for the next turn
-      const line = lastLine.get(botId);
-      if (line) { turnLine.set(botId, line); lastLine.delete(botId); } else turnLine.delete(botId);
       saidInTurn.delete(botId);
-      if (reports?.length) carried.set(botId, reports.filter(M.isFrom).slice(0, 8)); else carried.delete(botId);
-      // the lines sorted after their send that this turn answers: it began after exactly one line of the user's (sorted or not) → that line's reply can be moved with it;
+      // the lines sorted after their send that this turn answers: it began after exactly one line of the user's (sorted or not) → that line's reply is copied with it;
       // several lines → the reply is not guessed at. Every waiting job is bound now, to this turn or to none, so no later turn takes it. A turn that carries a worker's report
       // answers no line: the lines wait for their own turn (it takes them only if it began after exactly that one line).
       running.add(botId);
@@ -388,26 +371,15 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!bots.has(botId)) return;
       if (role === "bot") {
         lastBotLine.set(botId, { text: String(text ?? ""), at: now() });
-        // the reply to a line that is being (or was) sorted after its send: kept; when the line is in a card already the reply goes in and folds with it.
-        // Only the turn under way answers, and only its own job (not a finished one: its turn is over); a reply too long to keep whole stays in the chat.
+        // the reply to a line that is being (or was) sorted after its send: kept; when the line is in a card already, the reply's copy goes in too (the chat keeps the reply).
+        // Only the turn under way answers, and only its own job (not a finished one: its turn is over).
         const answered = running.has(botId) ? jobsOf(botId).find((job) => job.turn === "mine" && !job.reply && !job.finished) : undefined;
         if (answered && typeof id === "string" && id && String(text ?? "").trim()) {
-          if (!M.fitsLateReply(text)) {
-            answered.turn = "shared";
-          } else {
-            answered.reply = { id, text: String(text) };
-            if (answered.rid) {
-              const book = load(botId);
-              if (M.attachLateReply(book, answered.rid, answered.reply, now())) save(botId, book);
-            }
+          answered.reply = { id, text: String(text) };
+          if (answered.rid) {
+            const book = load(botId);
+            if (M.attachReply(book, answered.rid, answered.reply, now())) save(botId, book);
           }
-        }
-        // the bot's reply to a worker's report that a card holds in full: one line of trace in the chat, the words kept with it
-        const workers = carried.get(botId);
-        if (workers?.length && typeof id === "string" && id) {
-          carried.delete(botId);
-          const book = load(botId);
-          if (M.attachReply(book, workers, id, String(text ?? ""), now())) save(botId, book);
         }
         return;
       }
@@ -418,35 +390,19 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       } else if (typeof id === "string" && id) {
         linesSince.set(botId, [...(linesSince.get(botId) ?? []), id].slice(-8));
       }
-      if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) {
-        lastLine.set(botId, { id, text: M.stripBriefing(String(text)), at: now() });
-        // the line was sent (the core showed it): the sort of it, if it was wanted, starts now
-        startSort(botId, M.stripBriefing(String(text)), id, underway);
-      }
+      // the line was sent (the core showed it): the sort of it, if it was wanted, starts now
+      if (M.hasBriefing(String(text ?? "")) && typeof id === "string" && id) startSort(botId, M.stripBriefing(String(text)), id, underway);
       const asked = M.parseAsk(String(text ?? ""));
       if (!asked) return;
       const book = load(botId);
-      if (M.markPosted(book, asked.id, now(), typeof id === "string" ? id : undefined)) save(botId, book);
+      if (M.markPosted(book, asked.id, now())) save(botId, book);
     }),
     // a reply with no <pin-say>: the one card waiting for an answer takes it
     api.events.on("turnFinished", ({ botId, ok, reply }) => {
       if (!bots.has(botId)) return;
-      turnLine.delete(botId);
-      carried.delete(botId);
       running.delete(botId);
-      // the turn is over: its job is finished and takes no later turn's reply. A line it never answered (the turn failed, or was stopped) that already went into a card goes back to the chat
-      const unanswered = jobsOf(botId).filter((job) => job.turn === "mine" && !job.finished && !job.reply && job.rid);
+      // the turn is over: its job is finished and takes no later turn's reply
       for (const job of jobsOf(botId)) if (job.turn !== "none") job.finished = true;
-      if (unanswered.length) {
-        try {
-          const book = load(botId);
-          let any = false;
-          for (const job of unanswered) if (M.releaseLate(book, job.rid!)) any = true;
-          if (any) save(botId, book);
-        } catch (error) {
-          console.error("botling.pin-area: release", error);
-        }
-      }
       prune(botId);
       try {
         const line = lastBotLine.get(botId);
@@ -522,15 +478,6 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       try {
         const book = load(botId);
         const id = own(tag.attributes, "id").trim();
-        if (M.truthy(own(tag.attributes, "move"))) {
-          // the bot judged that the user's plain line belongs to this card: the line and this answer go into it (once per line)
-          const line = turnLine.get(botId);
-          if (line && M.takeAuto(book, id, line, tag.body, ridOf(), now())) { turnLine.delete(botId); save(botId, book); }
-          // no line left to move (none behind this turn, or it moved already): the core has taken the tag out of the reply, so the
-          // answer is kept in that card as its own turn, never dropped
-          else if (M.keepAnswer(book, id, tag.body, now())) save(botId, book);
-          return;
-        }
         if (M.answerTurn(book, id, tag.body, now())) save(botId, book);
       } catch (error) {
         console.error("botling.pin-area: pin-say", error);
@@ -538,7 +485,7 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
     }),
 
     // "@card words" from the main input box or the card's own: written into the card's thread, sent to the bot with the card's header.
-    // A plain line of a chat that has cards is sorted by the small model (`sortLine`): into a card like an @card, or it stays in the chat.
+    // A plain line of a chat that has cards may be copied into a card by the small model (`sortAfter`); the line itself always goes to the chat.
     api.hooks.beforeSend((message) => {
       const botId = message.bot.id;
       if (!bots.has(botId)) return;
@@ -548,12 +495,12 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       if (!hit && M.briefable(message.text)) {
         const brief = M.briefing(book, now());
         if (!brief) return undefined;
-        // the line goes at once, as it is, with the briefing; once the core has shown it, the sort (when it is on) runs beside it and may move the line and the bot's reply into a card afterwards
+        // the line goes at once, as it is, with the briefing; once the core has shown it, the sort (when it is on) runs beside it and may copy the line and the bot's reply into a card afterwards
         intend(botId, message.text);
         return M.withBriefing(message.text, brief);
       }
       if (!hit || hit.rest.length > M.MAX_ROUTED) return;
-      return writeInto(botId, hit.pin.id, hit.rest, "at");
+      return writeInto(botId, hit.pin.id, hit.rest);
     }),
   ];
 
@@ -673,24 +620,14 @@ export function activatePins(api: BotlingApi, expose: Expose, now: () => number 
       save(botId, book);
       return { dismissed: true };
     }),
-    // 移回聊天: the line the bot moved is the chat's again (its answer shows there, once); the bot is told by the next briefing
-    expose("moveBack", (params) => {
+    // 從卡片移除: a copy leaves the card (the chat has the original and is not touched); the sorter is told by the next prompt
+    expose("dropCopy", (params) => {
       const botId = botOf(params);
       const book = load(botId);
       const rid = M.isRid(params.rid) ? params.rid : "";
-      if (!M.moveBack(book, rid, now())) return { unchanged: true };
+      if (!M.dropCopy(book, rid, now())) return { unchanged: true };
       save(botId, book);
-      return { moved: "chat" };
-    }),
-    // 改到…: the line and its answer go to another card
-    expose("moveTo", (params) => {
-      const botId = botOf(params);
-      const book = load(botId);
-      const rid = M.isRid(params.rid) ? params.rid : "";
-      const to = M.isId(params.to) ? params.to : "";
-      if (!M.moveTo(book, rid, to, now())) return { unchanged: true };
-      save(botId, book);
-      return { moved: to };
+      return { dropped: true };
     }),
     // the card was open: what it says is read
     expose("seen", (params) => {

@@ -96,6 +96,11 @@ const tagName = (tag: string) => /^[a-z][a-z0-9-]{0,39}$/.test(tag);
 export function setPluginTags(tags: readonly string[]) { declaredTags = [...new Set(tags)].filter(tagName); }
 export const pluginTagNames = (): readonly string[] => declaredTags;
 const declaredTag = (tags: readonly string[]) => new RegExp(`<(${tags.join("|")})((?:\\s+[A-Za-z-]+(?:\\s*=\\s*(?:"[^"]*"|'[^']*'))?)*)\\s*(?:\\/>|>\\s*([\\s\\S]*?)\\s*<\\/\\1>)`, "g");
+/**
+ * Plugin tags whose body is also meant for the chat: only the tag itself leaves the reply, its words stay as plain text (`<pin-say>` of botling.pin-area: a card's
+ * answer is copied into the card, the chat keeps it). Every other plugin tag leaves the reply whole.
+ */
+export const BODY_STAYS_TAGS: readonly string[] = ["pin-say"];
 /** The most of a plugin tag's body handed on. */
 export const PLUGIN_TAG_BODY_MAX = 100_000;
 const attributeTag = () => /([A-Za-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
@@ -140,7 +145,11 @@ const group = (text: string, hit: Hit, i: number) => { const span = hit.spans[i]
 
 /** `ReplyParser.saysNoReply`: the reply carries <no-reply/> outside code. */
 export function saysNoReply(reply: string): boolean {
-  return noReplyTag().test(masked(reply));
+  let outside = masked(reply);
+  // a <no-reply/> inside a kept body (`BODY_STAYS_TAGS`) is part of words the chat shows: it does not make the whole reply one that says nothing
+  const kept = declaredTags.filter((tag) => BODY_STAYS_TAGS.includes(tag));
+  if (kept.length) for (const hit of hits(declaredTag(kept), outside)) outside = outside.slice(0, hit.index) + " ".repeat(hit.length) + outside.slice(hit.index + hit.length);
+  return noReplyTag().test(outside);
 }
 
 function choiceFrom(line: string): Choice | null {
@@ -159,6 +168,17 @@ function choiceFrom(line: string): Choice | null {
   const choice: Choice = { label, recommended };
   if (parts.length > 1 && parts[1]) choice.detail = parts[1];
   return choice;
+}
+
+/** `words` without any tag plugins declared (outside code): a tag inside a kept body is not dispatched, and does not show as raw text in the chat. */
+function withoutPluginTags(words: string, tags: readonly string[]): string {
+  let out = words;
+  let mask = masked(words);
+  for (const hit of hits(declaredTag(tags), mask).reverse()) {
+    out = out.slice(0, hit.index) + out.slice(hit.index + hit.length);
+    mask = mask.slice(0, hit.index) + mask.slice(hit.index + hit.length);
+  }
+  return trimAll(out);
 }
 
 /** `ReplyParser.parseAll`. */
@@ -209,7 +229,19 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   const pluginTags: PluginTag[] = [];
   const own = tags.filter(tagName);
   if (own.length) for (const hit of hits(declaredTag(own), mask).reverse()) {
-    pluginTags.unshift({ tag: group(text, hit, 0), attributes: attributes(group(text, hit, 1)), body: group(text, hit, 2).slice(0, PLUGIN_TAG_BODY_MAX) });
+    const name = group(text, hit, 0);
+    const body = group(text, hit, 2);
+    // A tag of `BODY_STAYS_TAGS` leaves only its markup: its words stay in the reply, where the chat shows them (the plugin gets a copy of the words as the chat shows them).
+    if (BODY_STAYS_TAGS.includes(name) && hit.spans[2]) {
+      // The words are cut from `text`, not read from the match: the match ran on the mask, where `\s*` also ate a code span or fence at either end of the body.
+      const opened = mask.indexOf(">", hit.spans[1]![1]) + 1;
+      const words = withoutPluginTags(trimAll(text.slice(opened, hit.index + hit.length - `</${name}>`.length)), own);
+      pluginTags.unshift({ tag: name, attributes: attributes(group(text, hit, 1)), body: parseReply(words, []).body.slice(0, PLUGIN_TAG_BODY_MAX) });
+      if (words) replace(hit.index, hit.length, words, masked(words));
+      else replace(hit.index, hit.length, "");
+      continue;
+    }
+    pluginTags.unshift({ tag: name, attributes: attributes(group(text, hit, 1)), body: body.slice(0, PLUGIN_TAG_BODY_MAX) });
     replace(hit.index, hit.length, "");
   }
 

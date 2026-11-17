@@ -72,7 +72,7 @@ export interface DigestView {
 /** When the card last changed: its newest log line (a state or status change, a worker's report) or the bot's newest answer in its thread. */
 export function changedAt(pin: Pin): number {
   const logged = pin.updates.reduce((latest, update) => Math.max(latest, update.at), 0);
-  const answered = pin.thread.reduce((latest, turn) => (turn.a !== null && !turn.moved && turn.aAt !== null ? Math.max(latest, turn.aAt) : latest), 0);
+  const answered = pin.thread.reduce((latest, turn) => (turn.a !== null && turn.aAt !== null ? Math.max(latest, turn.aAt) : latest), 0);
   return Math.max(logged, answered);
 }
 const ORDER: Record<State, number> = { wait: 0, run: 1, done: 2 };

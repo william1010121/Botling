@@ -11,20 +11,16 @@ export type WorkerKind = "final" | "failed" | "note" | "question";
 
 /**
  * One exchange in a card's thread. `postedAt`: the line showed in the chat; `seenAt`: a turn of the bot began after that (the bot saw it);
- * `a` null: not answered yet. `via`: how it got here (typed @card, or Phase 2's automatic routing); `moved`: the user took it back to
- * the chat (Phase 2's 移回聊天), kept so the thread still shows where it went.
+ * `a` null: not answered yet. `via`: how it got here: "at" (the user typed @card or wrote through the 回覆到 chip: the thread is the conversation), "auto"
+ * (the app COPIED the user's plain line, and the bot's reply to it, into the card: the chat keeps both, nothing was moved) or "worker" (a copy of what a bound
+ * worker reported). A copy only organises: the user may take it out of the card (`dropCopy`) and the chat is not touched.
  */
 export interface Turn {
-  rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via; moved?: boolean;
-  /** `via` "auto": the user's own line in the chat (it is folded behind the trace while the turn is in the card). `redirected`: the user chose this card with 改到…. */
-  msgId?: string; redirected?: boolean;
-  /** `via` "worker": the worker's task id and what it said (`a` holds the words, `q` is empty); `msgId` is then the bot's reply in the chat to it (folded behind a trace), `say` that reply. */
-  worker?: string; wkind?: WorkerKind; say?: string;
-  /**
-   * `via` "auto" sorted AFTER the send (4c): the line was sent to the bot as a plain chat line and answered there; the app moved the line and the bot's reply
-   * (`replyId`: the reply's message in the chat, folded with the line) into this card. Such a turn never waits for a `<pin-say>` (the bot was not told about the card).
-   */
-  late?: true; replyId?: string;
+  rid: string; q: string; a: string | null; qAt: number; postedAt: number | null; seenAt: number | null; aAt: number | null; via: Via;
+  /** `via` "auto": the copied line's id in the chat (a line is copied into one card only), and the id of the bot's reply there once its copy is in `a`. */
+  msgId?: string; replyId?: string;
+  /** `via` "worker": the worker's task id and what it said (`a` holds the words, `q` is empty). */
+  worker?: string; wkind?: WorkerKind;
 }
 export interface Update { at: number; state: State; status: string; source: Source }
 export interface Step { done: number; total: number }
@@ -56,6 +52,8 @@ export interface Pin {
   seenAt?: number;
   /** When it became done (the hour after which it takes itself down); older books have none: its last change then. */
   doneAt?: number;
+  /** Worker copies the user took out of this card (`worker|kind|hash`, the newest 20): the same report delivered again is not put back. */
+  gone?: string[];
   /** Workers the app bound to it that have not ended yet (`bind`); with none and one end seen (`endedAt`), the card waits on nobody. */
   live?: string[];
   endedAt?: number;
@@ -75,8 +73,8 @@ export interface Removed {
  * Nothing moves by itself for these. `text`: the line (cut short); `card`/`card2`: the cards to merge (`card` stays).
  */
 export interface Suggest { id: string; kind: "new" | "merge"; text: string; at: number; card?: string; card2?: string }
-/** A guess of the automatic routing the user corrected (the bot is told, so it guesses better). `from`/`to`: a card id, or "chat". */
-export interface Fix { text: string; from: string; to: string; at: number }
+/** A copy the app made that the user took out of its card again (the sorter is told, so it guesses better). `from`: the card id; `to` is always "chat" (the line belongs to no card). */
+export interface Fix { text: string; from: string; to: "chat"; at: number }
 export interface Book { seq: number; pins: Pin[]; removed: Removed[]; fixes?: Fix[]; suggest?: Suggest[] }
 
 export const MAX_PINS = 8;
@@ -98,6 +96,8 @@ export const DONE_CLOSE_MS = 60 * 60_000;
 /** How long a card taken down by itself is still offered back on the strip. */
 export const CLOSED_SHOW_MS = 24 * 3_600_000;
 export const MAX_FIXES = 3;
+/** The most of a bot's reply a card's copy keeps (the chat has all of it). */
+export const MAX_COPY = MAX_REPORT;
 /** Suggestions waiting for a tap (the oldest goes over it), and how long one stays. */
 export const MAX_SUGGEST = 2;
 export const SUGGEST_MS = 30 * 60_000;
@@ -150,16 +150,18 @@ function stepOf(done: unknown, total: unknown): Step | null {
 function readTurn(raw: unknown): Turn | null {
   if (!raw || typeof raw !== "object") return null;
   const t = raw as Record<string, unknown>;
-  if (!isRid(t.rid) || typeof t.q !== "string") return null;
-  const a = typeof t.a === "string" ? t.a.slice(0, t.via === "worker" || (t.via === "auto" && t.late === true) ? MAX_REPORT : MAX_A) : null;
+  // a turn an older version took "back to the chat" is gone from the card (it never moved anything out of the chat now): not read
+  if (!isRid(t.rid) || typeof t.q !== "string" || t.moved === true) return null;
+  const via: Via = t.via === "auto" ? "auto" : t.via === "worker" ? "worker" : "at";
+  const a = typeof t.a === "string" ? t.a.slice(0, via === "at" ? MAX_A : MAX_REPORT) : null;
   const wkind = (["final", "failed", "note", "question"] as const).find((kind) => kind === t.wkind);
   const time = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  if (via === "worker" && !(isFrom(t.worker) && wkind)) return null;
   return {
-    rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt),
-    via: t.via === "auto" ? "auto" : t.via === "worker" && isFrom(t.worker) && wkind ? "worker" : "at", ...(t.moved === true ? { moved: true } : {}),
-    ...(typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}), ...(t.redirected === true ? { redirected: true } : {}),
-    ...(t.via === "auto" && t.late === true ? { late: true as const } : {}), ...(t.via === "auto" && t.late === true && typeof t.replyId === "string" && t.replyId && t.replyId.length <= 200 ? { replyId: t.replyId } : {}),
-    ...(t.via === "worker" && isFrom(t.worker) && wkind ? { worker: t.worker, wkind, ...(typeof t.say === "string" && t.say ? { say: t.say.slice(0, MAX_A) } : {}) } : {}),
+    rid: t.rid, q: t.q.slice(0, MAX_Q), a, qAt: num(t.qAt), postedAt: time(t.postedAt), seenAt: time(t.seenAt), aAt: a === null ? null : num(t.aAt), via,
+    ...(via === "auto" && typeof t.msgId === "string" && t.msgId && t.msgId.length <= 200 ? { msgId: t.msgId } : {}),
+    ...(via === "auto" && typeof t.replyId === "string" && t.replyId && t.replyId.length <= 200 ? { replyId: t.replyId } : {}),
+    ...(via === "worker" ? { worker: t.worker as string, wkind: wkind! } : {}),
   };
 }
 function readUpdate(raw: unknown): Update | null {
@@ -183,13 +185,14 @@ export function readPin(raw: unknown): Pin | null {
   const seenSeen = typeof p.seenAt === "number" && Number.isFinite(p.seenAt) ? { seenAt: p.seenAt } : {};
   const at = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined);
   const live = (Array.isArray(p.live) ? p.live : []).filter(isFrom).slice(0, MAX_LINKED);
+  const gone = (Array.isArray(p.gone) ? p.gone : []).filter((key): key is string => typeof key === "string" && key.length > 0 && key.length <= 200).slice(-MAX_GONE);
   return {
     id: p.id, ...(isKey(p.botKey) ? { botKey: p.botKey } : {}), origin: p.origin, title, handle, state, status: oneLine(p.status, MAX_STATUS), ...(typeof p.prev === "string" && p.prev ? { prev: oneLine(p.prev, MAX_STATUS) } : {}),
     source, ...(step ? { step } : {}), ...(state === "wait" ? { waitingSince: num(p.waitingSince) } : {}),
     thread: (Array.isArray(p.thread) ? p.thread.slice(-MAX_TURNS) : []).map(readTurn).filter((x): x is Turn => !!x),
     updates: (Array.isArray(p.updates) ? p.updates.slice(-MAX_UPDATES) : []).map(readUpdate).filter((x): x is Update => !!x),
     ...(typeof p.msgRef === "string" && p.msgRef ? { msgRef: p.msgRef.slice(0, 200) } : {}), createdAt: num(p.createdAt), updatedAt: num(p.updatedAt), ...seenSeen,
-    ...(from.length ? { from } : {}),
+    ...(from.length ? { from } : {}), ...(gone.length ? { gone } : {}),
     ...(state === "done" && at(p.doneAt) ? { doneAt: at(p.doneAt)! } : {}), ...(live.length ? { live } : {}), ...(at(p.endedAt) ? { endedAt: at(p.endedAt)! } : {}),
     ...(state !== "done" && at(p.stale) ? { stale: at(p.stale)! } : {}), ...(state === "run" && p.nudge === true ? { nudge: true as const } : {}),
   };
@@ -231,7 +234,8 @@ export function readBook(raw: unknown): Book {
   const fixes = (Array.isArray(r.fixes) ? r.fixes : []).flatMap((item): Fix[] => {
     const f = item && typeof item === "object" ? item as Record<string, unknown> : null;
     const text = f ? oneLine(f.text, 30) : "";
-    return f && text && typeof f.from === "string" && typeof f.to === "string" && (f.from === "chat" || isId(f.from)) && (f.to === "chat" || isId(f.to)) ? [{ text, from: f.from, to: f.to, at: num(f.at) }] : [];
+    // an older book also kept "moved to another card" corrections: only "this line does not belong in that card" is read
+    return f && text && isId(f.from) && f.to === "chat" ? [{ text, from: f.from, to: "chat" as const, at: num(f.at) }] : [];
   }).slice(-MAX_FIXES);
   if (fixes.length) book.fixes = fixes;
   return book;
@@ -507,10 +511,19 @@ export const cardOfWorker = (book: Book, workerId: string): Pin | null => book.p
  * What a worker said goes into the card's thread as a turn of its own (`via: "worker"`, no words of the user's), full length up to
  * MAX_REPORT. The same words of the same worker twice are one. Null: nothing was added.
  */
+const MAX_GONE = 20;
+/** What names one worker copy: who said it, what kind, and a hash of its words. */
+const copyKey = (workerId: string, kind: WorkerKind, words: string): string => {
+  let hash = 5381;
+  for (let at = 0; at < words.length; at++) hash = ((hash * 33) ^ words.charCodeAt(at)) >>> 0;
+  return `${workerId}|${kind}|${words.length}-${hash.toString(36)}`;
+};
 export function addWorkerTurn(pin: Pin, workerId: string, kind: WorkerKind, text: string, now: number): Turn | null {
   const words = clean(text, MAX_REPORT * 2).trim().slice(0, MAX_REPORT);
   if (!words || !isFrom(workerId)) return null;
   if (pin.thread.some((turn) => turn.via === "worker" && turn.worker === workerId && turn.wkind === kind && turn.a === words)) return null;
+  // a copy the user took out of the card is not put back when the same report is delivered again
+  if (pin.gone?.includes(copyKey(workerId, kind, words))) return null;
   const turn = addTurn(pin, `w${now.toString(36)}-${pin.thread.length}-${workerId.slice(0, 12).replace(/[^A-Za-z0-9_-]/g, "_")}`, "", now, "worker");
   turn.a = words;
   turn.aAt = now;
@@ -598,7 +611,7 @@ export function route(book: Book, text: string): { pin: Pin; rest: string } | nu
 }
 
 /** The footer every routed message ends with: how the bot answers (the web part shows the bubble without it, so its words are fixed here). */
-export const footer = (id: string): string => `（Pin 卡片：回覆請用 <pin-say id="${id}">…</pin-say>，會放進這張卡的對話串，不會顯示在聊天裡。）`;
+export const footer = (id: string): string => `（Pin 卡片：請用 <pin-say id="${id}">…</pin-say> 包住你的回答；回答照常顯示在聊天裡，並複製一份到這張卡的對話串。）`;
 /** What the bot gets for a message written into a card. */
 export function askText(pin: Pin, text: string): string {
   return `〔Pin ${pin.id} · ${pin.title}〕\n${text}\n\n${footer(pin.id)}`;
@@ -622,7 +635,8 @@ export function addTurn(pin: Pin, rid: string, text: string, now: number, via: V
   pin.updatedAt = now;
   return turn;
 }
-const waits = (turn: Turn): boolean => turn.a === null && !turn.moved && !turn.late;
+/** A turn that waits for a `<pin-say>`: one the user wrote into the card. A copy (a line the app copied here, a worker's report) never does: the bot was not told about the card. */
+const waits = (turn: Turn): boolean => turn.a === null && turn.via === "at";
 /**
  * The turn the card's next answer goes to: the oldest unanswered one whose line is in the chat (answers come in the order the
  * questions were asked), else the oldest unanswered one. Two questions written into one card before an answer each get theirs.
@@ -632,7 +646,7 @@ export const openTurn = (pin: Pin): Turn | undefined =>
 
 /**
  * A `<pin-say id>` from the bot: the open turn of that card gets the answer. With no open turn (a second answer, or one the bot
- * offers by itself) it is a turn of its own, never dropped: the core has already taken it out of the chat. False: no such card.
+ * offers by itself) it is a turn of its own, never dropped (the chat shows the same words as a reply). False: no such card.
  */
 export function answerTurn(book: Book, id: string, body: string, now: number): boolean {
   if (!isId(id)) return false;
@@ -669,31 +683,27 @@ export function markSeen(book: Book, now: number): boolean {
   }
   return any;
 }
-/**
- * The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. `msgId` (the line's id in the
- * chat) is kept for an automatic turn: that line folds behind the trace (`tracesOf`), as the line the bot moved did.
- */
-export function markPosted(book: Book, id: string, now: number, msgId?: string): boolean {
+/** The user's line showed in the chat: the oldest open turn of that card with that header whose line had not shown yet. */
+export function markPosted(book: Book, id: string, now: number): boolean {
   const pin = book.pins.find((candidate) => candidate.id === id);
   const turn = pin ? pin.thread.find((candidate) => waits(candidate) && candidate.postedAt === null) : undefined;
   if (!turn || turn.postedAt !== null) return false;
   turn.postedAt = now;
-  if (turn.via === "auto" && msgId && msgId.length <= 200 && !lineUsed(book, msgId)) turn.msgId = msgId;
   return true;
 }
 
-// ---- automatic routing: a plain message the bot decides belongs to a card ----
+// ---- the note of the cards that a plain message carries ----
 
-/** The note appended to a plain message of a chat that has cards: the cards as they stand, so the bot can route and update them. */
+/** The note appended to a plain message of a chat that has cards: the cards as they stand, so the bot can update them. */
 export const BRIEF = "〔Pin 區現況〕";
 const STATE_WORD: Record<State, string> = { wait: "等你", run: "進行中", done: "完成" };
-const FIX_WORD = (book: Book, id: string): string => (id === "chat" ? "聊天" : `${id}「${book.pins.find((p) => p.id === id)?.title ?? book.removed.find((r) => r.pin.id === id)?.pin.title ?? "?"}」`);
-/** The briefing for a bot's next plain message: one line per card (id, title, state, status), the last guesses the user corrected, and how to answer. "" with no cards. */
+const FIX_WORD = (book: Book, id: string): string => `${id}「${book.pins.find((p) => p.id === id)?.title ?? book.removed.find((r) => r.pin.id === id)?.pin.title ?? "?"}」`;
+/** The briefing for a bot's next plain message: one line per card (id, title, state, status) and the last lines the user took out of a card. "" with no cards. */
 export function briefing(book: Book, now: number): string {
   if (!book.pins.length) return "";
   const lines = viewOf(book).pins.map((pin) => `${pin.id}「${oneLine(pin.title, MAX_TITLE)}」${STATE_WORD[pin.state]} · ${oneLine(pin.status, 60)}${pin.origin === "user" ? " · 使用者釘的" : ""}${pin.stale ? ` · 可能已過時（它的 worker 都結束了，${Math.max(1, Math.floor((now - pin.updatedAt) / 60_000))} 分鐘沒更新）` : ""}${pin.nudge ? " · worker 都回報完了但卡片還在進行中：做完請標 state=\"done\"，沒做完請寫還差什麼" : ""}`);
   const fixes = (book.fixes ?? []).filter((fix) => now - fix.at < 86_400_000);
-  const corrected = fixes.map((fix) => `「${fix.text}」不是 ${FIX_WORD(book, fix.from)}，是 ${FIX_WORD(book, fix.to)}`);
+  const corrected = fixes.map((fix) => `「${fix.text}」不屬於 ${FIX_WORD(book, fix.from)}`);
   // the note goes out inside the user's message, which the core reads for @Name call-ins: a title like "@DAFAWU 看一下" must not call that bot in
   return `${BRIEF}\n${lines.join("\n")}${corrected.length ? `\n最近被使用者更正：${corrected.join("；")}` : ""}`.replace(/@/g, "＠")
     + `\n（以最後一則現況為準。）`;
@@ -714,38 +724,15 @@ export function briefable(text: string): boolean {
   return t.length > 0 && t.length <= MAX_ROUTED && !t.startsWith("/") && !t.startsWith("〔");
 }
 
-/** Where a turn is, anywhere in the book: the card (live or taken down) and the turn. */
-export function findTurn(book: Book, rid: string): { pin: Pin; turn: Turn; removed: boolean } | null {
-  for (const pin of book.pins) { const turn = pin.thread.find((t) => t.rid === rid); if (turn) return { pin, turn, removed: false }; }
-  for (const entry of book.removed) { const turn = entry.pin.thread.find((t) => t.rid === rid); if (turn) return { pin: entry.pin, turn, removed: true }; }
-  return null;
-}
 const lineUsed = (book: Book, msgId: string): boolean => [...book.pins, ...book.removed.map((entry) => entry.pin)].some((pin) => pin.thread.some((turn) => turn.msgId === msgId || turn.replyId === msgId));
 
+// ---- copies: the app organises the chat's messages into cards, it never takes one out of the chat ----
+
 /**
- * The bot's `<pin-say id move="yes">answer</pin-say>`: the user's plain line (`line`, the one this turn answers) and the bot's answer go into the card
- * as one answered turn, `via: "auto"`. Null (nothing moves, the answer is only a chat reply): no such card, no words, or that line is already in a card.
+ * Sorted AFTER the send (4c): the user's plain line (`line`, already in the chat, where it stays) and the bot's reply to it (`reply`, when it has come) are COPIED into the card as one turn,
+ * `via: "auto"`. With no reply yet the turn has none (`attachReply` fills it when the reply is posted). Null: no such card, no words, or the line (or the reply) is already in a card.
  */
-export function takeAuto(book: Book, id: string, line: { id: string; text: string; at: number }, answer: string, rid: string, now: number): Turn | null {
-  const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
-  const text = clean(answer, MAX_A * 2).trim().slice(0, MAX_A);
-  const words = clean(line.text, MAX_ROUTED).trim();
-  if (!pin || !text || !words || !line.id || lineUsed(book, line.id)) return null;
-  const turn = addTurn(pin, rid, words, line.at, "auto");
-  turn.q = clean(words, MAX_Q);
-  turn.a = text;
-  turn.aAt = now;
-  turn.postedAt = line.at;
-  turn.seenAt = now;
-  turn.msgId = line.id;
-  pin.updatedAt = now;
-  return turn;
-}
-/**
- * Sorted AFTER the send (4c): the user's plain line (`line`, already in the chat) and the bot's reply to it (`reply`, when it has come) go into the card as one turn,
- * `via: "auto"`, `late`. With no reply yet the turn is open (`attachLateReply` fills it when the reply is posted). Null: no such card, no words, or the line (or the reply) is already in a card.
- */
-export function takeLate(book: Book, id: string, line: { id: string; text: string; at: number }, reply: { id: string; text: string } | null, rid: string, now: number): Turn | null {
+export function copyLine(book: Book, id: string, line: { id: string; text: string; at: number }, reply: { id: string; text: string } | null, rid: string, now: number): Turn | null {
   const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
   const words = clean(line.text, MAX_ROUTED).trim();
   if (!pin || !words || !line.id || line.id.length > 200 || lineUsed(book, line.id) || !isRid(rid)) return null;
@@ -754,130 +741,51 @@ export function takeLate(book: Book, id: string, line: { id: string; text: strin
   turn.postedAt = line.at;
   turn.seenAt = line.at;
   turn.msgId = line.id;
-  turn.late = true;
   pin.thread.sort((a, b) => a.qAt - b.qAt);
   pin.updatedAt = now;
   if (reply) fillReply(book, turn, reply, now);
   return turn;
 }
-/** The most of a bot's reply a card keeps for a line sorted after its send: the whole reply (it is folded away in the chat, so nothing may be cut); a longer one stays in the chat. */
-export const MAX_LATE_REPLY = MAX_REPORT;
-/** Whether `text` can go into a card whole (`fillReply`); a longer reply is left in the chat. */
-export const fitsLateReply = (text: unknown): boolean => clean(text, MAX_LATE_REPLY + 1).trim().length <= MAX_LATE_REPLY;
 function fillReply(book: Book, turn: Turn, reply: { id: string; text: string }, now: number): boolean {
-  const text = clean(reply.text, MAX_LATE_REPLY + 1).trim();
-  if (!text || text.length > MAX_LATE_REPLY || !reply.id || reply.id.length > 200 || lineUsed(book, reply.id)) return false;
+  const text = clean(reply.text, MAX_COPY).trim();
+  if (!text || !reply.id || reply.id.length > 200 || lineUsed(book, reply.id)) return false;
   turn.a = text;
   turn.aAt = now;
   turn.replyId = reply.id;
   return true;
 }
-/** The bot's reply to a line that went into a card before the reply came: it is filled into that turn (of a live card), and folds with the line. False: no such open late turn. */
-export function attachLateReply(book: Book, rid: string, reply: { id: string; text: string }, now: number): boolean {
+/** The bot's reply to a line that was copied into a card before the reply came: its copy is filled into that turn (of a live card). False: no such turn still without a reply. */
+export function attachReply(book: Book, rid: string, reply: { id: string; text: string }, now: number): boolean {
   for (const pin of book.pins) {
     const turn = pin.thread.find((candidate) => candidate.rid === rid);
     if (!turn) continue;
-    if (!turn.late || turn.a !== null || turn.moved || !fillReply(book, turn, reply, now)) return false;
+    if (turn.via !== "auto" || turn.a !== null || !fillReply(book, turn, reply, now)) return false;
     pin.updatedAt = now;
     return true;
   }
   return false;
 }
-/** The turn that should have answered a line sorted after its send ended with no reply (it failed, or was stopped): the line leaves the card and shows in the chat as it was sent, so the card does not keep a question nobody answers. False: no such open late turn (one that has its reply, or was taken back, stays). */
-export function releaseLate(book: Book, rid: string): boolean {
+function addFix(book: Book, text: string, from: string, now: number): void {
+  const line = oneLine(text, 30);
+  if (!line) return;
+  book.fixes = [...(book.fixes ?? []), { text: line, from, to: "chat" as const, at: now }].slice(-MAX_FIXES);
+}
+/**
+ * 從卡片移除: a copy (a line the app copied here, or a worker's report) leaves the card's thread. That is all: the chat has the original and is not touched. A line the app copied
+ * teaches the sorter (`fixes`: it did not belong there). What the user wrote into the card (`via` "at") is not a copy and stays. False: no such copy in a live card.
+ */
+export function dropCopy(book: Book, rid: string, now: number): boolean {
   for (const pin of book.pins) {
     const at = pin.thread.findIndex((candidate) => candidate.rid === rid);
     if (at < 0) continue;
     const turn = pin.thread[at]!;
-    if (!turn.late || turn.a !== null || turn.moved) return false;
+    if (turn.via === "at") return false;
     pin.thread.splice(at, 1);
+    if (turn.via === "worker" && turn.worker && turn.wkind && turn.a) pin.gone = [...(pin.gone ?? []), copyKey(turn.worker, turn.wkind, turn.a)].slice(-MAX_GONE);
+    if (turn.via === "auto") addFix(book, turn.q, pin.id, now);
     return true;
   }
   return false;
-}
-/** A `move` answer with no line left to move: its own turn in that card (no question), as `answerTurn` keeps an answer with nothing waiting. */
-export function keepAnswer(book: Book, id: string, answer: string, now: number): boolean {
-  const pin = isId(id) ? book.pins.find((candidate) => candidate.id === id) : undefined;
-  const text = clean(answer, MAX_A * 2).trim().slice(0, MAX_A);
-  if (!pin || !text) return false;
-  const turn = addTurn(pin, `a${now.toString(36)}-${pin.thread.length}`, "", now);
-  turn.a = text;
-  turn.aAt = now;
-  return true;
-}
-function addFix(book: Book, text: string, from: string, to: string, now: number): void {
-  const line = oneLine(text, 30);
-  if (!line) return;
-  book.fixes = [...(book.fixes ?? []), { text: line, from, to, at: now }].slice(-MAX_FIXES);
-}
-/** 移回聊天: the turn stays in the card's data (so the chat can show its answer) but leaves its thread. False: not an automatic turn of a live card, or already back. */
-export function moveBack(book: Book, rid: string, now: number): boolean {
-  const hit = findTurn(book, rid);
-  // a worker's report the bot's reply was folded for is taken back too (no guess of the bot's to correct: nothing is noted for it)
-  if (!hit || hit.removed || (hit.turn.via !== "auto" && !(hit.turn.via === "worker" && hit.turn.msgId)) || hit.turn.moved) return false;
-  hit.turn.moved = true;
-  hit.pin.updatedAt = now;
-  if (hit.turn.via === "auto") addFix(book, hit.turn.q, hit.pin.id, "chat", now);
-  return true;
-}
-/**
- * The bot's reply in the chat to a worker's report (or note) turn: its message is folded behind a one-line trace (the full words are in the card), `say` is
- * what it said. It goes with the newest report of one of `workers` not yet filed with a reply; false when there is none.
- */
-export function attachReply(book: Book, workers: string[], msgId: string, say: string, now: number): boolean {
-  if (!msgId || msgId.length > 200 || lineUsed(book, msgId)) return false;
-  let found: Turn | null = null;
-  for (const pin of book.pins) for (const turn of pin.thread) {
-    if (turn.via === "worker" && !turn.msgId && !turn.moved && turn.worker && workers.includes(turn.worker) && (!found || turn.aAt! >= found.aAt!)) found = turn;
-  }
-  if (!found) return false;
-  found.msgId = msgId;
-  const line = clean(say, MAX_A).trim();
-  if (line) found.say = line;
-  const pin = book.pins.find((candidate) => candidate.thread.includes(found!));
-  if (pin) pin.updatedAt = now;
-  return true;
-}
-/** 改到…: the turn, with its answer, goes to another live card. False: no such turn or card, the same card, or the turn is back in the chat. */
-export function moveTo(book: Book, rid: string, to: string, now: number): boolean {
-  const hit = findTurn(book, rid);
-  const target = isId(to) ? book.pins.find((candidate) => candidate.id === to) : undefined;
-  if (!hit || hit.removed || hit.turn.via !== "auto" || hit.turn.moved || !target || target === hit.pin) return false;
-  hit.pin.thread = hit.pin.thread.filter((turn) => turn !== hit.turn);
-  hit.turn.redirected = true;
-  target.thread.push(hit.turn);
-  target.thread.sort((a, b) => a.qAt - b.qAt);
-  if (target.thread.length > MAX_TURNS) {
-    const old = target.thread.findIndex((turn) => turn.a !== null && turn !== hit.turn);
-    target.thread.splice(old >= 0 ? old : 0, 1);
-  }
-  hit.pin.updatedAt = now;
-  target.updatedAt = now;
-  addFix(book, hit.turn.q, hit.pin.id, target.id, now);
-  return true;
-}
-
-/** What the chat draws for the lines the bot moved (`chat.decorate`): a one-line trace in place of the user's line, or, once moved back, the answer under it. */
-export interface TraceData { kind: "moved" | "back"; rid: string; pin: string; title: string; q: string; a?: string; by: "bot" | "user" | "app"; /** The line is the bot's reply to a worker's report that went into the card (q: the report's first line). */ worker?: true }
-export const MAX_TRACES = 120;
-export function tracesOf(book: Book): { key: string; fold?: string[]; after?: string; data: TraceData }[] {
-  const all: { pin: Pin; turn: Turn; live: boolean }[] = [];
-  for (const pin of book.pins) for (const turn of pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin, turn, live: true });
-  // a card taken down gives its lines back to the chat (its answers show there); 釘回 folds them again
-  // (a card merged into another has its turns there already)
-  for (const entry of book.removed) if (!entry.merged) for (const turn of entry.pin.thread) if ((turn.via === "auto" || turn.via === "worker") && turn.msgId) all.push({ pin: entry.pin, turn, live: false });
-  // a turn sorted after the send that is back in the chat (taken back, or its card taken down) draws nothing: its line and the bot's reply are real messages there and simply show again
-  const visible = all.filter(({ turn, live }) => !(turn.late && (turn.moved === true || !live)));
-  return visible.sort((a, b) => b.turn.qAt - a.turn.qAt).slice(0, MAX_TRACES).map(({ pin, turn, live }) => {
-    const back = turn.moved === true || !live;
-    const worker = turn.via === "worker";
-    const shown = worker ? turn.say ?? turn.a : turn.a;
-    const data: TraceData = {
-      kind: back ? "back" : "moved", rid: turn.rid, pin: pin.id, title: pin.title, q: worker ? firstLine(turn.a ?? "", 60) : oneLine(turn.q, 60), by: turn.redirected ? "user" : turn.late ? "app" : "bot",
-      ...(back && shown ? { a: clean(shown, 600) } : {}), ...(worker ? { worker: true as const } : {}),
-    };
-    return back ? { key: `mv-${turn.rid}`, after: turn.msgId!, data } : { key: `mv-${turn.rid}`, fold: turn.replyId ? [turn.msgId!, turn.replyId] : [turn.msgId!], data };
-  });
 }
 
 // ---- what the app only suggests (a new card, a merge): nothing happens until the user taps ----
@@ -972,7 +880,7 @@ export function viewOf(book: Book, now?: number): BookView {
     pins: pins.map((pin) => ({
       id: pin.id, title: pin.title, handle: pin.handle, origin: pin.origin, state: pin.state, status: pin.status, ...(pin.prev ? { prev: pin.prev } : {}), source: pin.source,
       ...(pin.step ? { step: pin.step } : {}), ...(pin.waitingSince !== undefined ? { waitingSince: pin.waitingSince } : {}),
-      unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread.filter((turn) => !turn.moved), updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
+      unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread, updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
       ...(isStale(pin) ? { stale: true as const } : {}), ...(pin.nudge ? { nudge: true as const } : {}),
     })),
     ...(now !== undefined && closedOf(book, now).length ? { closed: closedOf(book, now) } : {}),

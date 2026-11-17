@@ -1,11 +1,11 @@
 // botling.pin-area, the pure part of the line sorter (Phase 4c): what the small model is asked about a plain line of the user's, how its answer is
-// read, what the app does with it, and the settings that say which model sorts and how sure it must be. No Botling API, no process, no clock: pins.ts asks
+// read, what the app does with it, and the settings that say which model sorts and how sure it must be. An assign only COPIES the line (and the bot's reply) into the card: the chat keeps them. No Botling API, no process, no clock: pins.ts asks
 // (sorter-call.ts runs the model) and applies the decision. Rules and limits: ../DESIGN.md "4c".
 import { clean, isId, oneLine, MAX_TITLE, type Book, type Pin } from "./model";
 
 /** The model that sorts the lines unless the setting names another: small and fast (the user's send waits for it), and called with no tools. */
 export const DEFAULT_SORTER_MODEL = "claude-haiku-5-5";
-/** Below this the line stays in the chat, whatever the model said it was (the setting moves it between CONFIDENCE_MIN and CONFIDENCE_MAX). */
+/** Below this the line is not copied into any card, whatever the model said it was (the setting moves it between CONFIDENCE_MIN and CONFIDENCE_MAX). */
 export const CONFIDENCE = 0.75;
 export const CONFIDENCE_MIN = 0.5;
 export const CONFIDENCE_MAX = 0.99;
@@ -73,7 +73,7 @@ export const SYSTEM = [
   "new: the line starts a separate job that will take a while and fits no card; no card id.",
   "merge: the line shows that two cards are the same job; card = the one to keep, card2 = the one to fold into it.",
   "chat: anything else (general talk, small questions, thanks, a line that belongs to no card, or one you cannot place). When unsure, answer chat with low confidence.",
-  "confidence is how sure you are of the action you chose. \"corrected\" lists lines the user moved by hand (wasIn -> belongsIn, \"chat\" meaning no card): sort similar lines the way the user did.",
+  "confidence is how sure you are of the action you chose. \"corrected\" lists lines the user took out of a card by hand (notIn: that card): do not assign similar lines to it.",
 ].join("\n");
 
 /**
@@ -83,8 +83,8 @@ export const SYSTEM = [
 export function classifyPrompt(book: Book, recent: Recent[], line: string): string {
   const cards = book.pins.map((pin) => ({ id: pin.id, title: oneLine(pin.title, MAX_TITLE), state: pin.state, summary: oneLine(pin.status, 80) }));
   const lines = recent.slice(-RECENT_LINES).map((item) => ({ who: item.who, text: oneLine(item.text, RECENT_TEXT) })).filter((item) => item.text);
-  // what the user corrected lately (a line the app put in a card that belongs elsewhere): how this user sorts such lines
-  const corrected = (book.fixes ?? []).map((fix) => ({ text: fix.text, wasIn: fix.from, belongsIn: fix.to }));
+  // what the user corrected lately (a line the app copied into a card that the user took out again): how this user sorts such lines
+  const corrected = (book.fixes ?? []).map((fix) => ({ text: fix.text, notIn: fix.from }));
   return `Classify the new line.\n${JSON.stringify({ cards, recent: lines, ...(corrected.length ? { corrected } : {}), newLine: clean(line, LINE_TEXT).trim() })}`;
 }
 

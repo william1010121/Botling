@@ -650,132 +650,59 @@ describe("the @ rows of the main input box", () => {
 
 // ---- Phase 2 ----
 
-describe("where a line the bot moved went (the trace in the chat)", () => {
-  const data = (over: Partial<import("../src/model").TraceData> = {}): import("../src/model").TraceData => ({ kind: "moved", rid: "r1", pin: "p-0001", title: "Title p-0001", q: "部署好了嗎", by: "bot", ...over });
-  let root: HTMLElement;
-  beforeEach(() => {
-    root = document.createElement("div");
-    document.body.append(root);
-    ui.update("B1", view(pin("p-0001"), pin("p-0002", { title: "Docs", state: "wait" }), pin("p-0003", { title: "Old", state: "done" })));
-  });
-  const acts = () => [...root.querySelectorAll<HTMLButtonElement>(".pt-mv-act")];
-
-  it("is one line: where it went, 移回聊天 and 改到…; the title opens the card", () => {
-    ui.trace(root, data());
-    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("“部署好了嗎” → 放進「Title p-0001」的卡片");
-    expect(acts().map((button) => button.textContent)).toEqual(["移回聊天", "改到…"]);
-    root.querySelector<HTMLButtonElement>(".pt-mv-open")!.click();
-    expect(panel()).not.toBeNull();
-    expect(ui.isOpen("p-0001")).toBe(true);
-  });
-
-  it("says 你改到… when the user chose the card", () => {
-    ui.trace(root, data({ by: "user" }));
-    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("“部署好了嗎” → 你改到「Title p-0001」的卡片");
-  });
-
-  it("移回聊天 asks the program part once, however often it is tapped before the answer, and can be asked again after", async () => {
-    ui.trace(root, data());
-    acts()[0]!.click();
-    acts()[0]!.click();
-    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
-    await flush();
-    acts()[0]!.click();
-    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toHaveLength(2);
-  });
-
-  it("改到… lists the other cards of the chat (not this one), and a pick asks the program part to move it there", async () => {
-    ui.trace(root, data());
-    acts()[1]!.click();
-    expect(acts()[1]!.getAttribute("aria-expanded")).toBe("true");
-    const choices = [...root.querySelectorAll<HTMLButtonElement>(".pt-mv-alt")];
-    expect(choices.map((choice) => choice.textContent)).toEqual(["Docs", "Old"]);
-    choices[0]!.click();
-    choices[0]!.click();
-    expect(call.mock.calls.filter(([method]) => method === "moveTo")).toEqual([["moveTo", { botId: "B1", rid: "r1", to: "p-0002" }]]);
-    await flush();
-  });
-
-  it("a second tap on 改到… closes the list", () => {
-    ui.trace(root, data());
-    acts()[1]!.click();
-    acts()[1]!.click();
-    expect(root.querySelector(".pt-mv-alts")).toBeNull();
-  });
-
-  it("once moved back, it says so and keeps the bot's answer under the line, as text", () => {
-    ui.trace(root, data({ kind: "back", a: "還沒好 <img src=x onerror=\"window.pwned=1\">" }));
-    expect(root.querySelector(".pt-mv-text")!.textContent).toBe("已移回聊天");
-    expect(root.querySelector(".pt-mv-ans")!.textContent).toBe("bot：還沒好 <img src=x onerror=\"window.pwned=1\">");
-    expect(root.querySelector("img")).toBeNull();
-    expect(root.querySelector(".pt-mv-act")).toBeNull();
-    ui.trace(root, data({ kind: "back" }));
-    expect(root.querySelector(".pt-mv-ans")).toBeNull();
-  });
-
-  it("puts the user's words and a card's title in as text", () => {
-    ui.trace(root, data({ q: "<b>x</b>", title: "<i>t</i>" }));
-    expect(root.querySelector("b")).toBeNull();
-    expect(root.querySelector("i")).toBeNull();
-    expect(root.querySelector(".pt-mv-open")!.textContent).toContain("<b>x</b>");
-  });
-
-  it("a failed move shows why in the strip's line instead of failing silently", async () => {
-    failing.add("moveBack");
-    ui.trace(root, data());
-    acts()[0]!.click();
-    await flush();
-    expect(top.querySelector(".pt-toast-text")!.textContent).toContain("moveBack failed");
-  });
-});
-
-describe("a line the bot put into a card, in the card's thread", () => {
+describe("a line the app copied into a card, in the card's thread", () => {
   const turn = (over: Partial<import("../src/model").Turn> = {}) => ({ rid: "r1", q: "部署好了嗎", a: "還沒好", qAt: clock, postedAt: clock, seenAt: clock, aAt: clock, via: "auto" as const, msgId: "u1", ...over });
+  const drops = () => [...panel()!.querySelectorAll<HTMLButtonElement>(".pt-drop")];
 
-  it("says the bot put it here (or that you moved it here) instead of the sent / seen receipt, and has a 移回聊天 for it", async () => {
-    ui.update("B1", view(pin("p-0001", { thread: [turn(), turn({ rid: "r2", redirected: true }), { ...turn({ rid: "r3" }), via: "at" }] })));
+  it("says the app copied it here instead of the sent / seen receipt, and has 從卡片移除 for a copy only (not for what you wrote into the card)", async () => {
+    ui.update("B1", view(pin("p-0001", { thread: [turn(), { ...turn({ rid: "r3" }), via: "at" }] })));
     ui.open("p-0001");
     const receipts = [...panel()!.querySelectorAll(".pt-receipt")].map((node) => node.textContent!.split(" · ")[1]);
-    expect(receipts.filter((_, index) => index % 2 === 0)).toEqual(["bot 判斷放進這裡", "你改到這裡", "bot 已看到"]);
-    const backs = [...panel()!.querySelectorAll<HTMLButtonElement>(".pt-mv-act")];
-    expect(backs).toHaveLength(2);
-    backs[0]!.click();
-    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "r1" }]]);
+    expect(receipts.filter((_, index) => index % 2 === 0)).toEqual(["自動複製到這裡", "bot 已看到"]);
+    expect(drops().map((button) => button.textContent)).toEqual(["從卡片移除"]);
+    expect(drops()[0]!.title).toContain("聊天裡的訊息不變");
+    drops()[0]!.click();
+    drops()[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "dropCopy")).toEqual([["dropCopy", { botId: "B1", rid: "r1" }]]);
     await flush();
   });
 
-  it("a line the app moved after its send says it was put here automatically (not that the bot decided), and one whose reply stays in the chat says so", () => {
-    ui.update("B1", view(pin("p-0001", { thread: [turn({ rid: "r1", late: true, a: null, aAt: null }), turn({ rid: "r2", late: true, replyId: "b2" })] })));
+  it("a copy of a line with no copied reply says the reply is in the chat; nothing in the card says a line was moved, folded or taken out of the chat", () => {
+    ui.update("B1", view(pin("p-0001", { thread: [turn({ rid: "r1", a: null, aAt: null }), turn({ rid: "r2", replyId: "b2" })] })));
     ui.open("p-0001");
     const receipts = [...panel()!.querySelectorAll(".pt-me .pt-receipt")].map((node) => node.textContent!.split(" · ")[1]);
-    expect(receipts).toEqual(["自動放進這裡", "自動放進這裡"]);
-    expect(panel()!.textContent).not.toContain("bot 判斷");
+    expect(receipts).toEqual(["自動複製到這裡", "自動複製到這裡"]);
     expect([...panel()!.querySelectorAll(".pt-empty")].map((node) => node.textContent)).toEqual(["回覆在聊天裡"]);
+    expect(panel()!.textContent).not.toMatch(/移回|移進|放進|已移/);
+    expect(document.body.querySelector(".pt-mv, .pt-mv-act, .pt-mv-open")).toBeNull();
+  });
+
+  it("a failed 從卡片移除 shows why in the strip's line instead of failing silently, and can be tried again", async () => {
+    failing.add("dropCopy");
+    ui.update("B1", view(pin("p-0001", { thread: [turn()] })));
+    ui.open("p-0001");
+    drops()[0]!.click();
+    await flush();
+    expect(top.querySelector(".pt-toast-text")!.textContent).toContain("dropCopy failed");
+    drops()[0]!.click();
+    expect(call.mock.calls.filter(([method]) => method === "dropCopy")).toHaveLength(2);
+    await flush();
   });
 });
 
-describe("what a worker said, in the card's thread and as a trace in the chat", () => {
+describe("what a worker said, in the card's thread (a copy: the chat has the full report)", () => {
   const report = (over: Partial<import("../src/model").Turn> = {}) => ({ rid: "w1", q: "", a: "完整報告\n第二行", qAt: clock, postedAt: null, seenAt: null, aAt: clock, via: "worker" as const, worker: "t-1", wkind: "final" as const, ...over });
 
-  it("shows the whole report as the worker's own words (labelled by what it is), and a 移回聊天 only once the bot's reply was folded", async () => {
-    ui.update("B1", view(pin("p-0001", { thread: [report(), report({ rid: "w2", wkind: "question", a: "用 A 還是 B？" }), report({ rid: "w3", wkind: "failed", a: "壞了", msgId: "m1" })] })));
+  it("shows the whole report as the worker's own words (labelled by what it is), each with a 從卡片移除 for the card's copy", async () => {
+    ui.update("B1", view(pin("p-0001", { thread: [report(), report({ rid: "w2", wkind: "question", a: "用 A 還是 B？" }), report({ rid: "w3", wkind: "failed", a: "壞了" })] })));
     ui.open("p-0001");
     const bubbles = [...panel()!.querySelectorAll<HTMLElement>(".pt-worker")];
     expect(bubbles.map((node) => node.querySelector(".pt-bubble")!.textContent)).toEqual(["完整報告\n第二行", "用 A 還是 B？", "壞了"]);
     expect(bubbles.map((node) => node.querySelector(".pt-receipt")!.textContent!.split(" · ")[0])).toEqual(["worker 回報", "worker 提問", "worker 沒做完"]);
-    expect(bubbles.map((node) => node.querySelectorAll(".pt-mv-act").length)).toEqual([0, 0, 1]);
-    bubbles[2]!.querySelector<HTMLButtonElement>(".pt-mv-act")!.click();
-    expect(call.mock.calls.filter(([method]) => method === "moveBack")).toEqual([["moveBack", { botId: "B1", rid: "w3" }]]);
+    expect(bubbles.map((node) => node.querySelectorAll(".pt-drop").length)).toEqual([1, 1, 1]);
+    bubbles[2]!.querySelector<HTMLButtonElement>(".pt-drop")!.click();
+    expect(call.mock.calls.filter(([method]) => method === "dropCopy")).toEqual([["dropCopy", { botId: "B1", rid: "w3" }]]);
     await flush();
-  });
-
-  it("the trace of a worker's report says where the full words are, and offers only 移回聊天 (no other card to move it to)", () => {
-    const root = document.createElement("div");
-    document.body.append(root);
-    ui.update("B1", view(pin("p-0001"), pin("p-0002")));
-    ui.trace(root, { kind: "moved", rid: "w1", pin: "p-0001", title: "Title p-0001", q: "完整報告", by: "bot", worker: true });
-    expect(root.querySelector(".pt-mv-open")!.textContent).toBe("worker 回報「完整報告」→ 完整內容在「Title p-0001」的卡片");
-    expect([...root.querySelectorAll(".pt-mv-act")].map((node) => node.textContent)).toEqual(["移回聊天"]);
   });
 });
 
