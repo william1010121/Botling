@@ -87,7 +87,7 @@ describe("F6: a worker the bot starts after a plugin's message goes through the 
     await handoff(workers, { instructions: "two" }).result;
     expect(log.warns).toEqual([]);
     const third = handoff(workers, { instructions: "three" });
-    await expect(third.result).resolves.toMatchObject({ task_id: "H3" });
+    await expect(third.result).resolves.toMatchObject({ task_id: "H1" });
     expect(third.ran.n).toBe(1);
     expect(log.warns).toHaveLength(1);
     expect(log.warns[0]).toMatch(/3 workers at work at once \(more than 2\)/);

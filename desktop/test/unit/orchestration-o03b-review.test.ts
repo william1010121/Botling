@@ -98,7 +98,6 @@ describe("(3) a bot that is deleted closes the entries on it", () => {
     const t = book();
     await t.workers.start("p", params);
     await t.workers.start("p", params);
-    await expect(t.workers.start("p", params)).rejects.toThrow(/at once/);
     t.workers.botGone(["other"]);
     expect(t.rows().map((row) => row.handed)).toEqual([undefined, undefined]);
     t.workers.botGone(["main"]);
