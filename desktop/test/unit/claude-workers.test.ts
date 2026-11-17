@@ -724,6 +724,44 @@ describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the
     expect(h.reports[0]!.text).toContain("Monitor started; the log shows nothing yet.");
   });
 
+  it("the report goes out after the grace when the Monitor's wake turn never starts, once", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      await wait(10);
+      expect(h.reports).toEqual([]);
+      await wait(80);
+      expect(h.reports.map((r) => r.run)).toEqual([1]);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      // A result that comes after the run ended is nobody's report.
+      h.result(head, "Late wake turn.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a wake turn that outlasts the grace is not cut off: its result ends the run with both turns' words", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      h.say(head, { kind: "toolUse", id: "t1", tool: "Bash", title: "Bash", detail: "tail", parent: null, input: {} });
+      await wait(150); // several graces, the turn is still at work
+      expect(h.reports).toEqual([]);
+      h.result(head, "The deploy finished: ok.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
   it("a steer while the Monitor runs goes into the run as usual", async () => {
     const { h, task_id, head } = await open();
     h.say(head, used); h.say(head, started);

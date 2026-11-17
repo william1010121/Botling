@@ -224,7 +224,7 @@ interface Proc {
    * and the Monitor's wake turn goes on in the same run. The run ends with its next report once no Monitor lives, or when
    * the Monitor runs past its 50-minute cap, or its process ends.
    */
-  monitorHold?: { result: Extract<StreamItem, { kind: "result" }>; timer?: ReturnType<typeof setTimeout> };
+  monitorHold?: { result: Extract<StreamItem, { kind: "result" }>; timer?: ReturnType<typeof setTimeout>; /** A turn is under way since that report (the Monitor's wake turn, or a steered one): its result ends the run, not the timer. */ turn?: boolean };
   /** Its head once the app closed its input (`finish`): nothing more can be written to it; it ends after its background work. */
   finishing?: ClaudeWorkerHead;
   finishingSince?: number;
@@ -252,8 +252,8 @@ function clearApiRetry(proc: Proc) {
 const BACKGROUND_HOLDS_MS = 6 * 3600_000;
 /** A Monitor holds its worker's report back no longer than the background cap (background-cap.ts) and a minute. */
 const MONITOR_HOLD_MS = BACKGROUND_WAIT_CAP_MS + 60_000;
-/** After its last Monitor ended, the model is woken by it: the report waits this long for that turn's result. */
-const MONITOR_WAKE_GRACE_MS = 30_000;
+/** After its last Monitor ended, the model is woken by it: the report waits this long for that turn to start (BOTLING_MONITOR_GRACE_MS: tests). */
+const monitorWakeGraceMs = () => { const ms = Number(process.env.BOTLING_MONITOR_GRACE_MS); return Number.isFinite(ms) && ms > 0 ? ms : 30_000; };
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
 export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "rules" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters" | "extraDirs" | "siteToolsFolder" | "browser" | "remote" | "defaultMachine" | "shotCommand">;
@@ -450,6 +450,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.apiRetries = 0;
     const hold = proc.monitorHold ?? (proc.monitorHold = { result });
     hold.result = result;
+    hold.turn = false;
     this.monitorChanged(proc);
   }
 
@@ -457,17 +458,25 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private monitorChanged(proc: Proc) {
     const hold = proc.monitorHold, run = proc.run;
     if (!hold || !run) return;
-    if (hold.timer) clearTimeout(hold.timer);
     const live = this.liveMonitors(proc)[0];
     // A Monitor lives: its row says so, and the report goes out at the latest when the cap runs out. None lives: the
-    // Monitor's wake turn is on its way; if its result never comes, the report goes out after the grace.
-    const wait = live ? Math.max(0, live.since + MONITOR_HOLD_MS - Date.now()) : MONITOR_WAKE_GRACE_MS;
+    // Monitor's wake turn is on its way; if it never starts, the report goes out after the grace.
+    this.armHold(proc, run, live ? Math.max(0, live.since + MONITOR_HOLD_MS - Date.now()) : monitorWakeGraceMs());
+    run.emit({ type: "waitingOn", on: live ? { kind: "monitorRunning", title: live.title, since: live.since, queued: 0 } : null });
+  }
+
+  /** The held report goes out when `wait` is over, unless a turn is under way by then: that turn's own result ends the run. */
+  private armHold(proc: Proc, run: RunHandle, wait: number) {
+    const hold = proc.monitorHold;
+    if (!hold) return;
+    if (hold.timer) clearTimeout(hold.timer);
     hold.timer = setTimeout(() => {
-      if (proc.run !== run || !proc.monitorHold) return;
-      this.end(proc, run, proc.monitorHold.result, true);
+      const held = proc.monitorHold;
+      if (proc.run !== run || !held) return;
+      if (held.turn && proc.head?.running && !this.closed) { this.armHold(proc, run, monitorWakeGraceMs()); return; }
+      this.end(proc, run, held.result, true);
     }, wait);
     hold.timer.unref?.();
-    run.emit({ type: "waitingOn", on: live ? { kind: "monitorRunning", title: live.title, since: live.since, queued: 0 } : null });
   }
 
   /** What a held run waits for: the background work its finishing process still runs (the oldest first), else its end. */
@@ -509,6 +518,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
         if (gone?.kind === "monitor") this.monitorChanged(proc);
       }
     }
+    // A turn begins while a report waits for a Monitor (its wake turn): its result, not a timer, ends the run.
+    if (proc.monitorHold && (item.kind === "init" || item.kind === "delta" || item.kind === "textBlock" || item.kind === "assistantText" || item.kind === "toolUse" || item.kind === "toolResult")) proc.monitorHold.turn = true;
     const run = proc.run;
     if (item.kind === "init") {
       // Its session exists now (later runs resume it); claude may name it differently.
