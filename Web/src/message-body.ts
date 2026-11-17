@@ -8,7 +8,7 @@ import type { ComponentAnswer } from "./components";
 import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
 import { avatar, cubeIcon, extensions, messageMenu, openReportBox, quickIcon } from "./messages";
 import { newComponentText } from "./regather";
-import { chevron, liveElement, stepsElement } from "./steps";
+import { chevron as stepsChevron, liveElement, stepsElement } from "./steps";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, StepView, WorkerCardView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
@@ -262,7 +262,7 @@ function cardNotes(cardID: string, build: () => HTMLElement): HTMLElement {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "steps-toggle";
-  toggle.innerHTML = `${chevron}<span></span>`;
+  toggle.innerHTML = `${stepsChevron}<span></span>`;
   const label = toggle.querySelector("span")!;
   let body: HTMLElement | null = null;
   const setOpen = (open: boolean) => {
