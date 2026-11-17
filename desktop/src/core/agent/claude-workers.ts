@@ -28,6 +28,7 @@ import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import { commandEnded, type StreamItem } from "./stream";
 import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
+import { CLAUDE_MODEL_HINT, isClaudeModel } from "../../contract/claude-model";
 import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
 import { ADMITTED, PLUGIN_STARTED } from "../orchestration/plugin-workers";
@@ -94,7 +95,6 @@ export interface AgentDefinition {
 
 /** Types Claude Code has built in (no file): a plain worker. */
 const BUILT_IN_TYPES = new Set(["general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide"]);
-const MODEL_ALIASES = new Set(["haiku", "sonnet", "opus"]);
 /** The levels Claude's `--effort` takes (the composer's and Settings' own list). */
 const CLAUDE_EFFORTS = EFFORTS_BY_ENGINE.claude;
 /** `value` as a Claude effort level; null: none, or one Claude does not take. */
@@ -125,7 +125,7 @@ export function loadAgentDefinition(type: string | null | undefined, cwd: string
       if (key in fields) return { error: `The agent definition ${file} sets ${key}, which an app-managed worker cannot reproduce. Nothing was started; no other worker was substituted.` };
     }
     const model = fields.model && fields.model !== "inherit" ? fields.model : null;
-    if (model && !MODEL_ALIASES.has(model) && !/^claude-[a-z0-9.-]+$/.test(model)) return { error: `The agent definition ${file} names an unknown model "${model}". Nothing was started.` };
+    if (model && !isClaudeModel(model)) return { error: `The agent definition ${file} names an unknown model "${model}". Nothing was started.` };
     const tools = fields.tools ? fields.tools.split(",").map((tool) => tool.trim()).filter(Boolean) : null;
     const wantedEffort = fields.effort && fields.effort !== "inherit" ? fields.effort : null;
     const effort = claudeEffort(wantedEffort);
@@ -272,7 +272,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   prepare(request: HandoffRequest) {
     const definition = this.definition(request.type);
     if (definition && "error" in definition) throw new Error(definition.error);
-    if (request.model && !MODEL_ALIASES.has(request.model) && !/^claude-[a-z0-9.-]+$/.test(request.model)) throw new Error(`Unknown model "${request.model}": use haiku, sonnet or opus.`);
+    if (request.model && !isClaudeModel(request.model)) throw new Error(`Unknown model "${request.model}": ${CLAUDE_MODEL_HINT}.`);
     // An effort Claude does not take is not used (the worker runs at the one it would have had); the handoff says so.
     const wanted = typeof request.args.effort === "string" && request.args.effort.trim() ? request.args.effort.trim() : null;
     const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);

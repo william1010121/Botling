@@ -12,9 +12,11 @@ import { normalizeOverrides } from "../contract/shortcuts";
 import { savedLanguage } from "./prompts";
 import { changeEngineDefaults, EFFORTS_BY_ENGINE, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
 import { specWriters } from "./spec-guard";
+import { claudeModelOrNull } from "../contract/claude-model";
 
 export const LANGUAGES = ["en", "zh-Hant"] as const;
-export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
+/** The component editor's model when none (or a value that is not a Claude model) is saved. */
+export const DEFAULT_COMPONENT_EDITOR_MODEL = "sonnet";
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const RESULT_PUBLISHING = ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const;
 export const STALL_CHOICES = [5, 10, 15, 30, 60, 0];
@@ -58,7 +60,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     appTheme: oneOf(["dark", "light", "system"] as const, raw.appTheme) ?? "dark",
     // Report pages follow the app's look unless one is chosen (an old "dark" chosen before this was left out: it follows the app, dark by default).
     reportTheme: oneOf(["dark", "light", "system"] as const, raw.reportTheme) ?? "system",
-    subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
+    subagentModel: claudeModelOrNull(raw.subagentModelDefault),
     subagentEffort: oneOf(EFFORTS_BY_ENGINE.claude, raw.subagentEffortDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
     claudeWorkerLimit: claudeWorkerLimit(raw),
@@ -71,7 +73,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     agyWorkerModel: text(raw.agyWorkerModelDefault)?.trim().slice(0, 200) ?? null,
     agyWorkerEffort: oneOf(EFFORTS_BY_ENGINE.agy, raw.agyWorkerEffortDefault),
     specWriters: specWriters(raw).slice(0, 50).map((writer) => writer.slice(0, 200)),
-    componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
+    componentEditorModel: claudeModelOrNull(raw.componentEditorModel) ?? DEFAULT_COMPONENT_EDITOR_MODEL,
     engineDefaults: engineDefaultsFor(raw),
     resultPublishing: oneOf(RESULT_PUBLISHING, raw.resultPublishingChoice) ?? "artifactUnlessSensitive",
     stallReminderMinutes: stall !== null && stall >= 0 ? stall : 15,

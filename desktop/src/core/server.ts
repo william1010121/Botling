@@ -19,7 +19,8 @@ import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { PendingFiles, writeIncoming } from "./attachments";
-import { moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { DEFAULT_COMPONENT_EDITOR_MODEL, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { claudeModelOrNull } from "../contract/claude-model";
 import { botName, MemoryFiles } from "./projects";
 import { ContractError, PROTOCOL_VERSION, type ResultOf } from "../contract";
 import { AgentRegistry, isDetached } from "./agent-registry";
@@ -214,7 +215,7 @@ export class Core {
     // After the import (1.x's settings and library), before the component library first looks: a preview card
     // an app wrote there and nobody edited goes, so botling.cards' shows.
     const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
-    const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet", options.plugins?.builtIns ?? null);
+    const { editedEditor } = prepareLibrary(options.dataDir, claudeModelOrNull(editorModel) ?? DEFAULT_COMPONENT_EDITOR_MODEL, options.plugins?.builtIns ?? null);
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
     // The component library: <data>/plugins/ccb-components/components first, then other plugins' components/,
     // then the built-in plugins' (botling.cards: the web preview card), so a copy in the library wins.

@@ -8,7 +8,7 @@ import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsVie
 import type { Client } from "./client";
 import { useModelDiscovery } from "./ModelPicker";
 import { workerLimitWords } from "./worker-limit-text";
-import { CLAUDE_MODELS, EFFORTS, EffortControl, Group, ModelSelect, Row, SelectSetting, Toggle, why } from "./settings-controls";
+import { CLAUDE_MODELS, claudeCustom, EFFORTS, EffortControl, Group, ModelSelect, Row, SelectSetting, Toggle, why } from "./settings-controls";
 import { choiceLabel, defaultsChange, ENGINE_NAMES, ownChoices, tokensLabel, type EngineId } from "./bot-defaults";
 import { SummaryModelRow, type CodexModelOption } from "./chat-summaries";
 import type { SettingsSection } from "./settings-pages";
@@ -16,17 +16,22 @@ import type { SettingsSection } from "./settings-pages";
 type Change = (next: SettingsChange) => Promise<boolean>;
 const WORKER_LIMITS = Array.from({ length: 16 }, (_, i) => i + 1);
 
-/** The model guide: relative cost, speed and what each Claude model is good for. */
+/**
+ * The model guide: relative cost, speed and what each Claude family is good for. It names the family (the alias
+ * always points at the newest model of it), never a version, so it does not go stale when a model is released.
+ */
 export const CLAUDE_GUIDE = [
   { id: "haiku", name: "Haiku", detail: "haiku", cost: "$", speed: "fastest", good: "Quick lookups, small edits, summaries." },
   { id: "sonnet", name: "Sonnet", detail: "sonnet", cost: "$$", speed: "fast", good: "Everyday coding and research. A good worker choice." },
-  { id: "opus", name: "Opus", detail: "opus · Claude Opus 5.5", cost: "$$$", speed: "slower", good: "Hard problems and planning. Native 1M window, same price as opus[1m]." },
+  { id: "opus", name: "Opus", detail: "opus", cost: "$$$", speed: "slower", good: "Hard problems and planning. The strongest family, at the highest cost." },
 ] as const;
 const CLAUDE_HINT: Record<string, string> = {
   haiku: "Claude Haiku · fastest, lowest cost",
   sonnet: "Claude Sonnet · fast, a good balance of cost and strength",
-  opus: "Claude Opus 5.5 · 1M-token window · strongest, highest cost",
+  opus: "Claude Opus · strongest, highest cost",
 };
+/** The hint under a Claude model: the family's own for an alias, a generic line for a full id (it names its own model). */
+export const claudeHint = (model: string): string => (Object.hasOwn(CLAUDE_HINT, model) ? CLAUDE_HINT[model]! : `${model} · a specific Claude model, as named`);
 const WHEN: Record<EngineId, string> = {
   claude: "Head: next wake · Workers: next one that starts",
   codex: "Both: when a Codex head next wakes",
@@ -76,7 +81,7 @@ export function ModelsWorkers({ client, settings, change, bots, modelBotId, code
       <Group title="Special jobs">
         <SummaryModelRow client={client} plugins={plugins} codexModels={codexModels} modelBotId={modelBotId} onProblem={onProblem} onOptions={() => onNavigate("chat")} />
         <Row label="Component editor" hint="The maintainer’s plugin editor. Applies when the app next starts.">
-          <SelectSetting label="Component editor's model" options={CLAUDE_MODELS} value={settings.componentEditorModel} onChange={(value) => { if (value) void change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
+          <SelectSetting label="Component editor's model" options={CLAUDE_MODELS} custom={claudeCustom} value={settings.componentEditorModel} onChange={(value) => { if (value) void change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
         </Row>
         <Row label="May change spec/" hint="Workers on other models can read spec/ but not write it. From settings.json (specWriters).">
           <span className="mw-chips">{(settings.specWriters ?? ["opus"]).map((writer) => <span key={writer} className="settings-tag">{writer}</span>)}</span>
@@ -116,10 +121,10 @@ function ClaudeTable({ settings, change, discovery }: { settings: SettingsView; 
   return (
     <Table label="Claude" rows={[
       { label: "Model",
-        head: <><ModelSelect label="Claude head model" blank="Claude default" options={CLAUDE_MODELS} discovery={discovery} value={head} onChange={(model) => void change({ key: "defaultEngineModel", value: { engine: "claude", model } })} />
-          <Hint>{head ? CLAUDE_HINT[head] ?? head : "The model your Claude Code account uses by default."}</Hint></>,
-        workers: <><SelectSetting label="Claude workers model" blank={`Same as head (${headName})`} options={CLAUDE_MODELS} value={settings.subagentModel} onChange={(value) => void change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
-          <Hint>{settings.subagentModel ? CLAUDE_HINT[settings.subagentModel] : "Pick Sonnet to make routine work cheaper and faster."}</Hint></> },
+        head: <><ModelSelect label="Claude head model" blank="Claude default" options={CLAUDE_MODELS} custom={claudeCustom} discovery={discovery} value={head} onChange={(model) => void change({ key: "defaultEngineModel", value: { engine: "claude", model } })} />
+          <Hint>{head ? claudeHint(head) : "The model your Claude Code account uses by default."}</Hint></>,
+        workers: <><SelectSetting label="Claude workers model" blank={`Same as head (${headName})`} options={CLAUDE_MODELS} custom={claudeCustom} value={settings.subagentModel} onChange={(value) => void change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
+          <Hint>{settings.subagentModel ? claudeHint(settings.subagentModel) : "Pick Sonnet to make routine work cheaper and faster."}</Hint></> },
       { label: "Effort",
         head: <><EffortControl label="Claude head effort" engine="claude" blank="Default" value={defaults.efforts.claude} onChange={(effort) => void change({ key: "defaultEffort", value: { engine: "claude", effort } })} />
           <Hint>{defaults.efforts.claude ? `${effortName(defaults.efforts.claude)} · ${defaults.efforts.claude === "low" ? "answers quickly" : "thinks carefully before answering"}` : "Claude Code’s own default"}</Hint></>,

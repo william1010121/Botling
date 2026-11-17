@@ -13,6 +13,7 @@ import type { RecoverResult, RunHandle, WorkerAdapter, WorkerLedgerRecord } from
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import { ClaudeHead, type HeadConfig } from "./head";
+import { isClaudeModel } from "../../contract/claude-model";
 import type { StreamItem } from "./stream";
 
 export type ComponentEditorRoute = { launch: HeadConfig; error?: never } | { error: string; launch?: never };
@@ -42,7 +43,7 @@ export function maintainerEditorBinding(owner: BotProfile, root: string, headCon
     }
     const role = match?.[2].trim();
     if (fields.name !== "component-editor" || !role) return { error: `Invalid component-editor definition at ${file}. No generic worker was substituted.` };
-    if (!["haiku", "sonnet", "opus"].includes(fields.model)) return { error: "The component-editor definition has no supported explicit Claude model. No model or settings were substituted." };
+    if (!isClaudeModel(fields.model)) return { error: "The component-editor definition has no supported explicit Claude model. No model or settings were substituted." };
     const tools = (fields.tools ?? "").split(",").map(tool => tool.trim()).filter(Boolean);
     if (!tools.length || tools.some(tool => !["Read", "Write", "Edit", "Bash"].includes(tool))) return { error: "The component-editor definition requests tools outside its existing Read/Write/Edit/Bash boundary; no tools or settings were changed." };
     return { launch: {

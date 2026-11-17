@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isClaudeModel } from "./claude-model";
 import { ContractId } from "./editor-card";
 import { AnswerTarget, BotId, DelegationRowView, Engine, StepView, SubagentRowView } from "./views";
 
@@ -150,9 +151,10 @@ export type ChatDecoration = z.infer<typeof ChatDecoration>;
 // ---------------------------------------------------------------------------------------------
 // Settings (settings.json, 1.x's AppSettings keys; per-bot choices in bot.json)
 
-const BotModel = z.enum(["haiku", "sonnet", "opus"]);
+/** A Claude model: an alias (haiku, sonnet, opus) or any full `claude-*` id (src/contract/claude-model.ts). */
+const BotModel = z.string().refine(isClaudeModel, { message: "not a Claude model (haiku, sonnet, opus or claude-…)" });
 export const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
-export const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
+export const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/\[\]-]+$/);
 /** A bot's settled face colour: #RRGGBB and the avatar shape it was settled on. */
 export const HeldBotColor = z.strictObject({ avatar: z.string().max(40), color: z.string().regex(/^#[0-9A-Fa-f]{6}$/) });
 export const SettingsView = z.strictObject({
