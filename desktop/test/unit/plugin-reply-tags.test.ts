@@ -98,6 +98,25 @@ describe("a plugin's tag in a reply", () => {
     expect(parsed).toMatchObject({ body: "Done.", pluginTags: [{ tag: "whiteboard", attributes: { name: "status", size: "2x1" }, body: '{"ok":true}' }] });
   });
 
+  it("<pin-say> leaves only its markup: its words stay in the reply as plain text and the plugin still gets the tag (a card's answer is copied, the chat keeps it); no other tag does that", () => {
+    const parsed = parseReply('Intro. <pin-say id="p-0001">好了，**已完成**。</pin-say> End. <deploy-status env="prod">{"ok":true}</deploy-status>', ["pin-say", "deploy-status"]);
+    expect(parsed.body).toBe("Intro. 好了，**已完成**。 End.");
+    expect(parsed.pluginTags).toEqual([
+      { tag: "pin-say", attributes: { id: "p-0001" }, body: "好了，**已完成**。" },
+      { tag: "deploy-status", attributes: { env: "prod" }, body: '{"ok":true}' },
+    ]);
+    // a reply that is only a pin-say says something now (the chat shows the answer); an empty one, or one in code, is as before
+    expect(parseReply('<pin-say id="p-0001">好</pin-say>', ["pin-say"]).body).toBe("好");
+    expect(parseReply('<pin-say id="p-0001"/>', ["pin-say"])).toMatchObject({ body: "", pluginTags: [{ tag: "pin-say", body: "" }] });
+    expect(parseReply('`<pin-say id="p-0001">x</pin-say>`', ["pin-say"]).pluginTags).toBeUndefined();
+    // a tag the answer carries inside is still read; code inside it stays an example
+    expect(parseReply('<pin-say id="p-0001">選一個\n<choices>\n- A\n- B\n</choices> `<no-reply/>`</pin-say>', ["pin-say"])).toMatchObject({ body: "選一個\n `<no-reply/>`", choices: [{ label: "A" }, { label: "B" }] });
+    // while it streams: held back until it is closed, then its words show
+    setPluginTags(["pin-say"]);
+    expect(streamingText('Go <pin-say id="p-0001">half an ans')).toBe("Go");
+    expect(streamingText('Go <pin-say id="p-0001">whole</pin-say>')).toBe("Go whole");
+  });
+
   it("is held back while it streams, like the core's tags", () => {
     setPluginTags(["deploy-status"]);
     expect(pluginTagNames()).toEqual(["deploy-status"]);

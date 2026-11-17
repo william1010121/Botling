@@ -96,6 +96,11 @@ const tagName = (tag: string) => /^[a-z][a-z0-9-]{0,39}$/.test(tag);
 export function setPluginTags(tags: readonly string[]) { declaredTags = [...new Set(tags)].filter(tagName); }
 export const pluginTagNames = (): readonly string[] => declaredTags;
 const declaredTag = (tags: readonly string[]) => new RegExp(`<(${tags.join("|")})((?:\\s+[A-Za-z-]+(?:\\s*=\\s*(?:"[^"]*"|'[^']*'))?)*)\\s*(?:\\/>|>\\s*([\\s\\S]*?)\\s*<\\/\\1>)`, "g");
+/**
+ * Plugin tags whose body is also meant for the chat: only the tag itself leaves the reply, its words stay as plain text (`<pin-say>` of botling.pin-area: a card's
+ * answer is copied into the card, the chat keeps it). Every other plugin tag leaves the reply whole.
+ */
+export const BODY_STAYS_TAGS: readonly string[] = ["pin-say"];
 /** The most of a plugin tag's body handed on. */
 export const PLUGIN_TAG_BODY_MAX = 100_000;
 const attributeTag = () => /([A-Za-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
@@ -209,8 +214,11 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   const pluginTags: PluginTag[] = [];
   const own = tags.filter(tagName);
   if (own.length) for (const hit of hits(declaredTag(own), mask).reverse()) {
-    pluginTags.unshift({ tag: group(text, hit, 0), attributes: attributes(group(text, hit, 1)), body: group(text, hit, 2).slice(0, PLUGIN_TAG_BODY_MAX) });
-    replace(hit.index, hit.length, "");
+    const [name, body] = [group(text, hit, 0), group(text, hit, 2)];
+    pluginTags.unshift({ tag: name, attributes: attributes(group(text, hit, 1)), body: body.slice(0, PLUGIN_TAG_BODY_MAX) });
+    // A tag of `BODY_STAYS_TAGS` leaves only its markup: its words stay in the reply, where the chat shows them (the plugin gets a copy).
+    if (BODY_STAYS_TAGS.includes(name) && body) replace(hit.index, hit.length, body, masked(body));
+    else replace(hit.index, hit.length, "");
   }
 
   const reactions: ReactionAction[] = [];

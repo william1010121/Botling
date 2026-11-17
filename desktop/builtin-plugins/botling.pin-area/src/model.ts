@@ -599,7 +599,7 @@ export function route(book: Book, text: string): { pin: Pin; rest: string } | nu
 }
 
 /** The footer every routed message ends with: how the bot answers (the web part shows the bubble without it, so its words are fixed here). */
-export const footer = (id: string): string => `（Pin 卡片：回覆請用 <pin-say id="${id}">…</pin-say>，會放進這張卡的對話串，不會顯示在聊天裡。）`;
+export const footer = (id: string): string => `（Pin 卡片：請用 <pin-say id="${id}">…</pin-say> 包住你的回答；回答照常顯示在聊天裡，並複製一份到這張卡的對話串。）`;
 /** What the bot gets for a message written into a card. */
 export function askText(pin: Pin, text: string): string {
   return `〔Pin ${pin.id} · ${pin.title}〕\n${text}\n\n${footer(pin.id)}`;

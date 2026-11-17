@@ -6,8 +6,9 @@
 > **v8 (cards copy, they never take).** The user's decision (2026-11-17): 「主對話保留全部，卡片只放副本」. A card only ORGANISES messages: nothing the app or a bot files into a card
 > leaves the chat. A plain line the sorter assigns, the bot's reply to it and a bound worker's report stay in the chat in full, exactly as if there were no card; the card holds a
 > **copy**. There is no fold, no one-line trace in the chat, no 「移回聊天」 / 「改到…」 and no `chat.decorate` / `ccb.decorations` use (the plugin draws nothing into the chat's message list). The only undo is **從卡片移除** on a copy in the card (`dropCopy`): it removes the copy from the card and touches nothing in the chat. The head bot's
-> `<pin-say move="yes">` is gone (the core takes a `pin-say` body out of the chat, so it could not be a copy); a bot decides nothing about what goes where, the sorter (code) copies.
-> The one place a card still holds words the chat does not is the explicit conversation the user started: `@card words` / the 回覆到 chip, answered with `<pin-say>` (see "Flows"): the user chose that.
+> `<pin-say move="yes">` is gone (it was a way to take an answer out of the chat); a bot decides nothing about what goes where, the sorter (code) copies.
+> The explicit conversation the user starts (`@card words` / the 回覆到 chip) is a copy too: the user's line is in the chat as always, and the bot's `<pin-say>` answer is shown in the chat as a normal reply
+> (the core's `parseReply` takes only the tag's markup out, `BODY_STAYS_TAGS` in `src/core/reply.ts`) while the card's thread gets a copy. Nothing in a card is something the chat does not have.
 > Books of an older version: a turn the user had taken "back to the chat" is dropped on reading; the `msgId` / `say` a fold needed are no longer read.
 
 Phase 1 of the Pin area: a strip of cards above the chat, a floating panel per card, `@card` routing. Phases 2 and 3 are built on
@@ -58,12 +59,12 @@ The page draws `viewOf(book)` (order wait, run, done), published with `chat.setD
   not done) with the line 「…看過了，已取消釘選」 and 釘回.
 - **`@card words`** (main input box or the card's own box): both end in `beforeSend`. `route()` finds `@handle` / `@p-0001` at the start
   of the text in *that chat's* book, writes the words into the thread as an open turn, and returns the text the bot gets:
-  `〔Pin p-0001 · title〕\nwords\n\n（Pin 卡片：回覆請用 <pin-say id="p-0001">…</pin-say>，…）`. The user's bubble shows `@title words`
+  `〔Pin p-0001 · title〕\nwords\n\n（Pin 卡片：請用 <pin-say id="p-0001">…</pin-say> 包住你的回答；回答照常顯示在聊天裡，並複製一份到這張卡…）`. The user's bubble shows `@title words`
   (`userText` reads the header back with `parseAsk`). One path, so nothing is sent twice; the same words to the same card within 3 s
   are dropped (`false`).
 - **The answer** is matched back by `<pin-say id>`: to that card's oldest unanswered question whose line is in the chat (two
-  questions before an answer each get theirs); with nothing waiting it is a turn of its own (the core has already taken it out of the
-  chat, so it is never dropped). A turn that used `<pin-say>` leaves the rest of its reply to the chat. With no tag, the one card with an open turn whose line was in the chat before the
+  questions before an answer each get theirs); with nothing waiting it is a turn of its own (the chat shows the answer as it shows every reply; the card keeps a copy). A turn that used `<pin-say>` is
+  the card's: the rest of its reply is the chat's, and the tag's words are in the chat too. With no tag, the one card with an open turn whose line was in the chat before the
   bot's turn began takes the plain reply; with two waiting nothing is guessed. Receipts: 已送出 (written) → bot 已看到 (`turnStarted`
   after `messagePosted` showed the line).
 - A routed message that never reached the chat (stopped by another plugin) is forgotten after 2 minutes, so it cannot hold an answer.
