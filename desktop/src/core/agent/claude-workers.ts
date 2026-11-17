@@ -29,7 +29,7 @@ import { commandEnded, type StreamItem } from "./stream";
 import type { WaitingOn } from "../worker-core/events";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import { CLAUDE_MODEL_HINT, isClaudeModel } from "../../contract/claude-model";
-import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
+import { WORKER_NOTIFY_RULE, shotWorkerRule } from "../prompts/delegation";
 import { DEFAULT_ORCHESTRATION_RULES, type OrchestrationRules } from "../orchestration/default-rules";
 import { ADMITTED, PLUGIN_STARTED } from "../orchestration/plugin-workers";
 import { API_RETRY_NOTE, apiGaveUpText, apiRetryDelays, apiRetryText } from "../api-retry";
@@ -73,7 +73,7 @@ export const CLAUDE_AGENT_GUARD = "Native subagents are off in Botling: the app 
 export const CLAUDE_WORKER_GUARD = "You are an app-managed worker: you cannot start subagents or workers. Do this part yourself, or say in your report what should be handed to someone else.";
 
 /** What a worker is told about itself, before any agent definition's own prompt. */
-export const claudeWorkerPolicy = (rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES): string => [
+export const claudeWorkerPolicy = (rules: OrchestrationRules = DEFAULT_ORCHESTRATION_RULES, shotCommand: string | null = null): string => [
   "You are an app-managed worker in Botling, started by a coordinator bot. Do the task in your instructions yourself: read, research, edit, build and run meaningful tests as needed, within the user's existing permissions.",
   "You cannot start subagents or workers, and you do not talk to the user: the app hands your final message of each run to the coordinator as your report.",
   "End every run with a concise report: what you did, the evidence (commands and their results, files changed), and anything left, blocked or needing a decision. Name files and folders by their full absolute paths, so the coordinator can link them.",
@@ -81,6 +81,7 @@ export const claudeWorkerPolicy = (rules: OrchestrationRules = DEFAULT_ORCHESTRA
   "Messages that arrive later come from the coordinator and continue the same task.",
   WORKER_NOTIFY_RULE,
   rules.workerRules().lookup.text,
+  ...(shotCommand ? [shotWorkerRule(shotCommand)] : []),
 ].join("\n");
 export const CLAUDE_WORKER_POLICY = claudeWorkerPolicy();
 
@@ -147,6 +148,8 @@ export interface ClaudeWorkersOptions {
   cwd(): string;
   /** The orchestration rules the workers' own instructions come from, read as each run starts (M7-O04); absent: core's defaults. */
   rules?(): OrchestrationRules | undefined;
+  /** The app's component-shot command (BOTLING_SHOT_COMMAND); a worker a plugin started, with Bash, is told it in one line. Absent or null: no line. */
+  shotCommand?(): string | null;
   /** The bot's subagent model (null: the coordinator's model). */
   subagentModel(): string | null;
   /** The bot's subagent effort (null: the coordinator's effort). */
@@ -361,7 +364,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: r.engineData.pluginStarted === true ? [] : this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
-      systemPrompt: [claudeWorkerPolicy(this.options.rules?.()), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
+      systemPrompt: [claudeWorkerPolicy(this.options.rules?.(), r.engineData.pluginStarted === true && (!def?.tools || def.tools.includes("Bash")) ? this.options.shotCommand?.() ?? null : null), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),
       ...(extra.length ? { addDirs: [...new Set([...(base.addDirs ?? []), ...extra])] } : {}),

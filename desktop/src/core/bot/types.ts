@@ -75,6 +75,8 @@ export interface BotOptions {
   /** The instructions for this bot's head (settings may change between wakes). */
   prompts: (engine: Engine, heads: Heads | null) => BotPrompts;
   orchestrationRules?: () => import("../orchestration/default-rules").OrchestrationRules;
+  /** The app's component-shot command (null: none): plugin-started workers are told it in one line (claude-workers.ts). */
+  shotCommand?: () => string | null;
   /** M7-O05: the app_handoff hook, with the plugin the turn under way stems from (undefined: the user's, a shipped plugin's, or the bot's own). */
   workerAdmit?(...args: [...Parameters<NonNullable<WorkerCoreOptions["admit"]>>, plugin: string | undefined]): ReturnType<NonNullable<WorkerCoreOptions["admit"]>>;
   /** M7-O05 (item 5): the app_send_message hook, with the plugin the turn under way stems from. */

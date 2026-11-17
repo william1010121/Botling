@@ -272,6 +272,7 @@ export class BotWorkers {
       },
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
       rules: () => this.options.orchestrationRules?.(),
+      shotCommand: () => this.options.shotCommand?.() ?? null,
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
       defaultMachine: () => this.owner.choices().workerMachine,

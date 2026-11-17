@@ -1,6 +1,6 @@
 import {electronExecutable} from "../electron-runtime";
 // Component shots (Phase 5a; 1.x's `botling --component-shot`): this build draws a component in its real
-// chat page — a reply, Board tiles, opened above the input box, floating — pictures each frame, judges it
+// chat page — a reply, opened above the input box, floating, tiles at card sizes — pictures each frame, judges it
 // and exits 0 without problems, 1 with them; Maintainer is given the command. Its contact sheet goes to
 // desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
@@ -28,12 +28,17 @@ test("draws a good component on every surface: no problems, a picture each, a co
   component(folder, `<div class="card" style="padding:12px;font:14px system-ui;color:#e8e8e8"><b>Tests</b> <span id="v"></span></div><script>document.getElementById("v").textContent = ccb.data.passed + " passed";</script>`,
     'Tests: how many passed.\nData: {"passed": 3}\n');
   const out = join(base, "out");
-  const run = shot([folder, "--out", out]);
+  const run = shot([folder, "--out", out, "--sizes", "1x1,2x1,2x2,4x2"]);
   expect(run.status, run.stderr).toBe(0);
   expect(run.stdout).toContain("Component tests: 7 frames drawn (dark theme; data from about.md's example).\nNo problems.");
-  for (const name of ["chat", "board-1x1", "board-2x1", "board-2x2", "board-4x2", "pinned", "floating", "contact-sheet"]) expect(existsSync(join(out, `${name}.png`)), name).toBe(true);
+  for (const name of ["chat", "tile-1x1", "tile-2x1", "tile-2x2", "tile-4x2", "pinned", "floating", "contact-sheet"]) expect(existsSync(join(out, `${name}.png`)), name).toBe(true);
   const report = JSON.parse(readFileSync(join(out, "report.json"), "utf8"));
-  expect(report).toMatchObject({ component: "tests", data: "about.md's example", findings: [] });
+  expect(report).toMatchObject({ component: "tests", theme: "dark", data: "about.md's example", findings: [] });
+  // The light look: the same shot in the app's other theme, one surface.
+  const light = shot([folder, "--out", join(base, "light"), "--surfaces", "chat", "--theme", "light"]);
+  expect(light.status, light.stderr).toBe(0);
+  expect(light.stdout).toContain("1 frame drawn (light theme;");
+  expect(shot(["--help"]).stdout).toContain("--theme dark|light");
   mkdirSync(join(desktop, ".tmp", "screens"), { recursive: true });
   copyFileSync(join(out, "contact-sheet.png"), join(desktop, ".tmp", "screens", "phase5a-shot-sheet.png"));
 });
@@ -44,7 +49,7 @@ test("lists what is wrong and exits 1; a bad folder is a usage error (2); Mainta
   component(folder, `<div class="card"><div style="width:2000px">wide</div></div><script>ccb.nope();</script>`, 'Broken.\nData: {"a": 1}\n');
   const run = shot([folder, "--out", join(base, "out"), "--sizes", "2x2"]);
   expect(run.status).toBe(1);
-  expect(run.stdout).toContain("✗ chat, board 2x2, pinned, floating: ccb.nope is not part of ccb (see PLUGINS.md for the API)");
+  expect(run.stdout).toContain("✗ chat, pinned, floating, tile 2x2: ccb.nope is not part of ccb (see PLUGINS.md for the API)");
   expect(run.stdout).toMatch(/✗ chat: Wider than its frame: 2000px of content in \d+px, cut off on the right \(widest: div, reaching 2000px\)/);
   expect(shot([join(base, "nowhere")]).status).toBe(2);
   // The app hands Maintainer this build's command.

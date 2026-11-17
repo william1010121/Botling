@@ -967,7 +967,11 @@
         },
         {
           "findings" : [
-
+            {
+              "level" : "warning",
+              "place" : "board 1x1",
+              "text" : "Taller than its tile: 260px of content in 160px, the rest is cut off (collapse to a summary when short)"
+            }
           ],
           "label" : "tall",
           "masked" : false,
@@ -1226,7 +1230,7 @@
             "botling",
             "--component-shot"
           ],
-          "error" : "Name the component folder (the one with template.html).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "Name the component folder (the one with template.html).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1235,7 +1239,7 @@
             "--out",
             "x"
           ],
-          "error" : "Name the component folder (the one with template.html).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "Name the component folder (the one with template.html).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1269,7 +1273,7 @@
             "--folder",
             "\/abs\/proj",
             "--surfaces",
-            "Pinned, chat,pinned",
+            "Pinned, chat,pinned,tile",
             "--sizes",
             "2x1,small,2×1",
             "--theme",
@@ -1286,7 +1290,8 @@
             ],
             "surfaces" : [
               "pinned",
-              "chat"
+              "chat",
+              "tile"
             ],
             "theme" : "dark"
           }
@@ -1325,7 +1330,8 @@
             "surfaces" : [
               "chat",
               "pinned",
-              "floating"
+              "floating",
+              "tile"
             ],
             "theme" : "dark"
           }
@@ -1350,7 +1356,8 @@
             "surfaces" : [
               "chat",
               "pinned",
-              "floating"
+              "floating",
+              "tile"
             ],
             "theme" : "dark"
           }
@@ -1363,7 +1370,7 @@
             "--surfaces",
             "chat,side"
           ],
-          "error" : "Unknown surface side: chat, pinned or floating.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "Unknown surface side: chat, pinned, floating or tile.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1373,7 +1380,7 @@
             "--surfaces",
             ","
           ],
-          "error" : "--surfaces names none.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "--surfaces names none.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1383,7 +1390,7 @@
             "--sizes",
             "9x9"
           ],
-          "error" : "Not a card size: 9x9 (1x1 to 4x4).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "Not a card size: 9x9 (1x1 to 4x4).\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1393,7 +1400,7 @@
             "--sizes",
             ","
           ],
-          "error" : "--sizes names none.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "--sizes names none.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1403,7 +1410,19 @@
             "--theme",
             "light"
           ],
-          "error" : "The app only draws components in the dark theme (its window and every component frame are dark), so there is no light theme to shoot."
+          "options" : {
+            "component" : "<root>\/comp",
+            "data" : null,
+            "folder" : null,
+            "out" : "<default>",
+            "sizes" : null,
+            "surfaces" : [
+              "chat",
+              "pinned",
+              "floating"
+            ],
+            "theme" : "light"
+          }
         },
         {
           "arguments" : [
@@ -1412,7 +1431,7 @@
             "comp",
             "--out"
           ],
-          "error" : "--out needs a value.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "--out needs a value.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1420,7 +1439,7 @@
             "--component-shot",
             "nothing"
           ],
-          "error" : "No template.html in <root>\/nothing.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+          "error" : "No template.html in <root>\/nothing.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1430,7 +1449,7 @@
             "--theme",
             "light"
           ],
-          "error" : "The app only draws components in the dark theme (its window and every component frame are dark), so there is no light theme to shoot."
+          "error" : "No template.html in <root>\/nothing.\n\nUsage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
         },
         {
           "arguments" : [
@@ -1453,7 +1472,8 @@
             "surfaces" : [
               "chat",
               "pinned",
-              "floating"
+              "floating",
+              "tile"
             ],
             "theme" : "dark"
           }
@@ -1749,7 +1769,7 @@
           "uniform" : false
         }
       ],
-      "usage" : "Usage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem."
+      "usage" : "Usage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]\n                     [--surfaces chat,pinned,floating,tile] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark|light]\nDraws the component in this build's real chat page on each surface, saves a picture of each\nand a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.\nData: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.\nA Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.\nCard sizes: --sizes (1x1 … 4x4, or all) also draws a tile picture per size; --theme light draws the app's light look.\nMore: botling --component-shot --help"
     },
     "specs" : {
       "drafts" : [

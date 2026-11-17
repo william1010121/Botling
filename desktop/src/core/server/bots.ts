@@ -82,6 +82,7 @@ export class CoreBots {
       headConfig: options.headConfig,
       agyConfig: options.agyConfig ? (p, config) => options.agyConfig!(p, { ...config, rules: () => this.host.orchestrationRules() }) : options.agyConfig,
       orchestrationRules: () => this.host.orchestrationRules(),
+      shotCommand: () => options.shotCommand ?? null,
       workerAdmit: (kind, args, run, plugin) => this.plugins.admitWorker(profile.id, kind, args, run, plugin),
       workerGate: (taskId, words, plugin) => this.plugins.gateWorkerMessage(plugin, taskId, words),
       codexConfig: codexConfig ? (p, session) => ({

@@ -85,3 +85,7 @@ export function delegationPolicy(caps: DelegationCaps, ctx: PromptContext, rules
 
 /** The sections of the sectioned policy these capabilities get, in output order (joined by blank lines). */
 export const policySectionIds = (caps: DelegationCaps): SectionId[] => SECTIONS.filter(section => section.when?.(caps) ?? true).map(section => section.id);
+
+/** The one line a plugin-started worker with Bash gets when the app has a shot command (claude-workers.ts): where to get screenshots, so it builds no renderer of its own. */
+export const shotWorkerRule = (command: string): string =>
+  `Screenshots: use ${command} <component folder> --out <dir> [--theme light] [--sizes 1x1,2x1,2x2,4x2] (--help lists the rest); never \`find /\`, never hunt for or launch your own Chrome.`;

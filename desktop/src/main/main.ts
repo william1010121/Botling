@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
+import { shotPluginFile, shotWebSpecs } from "../core/shot-plugins";
+import { shotCommand, shotWrapperDirs } from "../core/shot-command";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
@@ -115,7 +117,8 @@ const rendererDir = renderer.directory;
 /** Developer builds serve pages with no-store, so nothing cached is reused. */
 const rendererNoStore = renderer.development;
 /** The chat's and KaTeX's stylesheets a Markdown result page is drawn with (read on first use). */
-const markdownPageStyles = markdownStyles(rendererDir, app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"));
+const builtinPluginsDir = app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins");
+const markdownPageStyles = markdownStyles(rendererDir, builtinPluginsDir);
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
 const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
@@ -330,6 +333,7 @@ const checkForRelease = () => { void updater.check(false).then(announce, (error)
 const openedReleases: string[] = [];
 (globalThis as unknown as { __botlingOpenedReleases: string[] }).__botlingOpenedReleases = openedReleases;
 
+let shotCommandText: string | undefined;
 function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
@@ -350,7 +354,11 @@ function coreEnvironment(): Record<string, string> {
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
   const self = `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`}`;
-  env.BOTLING_SHOT_COMMAND ??= `${self} --component-shot`;
+  // A path to a script that runs it (core/shot-command.ts): a bot's zsh would not split a command held in a variable.
+  // Not written by a shot itself (it starts no core and must leave no files).
+  env.BOTLING_SHOT_COMMAND ??= shotMode
+    ? `${self} --component-shot`
+    : (shotCommandText ??= shotCommand([process.execPath, ...(app.isPackaged ? [] : [root])], shotWrapperDirs({ dataDir, home: process.env.HOME || homedir(), tmp: tmpdir(), uid: process.getuid?.() })));
   // And its plugin check (1.x: "'<botling>' --check-plugin"); a packaged build cannot run Electron as Node.
   env.BOTLING_CHECK_COMMAND ??= `${self} --check-plugin`;
   // The app itself, for the commands shipped plugins give the bots (botling.report: `--render-report`; its guide is in the plugin, outside app.asar).
@@ -489,6 +497,11 @@ ipcMain.on("botling:post", (event, raw: unknown, rawVia?: unknown) => {
   if (!RENDERER_COMMANDS.has(cmd.type)) {
     note(`refused renderer command ${cmd.type}`);
     reply(errorResponse(id, { code: "forbidden", message: `${cmd.type} is not available to the app page.` }));
+    return;
+  }
+  // A component shot starts no core: botling.board's web part (the pins the chat page draws) comes from the built-in plugins folder.
+  if (shotMode && cmd.type === "plugins.web") {
+    reply(okResponse(id, { specs: shotWebSpecs(builtinPluginsDir) }));
     return;
   }
   if (MAIN_COMMANDS.has(cmd.type)) {
@@ -1004,6 +1017,11 @@ async function chatFile(url: URL, request: Request): Promise<Response | null> {
   }
   // A plugin's stylesheet or a font beside it (only files the core says the plugin ships for its web part).
   const style = /^\/plugin-files\/([a-z0-9][a-z0-9._-]*)\/(.+)$/.exec(path);
+  if (style && shotMode) {
+    const found = shotPluginFile(builtinPluginsDir, style[1]!, decodeURIComponent(style[2]!));
+    if (!found) return null;
+    try { return new Response(readFileSync(found.path), { headers: { "Content-Type": found.type, ...NO_SNIFF, "Cache-Control": "no-store" } }); } catch { return null; }
+  }
   if (style) {
     const answer = await core.request({ type: "plugins.file", name: style[1]!, path: decodeURIComponent(style[2]!) });
     if (!answer.ok) return null;
@@ -1100,6 +1118,8 @@ function serveApp() {
 function shotWindow(size: { width: number; height: number }): BrowserWindow {
   const window = new BrowserWindow({
     width: size.width, height: size.height, useContentSize: true, show: false, paintWhenInitiallyHidden: true, backgroundColor: "#0E0E10",
+    // The one window is resized per surface, and the tile page of `--sizes all` is about 3900px tall: not cut to the screen.
+    enableLargerThanScreen: true,
     webPreferences: { preload: join(preloadDir, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true },
   });
   appContents.add(window.webContents.id);
@@ -1121,7 +1141,7 @@ app.whenReady().then(async () => {
   serveApp();
   if (shotMode) {
     const giveUp = setTimeout(() => { process.stderr.write("Gave up: drawing took over 3 minutes.\n"); app.exit(3); }, 180_000);
-    void runShot(process.argv, shotWindow, (text) => process.stdout.write(text + "\n"), (text) => process.stderr.write(text + "\n"))
+    void runShot(process.argv, shotWindow, (text) => process.stdout.write(text + "\n"), (text) => process.stderr.write(text + "\n"), (theme) => { nativeTheme.themeSource = theme; })
       .then((code) => code, (error) => { process.stderr.write(`It could not draw: ${(error as Error).message}\n`); return 3; })
       .then((code) => {
         clearTimeout(giveUp);

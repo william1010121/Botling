@@ -408,12 +408,15 @@ describe("M6-07c re-review H1: packaged botlingd names this build's own commands
 
   it("replaces scrubbed or inherited commands, so the core never runs ELECTRON_RUN_AS_NODE=1 <app> <script>", async () => {
     const env: Record<string, string | undefined> = {
-      BOTLING_SERVER_DATA_DIR: "/tmp/v3-srv", BOTLING_CHECK_COMMAND: "evil --check", BOTLING_APP_COMMAND: "evil",
+      BOTLING_SERVER_DATA_DIR: tempDir("pkg-cmds-data"), BOTLING_CHECK_COMMAND: "evil --check", BOTLING_APP_COMMAND: "evil",
     };
     await run(true, env);
     expect(env.BOTLING_APP_COMMAND).toBe(self);
     expect(env.BOTLING_CHECK_COMMAND).toBe(`${self} --check-plugin`);
-    expect(env.BOTLING_SHOT_COMMAND).toBe(`${self} --component-shot`);
+    // One script path (zsh does not split a variable); the script runs this build in shot mode.
+    expect(env.BOTLING_SHOT_COMMAND).toMatch(/\/botling-component-shot$/);
+    expect(env.BOTLING_SHOT_COMMAND).not.toContain(" ");
+    expect(readFileSync(env.BOTLING_SHOT_COMMAND!, "utf8")).toContain(`${self.replace("env -u ELECTRON_RUN_AS_NODE ", "exec env -u ELECTRON_RUN_AS_NODE ")} --component-shot "$@"`);
 
     // What the core makes of that environment (Maintainer's plugin check, the bots' --render-report).
     const { coreProcessOptions } = await import("../../src/core/core-process");
