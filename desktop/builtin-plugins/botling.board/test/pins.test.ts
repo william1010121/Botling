@@ -199,6 +199,8 @@ describe("making an inline block pinnable", () => {
       expect(text).toContain("可釘選");
       expect(text).toContain(chart);
       expect(text).toContain(".bot/card-scripts/inline-chart/");
+      // A pretty-printed block goes as one line (a few lines of JSON would read as the user's own text).
+      expect(makePinnableText("inline-chart", '{\n  "kind": "bars",\n  "items": []\n}')).toContain('{"kind":"bars","items":[]}');
       // `{name}`-like text in the data is not filled in again.
       expect(makePinnableText("inline-chart", '{"note":"{name} {json}"}')).toContain('{"note":"{name} {json}"}');
       expect(makePinnableText("inline-chart", `{"x":"${"a".repeat(17_000)}"}`)).toContain("太長");
