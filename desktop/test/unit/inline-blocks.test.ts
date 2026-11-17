@@ -4,6 +4,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// @ts-expect-error jsdom ships without .d.ts
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 import { runCli } from "../../reports/cli";
