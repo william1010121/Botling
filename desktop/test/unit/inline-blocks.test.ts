@@ -103,12 +103,12 @@ describe("the guidance in the prompt", () => {
   it("Antigravity draws no components: even asked for, it gets neither the guidance nor the shorter list", () => {
     expect(withIt("agy")).toBe(without("agy"));
   });
-  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 700 tokens (the chart line and example added about 150 over the 550 of the report-block-only guidance)", () => {
+  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 700 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55)", () => {
     const a = botPrompts({ profile: profile("bot"), inlineBlocks: true }).system;
     const b = botPrompts({ profile: { ...profile("bot"), name: "Other", folder: "/somewhere/else" }, inlineBlocks: true }).system;
     expect(a).toContain(INLINE_BLOCK_GUIDANCE);
     expect(b).toContain(INLINE_BLOCK_GUIDANCE);
-    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(2550);
+    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(2700);
   });
   it("carries six examples (five report blocks and one inline-chart), each a one-line block its drawer accepts", () => {
     const all = INLINE_BLOCK_GUIDANCE.split("\n").slice(1).map((line) => JSON.parse(/: (\{.*\})$/.exec(line)![1]!));
@@ -135,13 +135,16 @@ describe("the guidance in the prompt", () => {
     expect(JSON.parse(out.trim().split("\n").at(-1)!)).toMatchObject({ ok: true, errors: [] });
     expect(code).toBe(0);
   });
-  it("points number comparisons at inline-chart: bars per category, dumbbell before/after, waterfall steps; a few numbers need no page", () => {
+  it("chart rule: decide what the figure must show first, inline-chart only if it shows that clearly, else a matplotlib PNG shown inline; never a page for a chart", () => {
     expect(INLINE_BLOCK_GUIDANCE).toContain('<show name="inline-chart">{chart}</show>');
-    expect(INLINE_BLOCK_GUIDANCE).toMatch(/kind bars \(numbers per category\), dumbbell \(before\/after\) or waterfall \(steps of a total\); a few numbers never need a page/);
+    expect(INLINE_BLOCK_GUIDANCE).toContain("Charts: first decide what the figure must show (groups side by side, time axis, error bars, measured vs estimated).");
+    expect(INLINE_BLOCK_GUIDANCE).toContain("(kind bars, dumbbell, waterfall or line) only if it shows that clearly; otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path)");
+    expect(INLINE_BLOCK_GUIDANCE).toContain("read-only in .bot/card-scripts/<name>/ when numbers need gathering; never a page for a chart");
+    expect(INLINE_BLOCK_GUIDANCE).not.toContain("a few numbers never need a page");
     // It no longer sends a data chart to a page.
     expect(INLINE_BLOCK_GUIDANCE).not.toMatch(/a data chart \(matplotlib figure\)/);
     expect(REPORT_RULE_BY_SIZE).not.toMatch(/a data figure/);
-    expect(REPORT_RULE_BY_SIZE).toContain("a chart of a few numbers into ONE inline chart (inline-chart)");
+    expect(REPORT_RULE_BY_SIZE).toContain("a chart into ONE inline chart (inline-chart) or a matplotlib PNG shown inline (the chart rule)");
   });
 });
 
@@ -155,9 +158,9 @@ describe("the report rule by size", () => {
     expect(REPORT_RULE_BY_SIZE).toMatch(/ONE inline report block/);
     // Default is inline, a page is the exception (the user, 2026-11-17: "報告只有在真的很長的時候才要開，或者是我特別要求下").
     expect(REPORT_RULE_BY_SIZE).toMatch(/^Default is inline; a report page is the exception\./);
-    expect(REPORT_RULE_BY_SIZE).toMatch(/report page ONLY when the content is really long \(more than 3 blocks, many series that need matplotlib, or a long read\) or the user explicitly asks for a report or a page/);
+    expect(REPORT_RULE_BY_SIZE).toMatch(/report page ONLY when the content is really long \(more than 3 blocks or a long read\) or the user explicitly asks for a report or a page/);
     expect(REPORT_RULE_BY_SIZE).toMatch(/anything else stays in chat/);
-    expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is the exception, only for really long content \(more than 3 blocks, many series that need matplotlib, or a long read\) or when the user explicitly asks for a report or a page/);
+    expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is the exception, only for really long content \(more than 3 blocks or a long read\) or when the user explicitly asks for a report or a page/);
     expect(INLINE_BLOCK_GUIDANCE).toMatch(/everything else stays in chat/);
   });
   it("a bot with the guidance is told by size; the rest of the page rule is untouched", () => {
