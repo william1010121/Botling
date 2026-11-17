@@ -196,6 +196,11 @@ export class Core {
     this.plugins.rowsChanged();
   }
 
+  /** Botling 3's server only: the user allowed a plugin (`plugin.grant`); Maintainer is told, not the main bot. */
+  pluginGranted(name: string): void {
+    this.maintainer.pluginGranted(this.plugins.titleOf(name));
+  }
+
   constructor(readonly options: CoreOptions) {
     this.mainBotId = options.mainBotId ?? MAIN_BOT_ID;
     this.maintainerId = options.maintainerId ?? MAINTAINER_ID;

@@ -113,7 +113,16 @@ export class Plugins {
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);
     for (const plugin of this.registry.plugins) { const warning = plugin.builtIn ? null : presentNameWarning(plugin.manifest.name); if (warning) this.registry.onNameWarning(plugin.manifest.name, warning); }
-    this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
+    this.registry.onUpdated = (plugin, from) => {
+      world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
+      // Maintainer is told too, with the real grant (a plugin's approval belongs to the plugin, so it carries over a new version).
+      // A core with no grant rows (`pluginGrant` unset) and a plain built-in (always allowed, not Maintainer's concern) say nothing.
+      const grant = this.options.pluginGrant?.(plugin.manifest.name) ?? null;
+      if (grant !== null && (!plugin.builtIn || plugin.replacesBuiltIn)) {
+        // A failed hand-over must not end the scan: the registry would not take the new version and say it again on every scan.
+        try { world.updated?.(title(plugin.manifest), plugin.manifest.version, grant !== "none"); } catch (error) { world.log(`Maintainer was not told of ${plugin.manifest.name}'s update: ${(error as Error).message}`); }
+      }
+    };
     this.registry.onPluginWritten = (name) => world.pluginWritten?.(name);
     this.registry.onChanged = () => this.sync();
     setPluginTags([...this.replyTagOwners().keys()]);
@@ -140,6 +149,12 @@ export class Plugins {
     this.secrets.problem = null;
     await this.secrets.load();
     this.sync();
+  }
+
+  /** A plugin's title as the user reads it (its name when it is not installed). */
+  titleOf(name: string): string {
+    const plugin = this.registry.plugins.find((candidate) => candidate.manifest.name === name);
+    return plugin ? title(plugin.manifest) : name;
   }
 
   /** The library is looked at again (the core's 1.5 s clock). */

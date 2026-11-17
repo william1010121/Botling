@@ -212,6 +212,8 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
       feeds.notify(feeds.ownStream);
       core.pluginGrantsChanged();
     },
+    // The user allowed a plugin: Maintainer is told (it must not ask for an Allow the user already pressed).
+    pluginGranted: (name) => core.pluginGranted(name),
     tapHooks: {
       eventSeen: (event) => {
         later.summary?.seen(event);

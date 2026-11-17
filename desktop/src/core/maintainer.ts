@@ -61,6 +61,9 @@ export function standardFolder(path: string): string {
   return folder.length > 1 ? folder.replace(/\/+$/, "") : folder;
 }
 
+/** A manifest's text as one JSON-quoted line (control characters escaped, at most 100 characters) before it goes into a message to Maintainer. */
+const quoted = (text: string): string => JSON.stringify(text.slice(0, 100));
+
 export class MaintainerDesk {
   readonly git: LibraryGit;
   private asks: ComponentAsk[] = [];
@@ -533,5 +536,15 @@ export class MaintainerDesk {
   /** A plugin broke: Maintainer is asked to fix it (`onBroken`). */
   broken(plugin: string, problem: string) {
     this.handTo(`(App: Hot-update check) The plugin "${plugin}" is broken; Botling fell back to the previous version or disabled it for now. Please fix it: ${problem}`);
+  }
+
+  /** A plugin update took effect (`onUpdated`): Maintainer is told whether the user has allowed it, so it does not ask for an Allow already given. */
+  pluginLive(name: string, version: string, allowed: boolean) {
+    this.handTo(`(App: Plugin ${quoted(name)} ${quoted(version).slice(1, -1)} is live; state: ${allowed ? "allowed" : "not allowed yet (the user must press Allow in Settings › Plugins)"})`);
+  }
+
+  /** The user pressed Allow for a plugin (`plugin.grant`). */
+  pluginGranted(name: string) {
+    this.handTo(`(App: The user allowed plugin ${quoted(name)})`);
   }
 }

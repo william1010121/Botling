@@ -47,6 +47,8 @@ export interface IntentRuntimeOptions {
   tapHooks?: Pick<TapHooks, "eventSeen" | "eventStored">;
   /** Botling 3's server: called after a commit that changed a `plugin:` row's grants (`plugin.grant`). */
   pluginRowsChanged?: () => void;
+  /** Botling 3's server: called after a commit where the user allowed a plugin (`plugin.grant`, not a revoke): Maintainer is told. */
+  pluginGranted?: (plugin: string) => void;
   /** M5-03b test knob: the host's wait timers (botlingd: `callInTimers(env)`, only with the fake agent). */
   callHostTimers?: Pick<CallInHostOptions, "staleMs" | "capMs" | "tickMs">;
   /** Test hook (`BOTLING_SERVER_CALLIN_CRASH`, fake agent only): kills the process right after a call-in step committed. */
@@ -95,7 +97,7 @@ export class IntentRuntime {
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
     });
-    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, callIns: this.callIns, callHost: this.callHost };
+    this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, pluginGranted: options.pluginGranted, callIns: this.callIns, callHost: this.callHost };
     const slotLog = dbSlotLog(this.scope, log);
     this.slots = new SlotEngine({
       submit: (command) => this.scope.submit(command),
