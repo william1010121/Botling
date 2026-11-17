@@ -178,14 +178,14 @@ export function sizeText(bytes: number): string {
 
 export const IMMEDIATE_NOTICE: ReadonlySet<ConnectionState> = new Set(["history restored", "update required"]);
 
-export function wireError(outcome: Outcome): WireError {
+export function wireError(outcome: Outcome, unsendable?: string): WireError {
   switch (outcome.kind) {
     case "refused": {
       const code = outcome.reason === "changed" || outcome.reason === "turn ended" ? "conflict" : outcome.reason === "invalid" ? "bad_request" : "forbidden";
       return { code, message: `Not sent: ${REFUSE_REASON_TEXT[outcome.reason] ?? outcome.reason}${outcome.detail ? ` (${outcome.detail})` : ""}`.slice(0, 2_000) };
     }
     case "cancelled": return { code: "cancelled", message: "Not sent: cancelled." };
-    case "skipped": return { code: "cancelled", message: "Not sent: skipped after a restore." };
+    case "skipped": return { code: "cancelled", message: unsendable ? `Not sent: ${unsendable}.` : "Not sent: skipped after a restore." };
     default: return { code: "internal", message: "No outcome." };
   }
 }

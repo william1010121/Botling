@@ -199,6 +199,8 @@ export interface LinkHost {
   readonly final: boolean;
   readonly local: boolean;
   send(session: Session, message: Message): boolean;
+  /** Why the frame codec refuses `message` (too large, malformed), or null when it encodes; nothing is sent. */
+  encodeRefusal(message: Message): { reason: string; detail: string } | null;
   sendSub(session: Session, stream: StreamId): void;
   srvStream(): StreamId | null;
   streams(): StreamId[];

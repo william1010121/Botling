@@ -93,7 +93,7 @@ export class FeLink {
       get lastByeUnsettled() { return link.lastByeUnsettled; }, set lastByeUnsettled(value) { link.lastByeUnsettled = value; },
       get reqCounter() { return link.reqCounter; }, set reqCounter(value) { link.reqCounter = value; },
       get serverId() { return link.serverId; }, get stopped() { return link.stopped; }, get final() { return link.final; }, get local() { return link.local; },
-      send: (session, message) => this.send(session, message), sendSub: (session, stream) => this.sendSub(session, stream), srvStream: () => this.srvStream(),
+      send: (session, message) => this.send(session, message), encodeRefusal: (message) => this.encodeRefusal(message), sendSub: (session, stream) => this.sendSub(session, stream), srvStream: () => this.srvStream(),
       streams: () => this.streams(), ownerOf: (target) => this.ownerOf(target), dial: () => this.dial(),
     });
   }
@@ -245,6 +245,7 @@ export class FeLink {
         state: item.state, ...(item.heldAt ? { heldAt: item.heldAt } : {}),
         ...(item.state === "not sent" && item.outcome ? { reason: reasonOf(item.outcome) } : {}),
         ...(item.state === "not sent" && item.outcome?.kind === "refused" && REFUSE_REASON_TEXT[item.outcome.reason] ? { reasonText: REFUSE_REASON_TEXT[item.outcome.reason] } : {}),
+        ...(item.state === "not sent" && item.unsendable ? { reasonText: item.unsendable } : {}),
         lost: item.lost === true,
         sending: item.state === "waiting" && !stopped && now - shown >= this.markerMs,
         ...(this.cancelNoted.has(key) && (item.state === "waiting" || item.state === "held") ? { cancelNoted: true as const } : {}),
@@ -454,6 +455,11 @@ export class FeLink {
       t: "hello", deviceId: this.options.deviceId, feVersion: this.options.feVersion, protocol: PROTOCOL_VERSION,
       originEpoch: this.outbox.epoch, cursors, outbox: [], want: [...this.subs], ...(this.options.token ? { token: this.options.token } : {}),
     });
+  }
+
+  private encodeRefusal(message: Message): { reason: string; detail: string } | null {
+    const encoded = encodeFrame(message, "fe", { local: this.local });
+    return encoded.ok ? null : { reason: encoded.reason, detail: encoded.detail };
   }
 
   private send(session: Session, message: Message): boolean {

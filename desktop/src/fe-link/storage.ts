@@ -34,6 +34,8 @@ export interface OutboxItem {
   lost?: true;
   /** The slot it had before a slot conflict moved it to a newer epoch (§11.4). */
   movedFrom?: Slot;
+  /** Why it can never be sent (the frame codec refuses its copy, e.g. over the frame limit): it was set aside as "not sent" so the queue goes on. */
+  unsendable?: string;
 }
 
 /** A reader's position with the hash of the entry at it (the batch `prevHash` check, §8.1). */
