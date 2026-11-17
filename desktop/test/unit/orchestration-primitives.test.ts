@@ -343,7 +343,7 @@ describe("PluginWorkers, the parts the wire does not reach", () => {
     expect(t.log.started).toEqual([]);
   });
 
-  it("keeps its book across a restart: the quota still counts, the report is told once", async () => {
+  it("keeps its book across a restart: its workers still count (for the warning), the report is told once", async () => {
     const first = book();
     await first.workers.start("p", params);
     await first.workers.start("p", params);

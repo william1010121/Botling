@@ -1,8 +1,8 @@
 // 2026-11-16 (the user: "install once, everything allowed; an update just replaces it"; Maintainer's design-duel needs two workers at once):
-// 1. a plugin the user installed (`world.installed`) starts and messages workers with no card, two at once, and the quota still holds;
+// 1. a plugin the user installed (`world.installed`) starts and messages workers with no card, two at once, and with no cap (2026-11-17) only warned past a threshold;
 // 2. a plugin that is not installed still gets its card, and cards of one plugin queue (one open, the rest wait) instead of the second failing;
 // 3. the "installed" answer is asked at every use, and an error or a missing answer means not installed (a card).
-// The grant, the quota and "only bots it made" (G1) are untouched by `installed`.
+// The grant, the counts and their warning, and "only bots it made" (G1) are untouched by `installed`.
 import { describe, expect, it } from "vitest";
 import { mkdirSync } from "node:fs";
 import type { AppAnswer, AppQuestion } from "../../src/core/plugins";
