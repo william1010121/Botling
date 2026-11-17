@@ -16,8 +16,9 @@ describe("isClaudeModel", () => {
       expect(isClaudeModel(model), JSON.stringify(model)).toBe(false);
     }
     for (const value of [null, undefined, 3, {}, ["opus"], true]) expect(isClaudeModel(value)).toBe(false);
-    expect(isClaudeModel("claude-" + "a".repeat(100))).toBe(false);
-    expect(isClaudeModel("claude-" + "a".repeat(99))).toBe(true);
+    // The id after "claude-" is at most 100 characters.
+    expect(isClaudeModel("claude-" + "a".repeat(100))).toBe(true);
+    expect(isClaudeModel("claude-" + "a".repeat(101))).toBe(false);
   });
 
   it("claudeModelOrNull keeps a model and drops the rest", () => {
