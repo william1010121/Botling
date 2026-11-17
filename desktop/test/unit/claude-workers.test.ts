@@ -710,6 +710,8 @@ describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the
     h.result(head, "Monitor started.");
     await wait(20);
     expect(h.reports.map((r) => r.run)).toEqual([1]);
+    // Not held for an instant either: its row never said Monitor running.
+    expect(waits(h)).toEqual([]);
   });
 
   it("its process ending while the Monitor lives delivers the held report instead of an error", async () => {
