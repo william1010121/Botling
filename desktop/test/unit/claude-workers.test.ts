@@ -791,6 +791,44 @@ describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the
     expect(h.reports[0]!.text).toContain("Monitor started; the deploy is queued.");
   });
 
+  it("a report that went out with a failed wake turn is not kept for the next run: that run's report is its own", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    h.say(head, ended);
+    h.result(head, "API Error: 400 prompt is too long", false);
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    await h.workers.tool("app_send_message", { task_id, message: "Again" });
+    // The kept-alive process may have gone to sleep by now: the next run is on the last process either way.
+    h.result(h.heads.at(-1)!, "Second run done.");
+    await wait(20);
+    expect(h.reports).toHaveLength(2);
+    expect(h.reports[1]!.text).toContain("Second run done.");
+    expect(h.reports[1]!.text).not.toContain("Monitor started; the deploy is queued.");
+  });
+
+  it("the held words are in the report once, whether the grace or its process's end lets it go", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    const once = (text: string, part: string) => text.split(part).length - 1;
+    try {
+      const grace = await open();
+      grace.h.say(grace.head, used); grace.h.say(grace.head, started);
+      grace.h.result(grace.head, "Monitor started; the deploy is queued.");
+      grace.h.say(grace.head, ended);
+      await wait(100);
+      expect(grace.h.reports).toHaveLength(1);
+      expect(once(grace.h.reports[0]!.text, "Monitor started; the deploy is queued.")).toBe(1);
+      const exited = await open();
+      exited.h.say(exited.head, used); exited.h.say(exited.head, started);
+      exited.h.result(exited.head, "Monitor started; the deploy is queued.");
+      exited.head.exit(0, true);
+      await wait(30);
+      expect(exited.h.reports).toHaveLength(1);
+      expect(once(exited.h.reports[0]!.text, "Monitor started; the deploy is queued.")).toBe(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
   it("a wake turn the API turns away and tries again keeps the held report: the retry's report carries both", () => withRetryDelays("20,20,20", async () => {
     const { h, head } = await open();
     h.say(head, used); h.say(head, started);
@@ -915,6 +953,25 @@ describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the
       h.result(head, "Another turn.");
       await wait(30);
       expect(h.reports).toHaveLength(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a wake turn that outlasts the grace does not let the report go for good: a Monitor it starts still holds it", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "30";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      h.say(head, { kind: "toolUse", id: "t1", tool: "Bash", title: "Bash", detail: "tail", parent: null, input: {} });
+      await wait(100); // the grace ran out under the turn: only the cap lets a report go for good
+      expect(h.reports).toEqual([]);
+      h.say(head, monitorAgain);
+      h.result(head, "Wake turn done; watching the disk too.");
+      await wait(30);
+      expect(h.reports).toEqual([]);
+      expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the disk" } });
     } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
   });
 
