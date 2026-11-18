@@ -1,0 +1,95 @@
+// Switching a bot to Antigravity checked the 405 MB runtime (SHA-256 of both files, two `codesign` runs) on every route check, head
+// start and delivery, all synchronous: about 0.75 s each on a warm cache, three to five times per message, so the event loop was stuck
+// for 3 s or more and the orchestration rules ask (limit 3 s) was reported as "did not answer in time". A file that passed is checked
+// by its identity (device, inode, size, mtime, ctime) afterwards; a changed file, a wrong hash or a bad signature is checked in full.
+import { describe, expect, it } from "vitest";
+import { ACP_HARNESS_SHA, ACP_SERVER_SHA, verifyAcpRuntime, type AcpVerifyDeps } from "../../src/core/agent/agy-acp";
+
+const SERVER = "/rt/agy_acp_server.par", HARNESS = "/rt/localharness_external";
+
+function rig() {
+  const identity = new Map<string, string>([[SERVER, "dev1:ino1:size:mtime:ctime"], [HARNESS, "dev1:ino2:size:mtime:ctime"]]);
+  const digest = new Map<string, string>([[SERVER, ACP_SERVER_SHA], [HARNESS, ACP_HARNESS_SHA]]);
+  const calls = { hash: [] as string[], codesign: [] as string[] };
+  let signed = true;
+  const deps: AcpVerifyDeps = {
+    platform: "darwin", arch: "arm64", memo: new Map(),
+    identity: (path) => { const value = identity.get(path); if (value === undefined) throw new Error(`ENOENT: ${path}`); return value; },
+    hash: (path) => { calls.hash.push(path); return digest.get(path) ?? "no such file"; },
+    codesign: (path) => { calls.codesign.push(path); if (!signed) throw new Error("code object is not signed at all"); },
+  };
+  return { deps, identity, digest, calls, sign: (value: boolean) => { signed = value; } };
+}
+
+describe("verifyAcpRuntime does the heavy check once per file, not once per call", () => {
+  it("hashes and verifies the signature of both pinned files on the first call, and not again while they are unchanged", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    expect(r.calls.hash).toEqual([SERVER, HARNESS]);
+    expect(r.calls.codesign).toEqual([SERVER, HARNESS]);
+    for (let at = 0; at < 6; at++) verifyAcpRuntime(SERVER, r.deps); // route check, delivery, head start ... of one message
+    expect(r.calls.hash).toHaveLength(2);
+    expect(r.calls.codesign).toHaveLength(2);
+  });
+
+  it("checks a file again in full as soon as its identity changes (replaced, rewritten or touched), and only that file", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    r.identity.set(HARNESS, "dev1:ino2:size:mtime:ctime-later");
+    verifyAcpRuntime(SERVER, r.deps);
+    expect(r.calls.hash).toEqual([SERVER, HARNESS, HARNESS]);
+    expect(r.calls.codesign).toEqual([SERVER, HARNESS, HARNESS]);
+    r.identity.set(SERVER, "dev1:ino9:size:mtime:ctime");
+    verifyAcpRuntime(SERVER, r.deps);
+    expect(r.calls.hash).toEqual([SERVER, HARNESS, HARNESS, SERVER]);
+  });
+
+  it("a replaced file whose bytes are wrong is refused, and the refusal is not remembered", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    r.identity.set(SERVER, "dev1:ino9:size:mtime:ctime");
+    r.digest.set(SERVER, "0".repeat(64));
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("ACP runtime hash mismatch");
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("ACP runtime hash mismatch"); // still refused, hashed again
+    expect(r.calls.hash.filter((path) => path === SERVER)).toHaveLength(3);
+    r.digest.set(SERVER, ACP_SERVER_SHA);
+    verifyAcpRuntime(SERVER, r.deps);
+  });
+
+  it("a signature that fails is refused, and is checked again on the next call", () => {
+    const r = rig();
+    r.sign(false);
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("not signed");
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("not signed");
+    expect(r.calls.codesign).toEqual([SERVER, SERVER]);
+    r.sign(true);
+    verifyAcpRuntime(SERVER, r.deps);
+    expect(r.calls.codesign).toEqual([SERVER, SERVER, SERVER, HARNESS]);
+  });
+
+  it("a file that is gone is refused even though it passed before", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    r.identity.delete(HARNESS);
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("ENOENT");
+  });
+
+  it("what passed at one path never vouches for another path", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    r.identity.set("/other/agy_acp_server.par", "dev1:ino1:size:mtime:ctime"); // the same identity string, another place
+    r.identity.set("/other/localharness_external", "dev1:ino2:size:mtime:ctime");
+    r.digest.set("/other/agy_acp_server.par", ACP_SERVER_SHA);
+    r.digest.set("/other/localharness_external", ACP_HARNESS_SHA);
+    verifyAcpRuntime("/other/agy_acp_server.par", r.deps);
+    expect(r.calls.hash).toEqual([SERVER, HARNESS, "/other/agy_acp_server.par", "/other/localharness_external"]);
+  });
+
+  it("refuses a platform that is not macOS arm64 and a relative command before it touches any file", () => {
+    const r = rig();
+    expect(() => verifyAcpRuntime(SERVER, { ...r.deps, platform: "linux" })).toThrow("macOS arm64");
+    expect(() => verifyAcpRuntime(SERVER, { ...r.deps, arch: "x64" })).toThrow("macOS arm64");
+    expect(() => verifyAcpRuntime("agy", r.deps)).toThrow("Verified ACP");
+    expect(r.calls.hash).toEqual([]);
+  });
+});

@@ -447,6 +447,61 @@ describe("a plugin gives sentences, never a worker's model, effort or engine (F3
   });
 });
 
+/** Core's own synchronous work: the event loop is stuck, as it is while a message to an Antigravity head checks its 405 MB runtime (about 0.75 s a time, several times). */
+const stall = (ms: number) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+describe("a stuck event loop is not the plugin's silence (switching a bot to Antigravity)", () => {
+  /** `fixture` whose rules ask has a short limit, and a bot whose `send` is stuck for `stuckMs` (what `Bot.send` does for an Antigravity head). */
+  function stuckSend(source: () => Promise<Slots | null>, stuckMs: number, limitMs = 100) {
+    const h = fixture({ builtIns: BUILT });
+    (h.send as unknown as { madeRules: OrchestrationRulesBook }).madeRules = new OrchestrationRulesBook(source, limitMs);
+    const bot = fakeBot();
+    const plain = bot.send.bind(bot);
+    (bot as { send: Bot["send"] }).send = ((...args: Parameters<Bot["send"]>) => { stall(stuckMs); return plain(...args); }) as Bot["send"];
+    return { h, bot };
+  }
+
+  it("the shipped plugin answers although the send that follows its ask is stuck for four times the limit: its rules are used and no notice", async () => {
+    const { h, bot } = stuckSend(builtinSource(BUILT), 400);
+    await h.send.sendWith(bot, "to agy", { files: [] });
+    await h.rules().refresh(); // the ask that sendWith started (one at a time): wait for it
+    expect(bot.notices).toEqual([]);
+    expect(h.send.orchestrationRules()).not.toBe(DEFAULT); // the plugin's set, not core's fallback
+  });
+
+  it("a plugin that really throws still says so under the same stall, once", async () => {
+    const { h, bot } = stuckSend(async () => { throw new Error("boom"); }, 400);
+    await h.send.sendWith(bot, "to agy", { files: [] });
+    await h.rules().refresh();
+    expect(bot.notices).toEqual([RULES_NOTICE]);
+    expect(h.send.orchestrationRules()).toBe(DEFAULT);
+  });
+
+  it("a plugin that never answers still says so under the same stall, after it had its time again", async () => {
+    const { h, bot } = stuckSend(() => new Promise<Slots>(() => {}), 400);
+    await h.send.sendWith(bot, "to agy", { files: [] });
+    const after = Date.now();
+    await h.rules().refresh();
+    expect(bot.notices).toEqual([RULES_NOTICE]);
+    expect(Date.now() - after).toBeGreaterThanOrEqual(90); // a limit of 100 ms counted from the end of the stall, not from the ask
+    expect(h.send.orchestrationRules()).toBe(DEFAULT);
+  });
+
+  it("a stall does not keep a hung plugin waiting for ever: the time is given again at most twice", async () => {
+    const armed = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const book = new OrchestrationRulesBook(() => new Promise<Slots>(() => {}), 53);
+      const said: string[] = [];
+      const asked = book.refresh((text) => said.push(text));
+      for (let at = 0; at < 4; at++) { stall(400); await new Promise((resolve) => setImmediate(resolve)); await new Promise((resolve) => setTimeout(resolve, 0)); } // stuck again and again
+      await asked;
+      expect(said).toEqual([RULES_NOTICE]);
+      expect(book.current()).toBe(DEFAULT);
+      expect(armed.mock.calls.filter((call) => call[1] === 53)).toHaveLength(3); // the ask, and two more windows: never a fourth
+    } finally { armed.mockRestore(); }
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 const PROFILE: BotProfile = { id: "p", name: "P", role: "manager", avatar: "x", folder: "/p/repo", memoryPath: ".bot/memory.md", storeDir: "/p/store", tools: [], job: null, problem: null, instructions: "X" };
 
