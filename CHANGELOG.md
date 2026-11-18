@@ -6,6 +6,14 @@ release is a `v<version>` tag and is published as GitHub's Latest; a Botling 3 r
 (the suffix is the update channel 3.x installs follow) and is a pre-release draft that a person publishes, see
 `docs/release-v3.md`.
 
+## 3.2.3
+
+- **A 3.x release is now built, signed and notarized by GitHub.** Pushing a `vX.Y.Z-v3` tag builds the app on GitHub, signs and notarizes it, and leaves it as a pre-release draft; 2.x stays the Latest release.
+- **3.x can update itself.** An installed 3.x app now finds the newer 3.x release and updates through the 3.x channel, without touching the 2.x channel.
+- **The Antigravity helper is built from source, with no pinned fingerprint.** The helper that ships with the app is built from this repo's own source, so there is no longer a fingerprint to pin and keep in step.
+- **An app update replaces only the helper.** After an update the app swaps in the new helper that came with it; it no longer downloads the runtime again.
+- **CI fixes.** Main's checks are green again: a few split source files, their tests, and the Antigravity helper checks are brought back in step.
+
 ## 3.2.2
 
 - **The Note side note floats over the page and no longer eats the right column.** Opening a note in the margin used to push the page aside and take the whole right column; it now floats over the page at the right edge, so the Note keeps its width.
