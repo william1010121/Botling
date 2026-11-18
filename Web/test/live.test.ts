@@ -408,6 +408,23 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(framesOf(row)).toEqual([frame]);
   });
 
+  it("the wait of a drawing that was replaced ends without touching the one that replaced it, which can still be shown", () => {
+    const paints = holdPaints();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { row } = shownCard();
+    redraw(row, still({ data: `{"cpu":20}` }));
+    incomingOf(row).remove();
+    vi.advanceTimersByTime(redrawWait / 2);
+    redraw(row, still({ data: `{"cpu":30}` }));
+    const next = incomingOf(row);
+    // The lost one's wait is over now; the newer one is still being drawn and takes the place when it says it is ready.
+    vi.advanceTimersByTime(redrawWait / 2 + 1);
+    ready(next, 60);
+    paints.paint();
+    expect(framesOf(row)).toEqual([next]);
+    expect(next.srcdoc).toContain(`{"cpu":30}`);
+  });
+
   describe("the ready script of a page", () => {
     type Fake = { readyState?: string; height?: () => number; images?: { decode?: () => Promise<void> }[]; fonts?: { ready: Promise<unknown> } };
     /** Runs the ready script of a page against a fake document and window; its animation frames and timers are the test's. */
