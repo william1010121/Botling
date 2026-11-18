@@ -19,6 +19,10 @@ the owner's word) removes a rule.
 Why: `constructor`, `__proto__` and `toString` pass id patterns and resolve to built-ins: a prototype-key `via.codeHash` wedged the queue (2026-11-15), `grants[codeHash]` from a stored row needed `Object.hasOwn` (2026-11-16), and `claudeHint` returned the `Object` function for a model id `constructor` (2026-11-17).
 Check: A reviewer greps the diff for `[` lookups on data-keyed objects; a test passes `constructor` and `__proto__` as the key.
 
+## CS-02 · Grants, hashes, membership, switches and cached state are checked again where they are used, including after every `await` that can interleave   (from L-008, proposed 2026-11-18)
+Why: A check only at the start let later changes through: a crash restart ran code edited after the grant, a revoked module kept running (2026-11-15); a plugin removed during a download was still installed, a revoked row was revived, a bundle id was not rechecked on the press, and a cancel/send race kept `stopped` in the file (2026-11-16); a switch read once at send still moved a line after it was turned off (2026-11-17).
+Check: The reviewer lists each `await` in the changed code that follows a check and reads whether the check is repeated after it; a test changes the state during the `await` (a revoke, a switch off, a removal) and expects a refusal.
+
 Format of a rule:
 
 ```markdown
