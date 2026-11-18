@@ -105,7 +105,10 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund --prefix ../Web
       - run: npm run test:release
+      # tsc ran out of Node's default ~2 GB heap on a cold cache (exit 134, as in ci.yml; the release has no .cache/tsc).
       - run: npm run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - run: npm run test:unit
       - run: npm run test:reports
       - run: npx playwright-core install chromium-headless-shell
@@ -247,7 +250,10 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund --prefix ../Web
+      # tsc ran out of Node's default ~2 GB heap on a cold cache (exit 134, as in ci.yml; the release has no .cache/tsc).
       - run: npm run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - name: Package Windows installer and the update feed (never publishes)
         run: npm run dist:win
       - name: Check the installer and the update feed
@@ -295,7 +301,10 @@ jobs:
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund --prefix ../Web
+      # tsc ran out of Node's default ~2 GB heap on a cold cache (exit 134, as in ci.yml; the release has no .cache/tsc).
       - run: npm run typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
       - name: Package Linux x64 AppImage and deb (never publishes)
         run: npm run dist:linux
       - name: Record source and checksums
