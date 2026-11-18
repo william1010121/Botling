@@ -33,8 +33,8 @@ afterEach(() => {
 });
 
 const NOTE = "# Plan\n\nOld check: same tag means same build.\n<!-- cell -->\nsecond cell\n<!-- cell -->\n- [ ] todo\n";
-const thread = (cell = "") => ({
-  id: "c-0001", anchor: { cell, label: "", kind: "text", scope: "selection", quote: "second cell" },
+const thread = (cell = "", quote = "second cell") => ({
+  id: "c-0001", anchor: { cell, label: "", kind: "text", scope: "selection", quote },
   turns: [{ rid: "r0", q: "q?", a: "a.", qAt: 1000, aAt: 2000, seenAt: 1500 }],
   folded: false, created: 1000, updated: 2000, answering: false,
 });
@@ -188,6 +188,19 @@ describe("the ask box under its cell", () => {
     expect(document.activeElement).toBe(again.querySelector("textarea")); // and the blur's timer did not take it back
   });
 
+  it("a layout in the same tick as the user leaving the box does not pull the focus back (the click on 取消 / a scope tab must land)", async () => {
+    const env = await open();
+    const draft = await askFirstCell(env);
+    const ta = draft.querySelector("textarea");
+    expect(document.activeElement).toBe(ta);
+    const away = byText(draft, "button", "取消");
+    away.focus();
+    window.dispatchEvent(new Event("resize")); // layoutSoon(): a microtask, before the blur's timer runs
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(document.activeElement).toBe(away);
+  });
+
   it("render() does not pull the focus into the box when the user had left it", async () => {
     const env = await open();
     const draft = await askFirstCell(env);
@@ -233,7 +246,8 @@ describe("the ask box under its cell", () => {
     await askFirstCell(env2);
     expect(qa(env2, ".cell")[0].classList.contains("nm-cellhl")).toBe(true);
     env2.stop();
-    const env3 = await open([thread("c0")]); // its cell id is still on the way (the outline is asked 400 ms later): no card to draw yet
+    // a comment whose words are not in the note and whose cell id is still on the way (the outline is asked 400 ms later): "pending", no card to draw yet
+    const env3 = await open([thread("c0", "text nobody wrote")]);
     expect(q(env3, ".nm-rail")).toBeNull();
     await askFirstCell(env3);
     expect(qa(env3, ".cell")[0].classList.contains("nm-cellhl")).toBe(true);
