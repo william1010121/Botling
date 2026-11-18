@@ -851,6 +851,11 @@ describe("the component JSON of a report is checked before the card is drawn (Ca
   it("cardContent names the component, which <show> it is and the exact error; a component without a schema, a null one and a caller without the check give none", () => {
     expect(cardContent(`Done.\n${OVER}`, VRULES).invalid).toEqual([expect.stringContaining(ERROR)]);
     expect(cardContent(`${GOOD}\n${OVER}`, VRULES).invalid[0]).toContain("the 2nd <show>");
+    // The number is the <show>'s place in the report (a show with no data is still counted), written as an ordinal: 1st, 2nd, 3rd, 4th, 11th, 12th, 13th, 21st.
+    const nulls = (count: number) => '<show name="inline-report-block"></show>\n'.repeat(count);
+    for (const [before, word] of [[0, "1st"], [1, "2nd"], [2, "3rd"], [3, "4th"], [10, "11th"], [11, "12th"], [12, "13th"], [20, "21st"], [21, "22nd"]] as const) {
+      expect(cardContent(`${nulls(before)}${OVER}`, VRULES).invalid[0], word).toContain(`(the ${word} <show>)`);
+    }
     expect(cardContent('<show name="gpu-monitor">{"value":9,"max":1}</show>', VRULES).invalid).toEqual([]);
     expect(cardContent('<show name="inline-report-block"></show>', VRULES).invalid).toEqual([]);
     expect(cardContent(OVER, RULES).invalid).toEqual([]);
@@ -990,5 +995,7 @@ describe("the component JSON of a report is checked before the card is drawn (Ca
     expect(takeInvalid(card())).toBeNull();
     expect(takeInvalid(card({ invalid: "bad", invalidRun: 1, invalidTold: true }))).toBeNull();
     expect(takeInvalid(card({ invalid: "bad" }))).toBeNull();
+    // A worker that could not be told (-1) is never told, even before anything was marked told.
+    expect(takeInvalid(card({ invalid: "bad", invalidRun: -1 }))).toBeNull();
   });
 });

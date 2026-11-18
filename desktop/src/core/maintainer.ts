@@ -184,7 +184,7 @@ export class MaintainerDesk {
     // A card worker only describes the chart it wants; the name is Maintainer's to give (2026-11-18, the user). A name the worker still wrote for a component the library does not
     // have is a hint in the description, not a name to build under (it would otherwise also decide when the ask counts as answered, `deliverAsked`).
     if (card && bot && !isUnnamedCardAsk(name) && !this.deps.library.names.includes(name)) {
-      request = `${request}\n(The worker called it "${name}": a hint only, not the name to give it.)`.slice(0, 4_500);
+      request = `${request}\n(The worker called it "${name}": a hint only, not the name to give it.)`;
       name = unnamedCardAsk(request);
     }
     // A card worker's ask: a component the library has is only looked up for it, and Maintainer is not woken (`askForCard`).
@@ -368,10 +368,9 @@ export class MaintainerDesk {
     const said = reason ? ` Maintainer said: "${shortened(reason, 500)}".` : "";
     const user = ask.userAsked ? ` The user had asked you: "${ask.userAsked}".` : "";
     if (ask.card) {
-      // The worker never named it (`isUnnamedCardAsk`): it is "the chart you described", not a placeholder name.
-      const what = isUnnamedCardAsk(ask.name) ? "a component for the chart you described" : `the component "${ask.name}" you asked for`;
-      bot.workers.tellCardWorker(ask.card, `(App: Maintainer did not add ${what}.${said} Show the data another way with another component from your list that fits exactly as its usage defines it, or, if none does, say plainly in one or two sentences that no fitting component exists. Do not draw it yourself, do not force a component to fit, and do not ask again.)`);
-      bot.appNotice(`Maintainer did not add ${isUnnamedCardAsk(ask.name) ? "a component" : ask.name} for a card:` + (reason ? " " + shortened(firstLine(reason), 160) : ""));
+      // A card ask is always the nameless one (`requestComponentChange`): it is "the chart you described", never a placeholder name.
+      bot.workers.tellCardWorker(ask.card, `(App: Maintainer did not add a component for the chart you described.${said} Show the data another way with another component from your list that fits exactly as its usage defines it, or, if none does, say plainly in one or two sentences that no fitting component exists. Do not draw it yourself, do not force a component to fit, and do not ask again.)`);
+      bot.appNotice(`Maintainer did not add a component for a card:` + (reason ? " " + shortened(firstLine(reason), 160) : ""));
       return;
     }
     bot.appMessage(`(App: Maintainer did not add the component "${ask.name}" you asked for${ask.changing ? " (or change it)" : ""}.${said}${user} Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)`);

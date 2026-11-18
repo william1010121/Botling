@@ -126,7 +126,7 @@ describe("validateCardShow: the live inline-chart (the library's copy: `items` o
     expect(check({ ...TARGETS, items: [{ label: "a", median: "1", p90: 2 }] })).toMatch(/^items\[0\]\.median must be a number/);
     expect(check({ ...TARGETS, items: [{ label: "a", median: 1 }] })).toMatch(/^items\[0\]\.p90 must be a number/);
     expect(check({ ...TARGETS, items: [{ label: "a", median: 5, p90: 4 }] })).toMatch(/^items\[0\]\.p90 \(4\) must not be below median \(5\)/);
-    // A log scale cannot draw 0: asked for, or chosen by itself when the values span more than 20×.
+    // A log scale asked for cannot draw 0. (The drawer also goes log by itself when every value is above 0 and they span more than 20×: nothing left there to fail on.)
     expect(check({ ...TARGETS, log: true, items: [{ label: "a", median: 0, p90: 1 }] })).toMatch(/^items\[0\]\.median is 0, and a log scale cannot draw 0/);
     expect(check({ ...TARGETS, log: true, target: 0 })).toMatch(/^a log scale cannot draw a target of 0/);
     expect(check({ ...TARGETS, target: 1, items: [{ label: "a", median: 2, p90: 100 }] })).toBeNull();

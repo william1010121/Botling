@@ -305,7 +305,7 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
   const shows: CardShow[] = [];
   const rejected: string[] = [];
   const invalid: string[] = [];
-  for (const display of parsed.displays) {
+  for (const [position, display] of parsed.displays.entries()) {
     const command = display.command && rules ? cardScriptCommand(display.command, rules) : null;
     // A command that is not kept is said, never dropped silently (the component would otherwise draw its default and nobody would know).
     if (display.command && rules && !command) rejected.push(rejectedMessage(display.name, display.command, rules.scriptsDir));
@@ -313,7 +313,7 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
     if (display.data === "null" && !command && !rules?.hasCommand(display.name)) continue;
     // A component whose JSON breaks its own usage (a progress value above its max, a chart kind that is not there) is said with the exact error.
     const wrong = display.data !== "null" ? rules?.validate?.(display.name, display.data) : null;
-    if (wrong) invalid.push(`component ${JSON.stringify(display.name.slice(0, 100))} (the ${ordinal(shows.length + 1)} <show>): ${wrong.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 500)}`);
+    if (wrong) invalid.push(`component ${JSON.stringify(display.name.slice(0, 100))} (the ${ordinal(position + 1)} <show>): ${wrong.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").slice(0, 500)}`);
     shows.push({
       name: display.name.slice(0, 200), data: display.data, ...(typeof display.at === "number" ? { at: display.at } : {}),
       ...(command ? { command } : {}), ...(command && typeof display.refresh === "number" && Number.isInteger(display.refresh) && display.refresh >= 1 && display.refresh <= 3600 ? { refresh: display.refresh } : {}),

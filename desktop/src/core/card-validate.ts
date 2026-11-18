@@ -111,7 +111,7 @@ function checkChart(chart: Record<string, unknown>, kinds: readonly string[]): s
   return null;
 }
 
-/** targets: rows `{label, median, p90}` (p90 ≥ median) against one `target`; `log` only true / false, and a log scale cannot draw a 0 (chosen by `log: true`, or by itself when the values span more than 20×). */
+/** targets: rows `{label, median, p90}` (p90 ≥ median) against one `target`; `log` only true / false, and a log scale asked for with `log: true` cannot draw a 0. */
 function checkTargets(chart: Record<string, unknown>, each: (items: unknown[], path: string, check: (item: Record<string, unknown>, at: string) => string | null) => string | null): string | null {
   const at = chart.items != null || chart.rows == null ? "items" : "rows";
   const rows = chart[at];
@@ -127,9 +127,8 @@ function checkTargets(chart: Record<string, unknown>, each: (items: unknown[], p
   });
   if (inner) return inner;
   const shown = (rows as Array<Record<string, number>>).slice(0, 12);
-  const values = [chart.target as number, ...shown.flatMap((row) => [row.median!, row.p90!])];
-  const low = Math.min(...values), high = Math.max(...values);
-  const log = chart.log === true || (chart.log == null && low > 0 && high / low > 20);
+  // Chosen by `log: true` only: the drawer also switches to log by itself when every value is above 0 and they span more than 20×, and then there is no 0 left to fail on.
+  const log = chart.log === true;
   if (log) {
     if (!((chart.target as number) > 0)) return `a log scale cannot draw a target of 0: make target above 0, or give "log": false`;
     const zero = shown.findIndex((row) => !(row.median! > 0));

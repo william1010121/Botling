@@ -446,6 +446,21 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
       expect(record.workerCards![0]).toMatchObject({ invalidRun: -1, shows: [{ name: "inline-report-block" }] });
       expect(r.peek.messageView(record).workerCards[0].warning).toContain(MESSAGE);
     });
+
+    it("a failure to tell a worker that the card no longer follows (the card was rebound to another worker meanwhile) changes nothing", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.handoff.mockImplementation(async (tool: string) => {
+        if (tool !== "app_send_message") return { task_id: "T1", run: 1 };
+        record.workerCards![0]!.taskId = "T9";
+        throw new Error("worker is gone");
+      });
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }));
+      await waitFor("the send tried", () => record.workerCards![0]!.taskId === "T9");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(record.workerCards![0]).toMatchObject({ status: "running", invalidRun: 1 });
+      expect(record.workerCards![0]!.shows).toBeUndefined();
+    });
   });
 
   it("tellCardWorker sends the words to the worker as app_send_message", async () => {
