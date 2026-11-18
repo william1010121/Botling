@@ -197,22 +197,40 @@ describe("components in the chat", () => {
     expect(document.querySelector(".row[data-id=\"m4\"] iframe")).toBeNull();
   });
 
-  it("redraw a message with components only when the components change, not on every new state", () => {
+  it("redraw a message with components only when the components change, not on every new state; a page on its way is shown, then the latest is drawn", () => {
+    const paints = holdPaints();
+    const ready = (frame: HTMLIFrameElement) => window.dispatchEvent(new MessageEvent("message", { data: { ccb: "ready", height: 60 }, source: frame.contentWindow }));
     const shown = message({ id: "m5", text: "Here", displays: [{ name: "card", data: "{}", at: null }] });
     const plain = message({ id: "m6", text: "Plain words" });
     window.ccb.setState(state([shown, plain]));
     const row = () => document.querySelector(".row[data-id=\"m5\"]");
     const before = row();
     const plainBefore = document.querySelector(".row[data-id=\"m6\"]");
+    const first = frames().find((frame) => frame.closest(".row[data-id=\"m5\"]"))!;
     // The same components, sent again as a new object: nothing is redrawn.
     window.ccb.setState(state([shown, plain], { components: JSON.parse(JSON.stringify(components)) }));
     expect(row()).toBe(before);
-    // A template changed: the message drawing it is drawn again; the plain one is not.
+    // A template changed: the message drawing it is drawn again, behind the shown frame; the plain one is not.
     window.ccb.setState(state([shown, plain], { components: { ...components, card: info("<p>card v2</p>", { version: 1 }) } }));
-    expect(frames().find((frame) => frame.srcdoc.includes("card v2"))).toBeTruthy();
+    const v2 = frames().find((frame) => frame.srcdoc.includes("card v2"))!;
+    expect(v2).toBeTruthy();
+    expect(first.isConnected).toBe(true);
     expect(document.querySelector(".row[data-id=\"m6\"]")).toBe(plainBefore);
-    // And back again: drawn again with the old template.
+    // And back again before it is ready: the page on its way is not thrown away (a slow page would never be shown); the old template waits behind it.
     window.ccb.setState(state([shown, plain]));
+    expect(v2.isConnected).toBe(true);
+    expect(frames().filter((frame) => frame.classList.contains("incoming"))).toEqual([v2]);
+    // v2 is ready: it takes the place, and then the latest (the old template) is drawn behind it.
+    ready(v2);
+    paints.paint();
+    expect(first.isConnected).toBe(false);
+    const latest = frames().find((frame) => frame.classList.contains("incoming"))!;
+    expect(latest).toBeTruthy();
+    expect(latest.srcdoc).not.toContain("card v2");
+    expect(v2.isConnected).toBe(true);
+    ready(latest);
+    paints.paint();
+    expect(v2.isConnected).toBe(false);
     expect(frames().some((frame) => frame.srcdoc.includes("card v2"))).toBe(false);
   });
 });

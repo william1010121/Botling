@@ -27,11 +27,26 @@ function afterPaint(work: () => void): void {
  * one step, and only when its page says (`{ccb: "ready", height}`, component-page.ts `readyScript`) that it is loaded, painted,
  * its pictures decoded and it has a size: the empty page a frame starts with, a `load` event, or the clock are not that. Until
  * then the old drawing stays as it is, and its shell keeps its height; `next`'s size writes no height. A page that does not get
- * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads replaces `next`.
+ * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads waits behind it (only
+ * the newest waits) and is drawn once `next` has taken the place, or been given up: a page slower than the refresh still gets shown.
+ * A page that says it is ready with no height (an empty card) takes the place and the shell keeps the height it has. A page given up
+ * once is, for the same data, drawn again without waiting for its pictures to decode (`ccbBuild(true)`): never the same wait forever.
  */
 export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
-  shown.ccbIncoming?.remove();
-  const page = next.ccbPending;
+  // One still on its way (its page has not said it is ready, and it is still in the page) is not thrown away for a newer one: a
+  // page that takes longer than the refresh interval would then never be shown. The newer one waits its turn; only the newest waits.
+  const flying = shown.ccbIncoming;
+  if (flying?.ccbReady && flying.isConnected) {
+    shown.ccbQueued = next;
+    shown.ccbDrawn = next.ccbDrawn;
+    shown.ccbData = next.ccbData;
+    return;
+  }
+  flying?.remove();
+  shown.ccbQueued = undefined;
+  let page = next.ccbPending;
+  // Given up once for this very data: not waited for again as long (its pictures may be what never decodes).
+  if (shown.ccbGaveUp !== undefined && shown.ccbGaveUp === next.ccbDrawn && next.ccbBuild) page = next.ccbBuild(true);
   next.ccbPending = null;
   next.classList.remove("pending");
   next.classList.add("incoming");
@@ -63,6 +78,8 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     if (shown.ccbIncoming !== next) return;
     shown.ccbIncoming = null;
     shown.ccbShownDrawn = undefined;
+    const queued = shown.ccbQueued;
+    shown.ccbQueued = undefined;
     if (!next.isConnected) return;
     if (!shown.isConnected) return next.remove();
     next.ccbAnswer = shown.ccbAnswer;
@@ -74,7 +91,9 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     // As tall as it measured (the last size it said, else the one it said it was ready at): the one height that counts.
     const measured = next.ccbSized ?? height;
     next.style.removeProperty("height");
-    settleHeight(next, measured);
+    // Said it is ready with no height (an empty card): the shell keeps the height it has, it does not collapse.
+    if (measured > 0) settleHeight(next, measured);
+    else next.style.height = shown.style.height || `${shown.offsetHeight}px`;
     // Not moved in the page (it would load again): the old one goes and the new one shows.
     const box = shown.getBoundingClientRect();
     shown.remove();
@@ -82,7 +101,9 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     next.removeAttribute("aria-hidden");
     next.removeAttribute("inert");
     next.removeAttribute("tabindex");
-    keepReading(next, box, measured);
+    if (measured > 0) keepReading(next, box, measured);
+    // What was asked for while it was on its way is drawn behind it now.
+    if (queued && queued.ccbDrawn !== next.ccbDrawn) drawBehind(next, queued);
   };
   // Given up: the old drawing stays, and what it was drawn from comes back, so the next redraw draws the page again.
   const giveUp = () => {
@@ -95,7 +116,11 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
       shown.ccbData = shown.ccbShownDrawn.data;
       shown.ccbShownDrawn = undefined;
     }
+    shown.ccbGaveUp = next.ccbDrawn;
+    const queued = shown.ccbQueued;
+    shown.ccbQueued = undefined;
     next.remove();
+    if (queued && shown.isConnected && queued.ccbDrawn !== shown.ccbDrawn) drawBehind(shown, queued);
   };
   const timer = setTimeout(giveUp, redrawWait);
   next.ccbReady = (height) => afterPaint(() => swap(height));

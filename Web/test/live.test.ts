@@ -119,17 +119,24 @@ describe("a frame that takes live data", () => {
     keepFrames(row, messageElement(message([card({ data: `{"cpu":80}` })]), components));
     expect(row.querySelectorAll(".component-frame")).toHaveLength(2);
     expect(next.isConnected).toBe(true);
-    // Newer data while it loads: it is replaced, the old drawing still on screen.
+    // Newer data while it loads: the page on its way is not thrown away (a page slower than the refresh would never show); the newest waits behind it.
     keepFrames(row, messageElement(message([card({ data: `{"cpu":90}` })]), components));
-    expect(next.isConnected).toBe(false);
-    const newest = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
-    expect(newest.srcdoc).toContain(`{"cpu":90}`);
+    keepFrames(row, messageElement(message([card({ data: `{"cpu":95}` })]), components));
+    expect(next.isConnected).toBe(true);
+    expect(row.querySelectorAll(".component-frame.incoming")).toHaveLength(1);
     expect(frame.isConnected).toBe(true);
-    newest.dispatchEvent(new Event("load"));
+    next.dispatchEvent(new Event("load"));
     paints.paint();
     expect(frame.isConnected).toBe(true);
-    say(newest, { ccb: "ready", height: 90 });
+    say(next, { ccb: "ready", height: 90 });
     expect(frame.isConnected).toBe(true);
+    paints.paint();
+    // It took the place; only the newest of what came meanwhile is drawn now, behind it.
+    expect(frame.isConnected).toBe(false);
+    expect(next.classList.contains("incoming")).toBe(false);
+    const newest = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(newest.srcdoc).toContain(`{"cpu":95}`);
+    say(newest, { ccb: "ready", height: 90 });
     paints.paint();
     expect([...row.querySelectorAll(".component-frame")]).toEqual([newest]);
     expect(newest.classList.contains("incoming")).toBe(false);
@@ -202,38 +209,83 @@ describe("a card given a new page keeps its old picture until the new one is rea
     });
   }
 
-  it("does not show a page that is slow: past the old two seconds it waits, and past its wait it is given up, the old picture staying and the next redraw drawing it again", () => {
+  it("does not show a page that is slow: past the old two seconds it waits, and past its wait it is given up, the old picture staying; what waited behind it is drawn then, and the next redraw asks again", () => {
     const paints = holdPaints();
     // Only the clock: the held animation frames stay the test's own.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { row, frame } = shownCard();
-    // Two pages asked for one after the other (the first replaced); both given up together.
+    // A page on its way, and another page asked for meanwhile: it waits.
     redraw(row, still({ data: `{"cpu":20}` }));
+    const first = incomingOf(row);
     redraw(row, still(), v2);
-    const next = incomingOf(row);
     vi.advanceTimersByTime(2500);
     paints.paint();
-    expect(framesOf(row)).toEqual([frame, next]);
+    expect(framesOf(row)).toEqual([frame, first]);
     expect(frame.style.height).toBe("120px");
+    // The first is given up: the old picture stays, and the one that waited is drawn now (with its own wait).
+    vi.advanceTimersByTime(redrawWait);
+    expect(first.isConnected).toBe(false);
+    const second = incomingOf(row);
+    expect(framesOf(row)).toEqual([frame, second]);
+    expect(second.srcdoc).toContain("v2");
+    expect(frame.style.height).toBe("120px");
+    // Its late word is nobody's now.
+    ready(first, 40);
+    paints.paint();
+    expect(framesOf(row)).toEqual([frame, second]);
     vi.advanceTimersByTime(redrawWait);
     expect(framesOf(row)).toEqual([frame]);
-    expect(frame.isConnected).toBe(true);
-    // Its late word is nobody's now.
-    ready(next, 40);
-    paints.paint();
-    expect(framesOf(row)).toEqual([frame]);
     expect(frame.style.height).toBe("120px");
-    // The frame is still what it was drawn from before either, so a redraw with the first of them asks for its page again.
+    // The frame is what it was drawn from before either, so a redraw with the first of them asks for its page again.
     redraw(row, still({ data: `{"cpu":20}` }));
     const again = incomingOf(row);
     expect(again.srcdoc).toContain(`{"cpu":20}`);
-    expect(again).not.toBe(next);
+    expect(again).not.toBe(first);
     ready(again, 60);
     paints.paint();
     expect(framesOf(row)).toEqual([again]);
   });
 
-  it("a frame that takes live data is not sent data while a new page is being drawn behind it, which that data replaces", () => {
+  it("a page given up once is asked for again, for the same data, without waiting for its pictures; other data waits for them as before", () => {
+    const paints = holdPaints();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { row, frame } = shownCard();
+    redraw(row, still({ data: `{"cpu":20}` }));
+    const first = incomingOf(row);
+    expect(first.srcdoc).toContain("image.decode");
+    vi.advanceTimersByTime(redrawWait);
+    expect(framesOf(row)).toEqual([frame]);
+    // The same data again: its page no longer waits for pictures to decode (the one that never did), and it takes the place.
+    redraw(row, still({ data: `{"cpu":20}` }));
+    const quick = incomingOf(row);
+    expect(quick.srcdoc).toContain(`{"cpu":20}`);
+    expect(quick.srcdoc).toContain("ccb: 'ready'");
+    expect(quick.srcdoc).not.toContain("image.decode");
+    ready(quick, 70);
+    paints.paint();
+    expect(framesOf(row)).toEqual([quick]);
+    // Other data, on a frame that gave up on something else, is waited for in full.
+    redraw(row, still({ data: `{"cpu":30}` }));
+    expect(incomingOf(row).srcdoc).toContain("image.decode");
+  });
+
+  it("a page that says it is ready with no height (an empty card) takes the place and the shell keeps the height it has", () => {
+    const paints = holdPaints();
+    const { row, frame } = shownCard();
+    redraw(row, still({ data: `{"cpu":20}` }));
+    const next = incomingOf(row);
+    ready(next, 0);
+    paints.paint();
+    expect(framesOf(row)).toEqual([next]);
+    expect(frame.isConnected).toBe(false);
+    expect(next.classList.contains("incoming")).toBe(false);
+    expect(next.style.position).toBe("");
+    expect(next.style.height).toBe("120px");
+    // Nor is 0 remembered: a card drawn anew starts as tall as before.
+    expect(framesOf(messageElement(message([still()]), components))[0].style.height).toBe("120px");
+  });
+
+  it("a frame that takes live data is not sent data while a new page is being drawn behind it; the data waits behind that page and is drawn once it is shown", () => {
     const paints = holdPaints();
     const { row, frame } = shownCard();
     const posts: unknown[] = [];
@@ -242,12 +294,16 @@ describe("a card given a new page keeps its old picture until the new one is rea
     // Its page changes: drawn behind it (live data cannot carry a new template).
     redraw(row, still(), v2);
     const next = incomingOf(row);
-    // The template is back, with new data: the shown frame is not told it (it is about to be replaced), a page with it is drawn instead.
+    // The template is back, with new data: the shown frame is not told it, and the page on its way is not thrown away.
     redraw(row, still({ data: `{"cpu":80}` }));
     expect(posts).toEqual([]);
-    expect(next.isConnected).toBe(false);
+    expect(next.isConnected).toBe(true);
+    ready(next, 100);
+    paints.paint();
+    expect(framesOf(row)).toHaveLength(2);
     const latest = incomingOf(row);
     expect(latest.srcdoc).toContain(`{"cpu":80}`);
+    expect(latest.srcdoc).not.toContain("v2");
     ready(latest, 120);
     paints.paint();
     expect(framesOf(row)).toEqual([latest]);
@@ -295,29 +351,34 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(framesOf(row)).toEqual([]);
   });
 
-  it("A, B, then C, with B's page late: B is dropped, its late words change nothing, and C is shown once it is ready", () => {
+  it("A, B, then C and D: B on its way is not dropped, only the newest of C and D waits, and B and then D take the place", () => {
     const paints = holdPaints();
     const { row, frame } = shownCard();
     redraw(row, still({ data: `{"cpu":20}` }));
     const b = incomingOf(row);
     redraw(row, still({ data: `{"cpu":30}` }));
-    const c = incomingOf(row);
-    expect(b.isConnected).toBe(false);
-    expect(framesOf(row)).toEqual([frame, c]);
-    // B was ready before it was dropped; its reply comes in after C was asked for.
-    ready(b, 200);
-    say(b, { ccb: "size", height: 200 });
+    redraw(row, still({ data: `{"cpu":40}` }));
+    expect(framesOf(row)).toEqual([frame, b]);
+    // Not shown before B says it is ready.
     paints.paint();
-    expect(framesOf(row)).toEqual([frame, c]);
+    expect(framesOf(row)).toEqual([frame, b]);
     expect(frame.style.height).toBe("120px");
-    // C ready first, then B again: the picture is C's and stays.
-    ready(c, 130);
-    paints.paint();
     ready(b, 200);
     paints.paint();
-    expect(framesOf(row)).toEqual([c]);
-    expect(c.srcdoc).toContain(`{"cpu":30}`);
-    expect(c.style.height).toBe("130px");
+    expect(frame.isConnected).toBe(false);
+    expect(b.style.height).toBe("200px");
+    // D (the newest) is drawn behind B; C was never drawn.
+    const d = incomingOf(row);
+    expect(framesOf(row)).toEqual([b, d]);
+    expect(d.srcdoc).toContain(`{"cpu":40}`);
+    expect(b.style.getPropertyValue("height")).toBe("200px");
+    ready(d, 130);
+    paints.paint();
+    expect(framesOf(row)).toEqual([d]);
+    expect(d.style.height).toBe("130px");
+    // Nothing more is waiting: the same data again draws nothing.
+    redraw(row, still({ data: `{"cpu":40}` }));
+    expect(framesOf(row)).toEqual([d]);
   });
 
   it("a drawing behind the shown frame writes neither the visible height nor the remembered one", () => {
@@ -373,12 +434,12 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(boxes[0].style.minHeight).toBe("80px");
   });
 
-  it("a ready that says no size, or a size that is not a number, is not a ready", () => {
+  it("a ready whose height is not a number, or is below 0, is not a ready", () => {
     const paints = holdPaints();
     const { row } = shownCard();
     redraw(row, still({ data: `{"cpu":20}` }));
     const next = incomingOf(row);
-    for (const height of [0, -5, "90", null]) ready(next, height as number);
+    for (const height of [-5, "90", null, Number.NaN, Infinity]) ready(next, height as number);
     paints.paint();
     expect(framesOf(row)).toHaveLength(2);
     ready(next, 90);
@@ -426,10 +487,10 @@ describe("a card given a new page keeps its old picture until the new one is rea
   });
 
   describe("the ready script of a page", () => {
-    type Fake = { readyState?: string; height?: () => number; images?: { decode?: () => Promise<void> }[]; fonts?: { ready: Promise<unknown> } };
+    type Fake = { quick?: boolean; readyState?: string; height?: () => number; images?: { decode?: () => Promise<void> }[]; fonts?: { ready: Promise<unknown> } };
     /** Runs the ready script of a page against a fake document and window; its animation frames and timers are the test's. */
     function runReady(fake: Fake = {}) {
-      const page = componentPage("<p>x</p>", "null", {}, "2x2", "chat", false, false, true);
+      const page = componentPage("<p>x</p>", "null", {}, "2x2", "chat", false, false, fake.quick ? "quick" : true);
       const scripts = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((one) => one[1]);
       const posted: unknown[] = [];
       const rafs: (() => void)[] = [];
@@ -502,19 +563,30 @@ describe("a card given a new page keeps its old picture until the new one is rea
       expect(font.posted).toEqual([]);
     });
 
-    it("never says it is ready with no size: it looks again, says it once there is one, and stops looking after a while", async () => {
-      let height = 0;
-      const run = runReady({ height: () => height });
-      for (let i = 0; i < 6; i++) await run.frame();
-      expect(run.posted).toEqual([]);
-      height = 25;
+    it("a page with nothing in it is ready too, with height 0, after the same two painted frames", async () => {
+      const run = runReady({ height: () => 0 });
+      await run.settled();
       await run.frame();
-      expect(run.posted).toEqual([{ ccb: "ready", height: 25 }]);
-      const empty = runReady({ height: () => 0 });
-      for (let i = 0; i < 120; i++) await empty.frame();
-      expect(empty.posted).toEqual([]);
-      expect(empty.requested()).toBeGreaterThanOrEqual(50);
-      expect(empty.requested()).toBeLessThanOrEqual(60);
+      expect(run.posted).toEqual([]);
+      await run.frame();
+      expect(run.posted).toEqual([{ ccb: "ready", height: 0 }]);
+      for (let i = 0; i < 5; i++) await run.frame();
+      expect(run.posted).toHaveLength(1);
+    });
+
+    it("a page asked for again after one that never got ready does not wait for its pictures (a font still holds it)", async () => {
+      const stuck = { decode: () => new Promise<void>(() => {}) };
+      const quick = runReady({ images: [stuck], quick: true });
+      await quick.settled();
+      await quick.frame();
+      await quick.frame();
+      expect(quick.posted).toEqual([{ ccb: "ready", height: 41 }]);
+      const full = runReady({ images: [stuck] });
+      for (let i = 0; i < 5; i++) await full.frame();
+      expect(full.posted).toEqual([]);
+      const font = runReady({ quick: true, fonts: { ready: new Promise(() => {}) } });
+      for (let i = 0; i < 5; i++) await font.frame();
+      expect(font.posted).toEqual([]);
     });
 
     it("does not wait for a frame nobody paints (a window out of sight): a short timer stands in", async () => {
