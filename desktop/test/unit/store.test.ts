@@ -160,7 +160,7 @@ describe("a partial components.updated", () => {
 
   it("a snapshot after it brings the whole list back", async () => {
     let call = 0;
-    const store = new WorkspaceStore(async () => (call++ === 0 ? { ...snap("e1", 1), components: { big: info("<big/>"), small: info("<small/>") } } : { ...snap("e1", 3), components: { small: info("<small3/>") } }));
+    const store = new WorkspaceStore(async (): Promise<ResultOf<"chat.snapshot">> => (call++ === 0 ? { ...snap("e1", 1), components: { big: info("<big/>"), small: info("<small/>") } } : { ...snap("e1", 3), components: { small: info("<small3/>") } }));
     await store.resync();
     store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "components.updated", partial: true, components: { small: info("<small2/>") } } });
     expect(Object.keys(store.getView().components).sort()).toEqual(["big", "small"]);
