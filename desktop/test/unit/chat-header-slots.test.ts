@@ -44,6 +44,7 @@ const client = (): Client => {
     request: vi.fn(async (command: any) => {
       if (command.type === "plugins.panel") return { title: command.name, source: "", settings: {} };
       if (command.type === "card.page") return { url: `botling-card://page/${++pages}` };
+      if (command.type === "plugins.list") return { plugins: [] }; // Plugins.tsx reads list.plugins for the frame's stamp
       return { result: null };
     }),
     onEvent: () => () => {},
