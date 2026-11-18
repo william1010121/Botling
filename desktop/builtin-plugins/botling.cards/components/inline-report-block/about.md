@@ -3,7 +3,7 @@ Sizes: 2x2
 Icon: chart.bar.doc.horizontal
 Built-in: yes
 
-Use it when the answer is mostly text and one block makes it clearer (a KPI row, a comparison table, the options with a recommendation, a flowchart of the cause). Several blocks = several `<show>` tags (one block each). When the result needs many charts, a matplotlib figure or a verdict card, show them as several blocks or a matplotlib PNG shown inline; make a report page only when the user asked for one (or agreed after you asked in the chat). It does not call `ccb.answer`: the user does not answer it, and nothing comes back to the bot.
+Use it when the answer is mostly text and one block makes it clearer (a KPI row, a comparison table, the options with a recommendation, a flowchart of the cause). Several blocks = several `<show>` tags (one block each). When the result needs many charts or a verdict card, show them as several blocks; make a report page only when the user asked for one (or agreed after you asked in the chat). It does not call `ccb.answer`: the user does not answer it, and nothing comes back to the bot.
 
 ## Data format (window.ccb.data)
 
@@ -45,7 +45,7 @@ Supported `type`s, with one example each (the whole JSON goes inside `<show>`):
 - `sources`: `{"type":"sources","items":[{"ref":"a58c883","text":"任務面板已安裝"}]}`
 - `image` (PNG / JPEG only: a `data:image/…` URI or a local file path; `alt`, `caption?`, `annotations` `{x,y,label}` with x and y 0–1): `{"type":"image","src":"data:image/png;base64,…","alt":"側欄只剩 Main","annotations":[{"x":0.2,"y":0.1,"label":"只剩 Main"}]}`
 
-Not drawn here: `figure` and `experiment` (they need the report renderer's matplotlib run) and the retired native charts (`bar`, `trend`, `donut`, `beforeafter`, `quadrant`) — draw those as a matplotlib PNG shown inline (a report page only when the user asked for one). LaTeX is not typeset (shown as text). A full report spec (with `sections`) is not accepted: pass one block.
+Not drawn here: `figure` and `experiment` (they need the report renderer's matplotlib run) and the retired native charts (`bar`, `trend`, `donut`, `beforeafter`, `quadrant`) — no block here draws those, and none is to be bent into them (a card worker describes the chart it wants in a `<component>` and Maintainer decides; a bot with no card worker draws a matplotlib PNG shown inline; a report page only when the user asked for one). LaTeX is not typeset (shown as text). A full report spec (with `sections`) is not accepted: pass one block.
 
 ## Wrong data
 

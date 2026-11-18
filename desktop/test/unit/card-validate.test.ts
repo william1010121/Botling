@@ -5,7 +5,7 @@ import { join } from "node:path";
 // @ts-expect-error jsdom ships without .d.ts
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
-import { CHART_KIND_NAMES, REPORT_BLOCK_TYPES, validateCardShow } from "../../src/core/card-validate";
+import { CHART_KIND_NAMES, REPORT_BLOCK_TYPES, liveList, validateCardShow } from "../../src/core/card-validate";
 import { INLINE_EXAMPLES } from "../../src/core/inline-blocks";
 
 const cardsFolder = new URL("../../builtin-plugins/botling.cards/components", import.meta.url).pathname;
@@ -27,11 +27,21 @@ const examples = INLINE_EXAMPLES.split("\n").map((line) => /: (\{.*\})$/.exec(li
 const BARS = { kind: "bars", title: "t", items: [{ label: "a", value: 1 }, { label: "b", value: 2 }] };
 
 describe("validateCardShow: the lists are the templates' own", () => {
-  it("the chart kinds and the report block types are exactly the ones the templates draw", () => {
-    const chartKinds = /KINDS = \[([^\]]+)\]/.exec(template("inline-chart"))![1]!.split(",").map((kind) => kind.trim().replace(/'/g, ""));
-    expect([...CHART_KIND_NAMES]).toEqual(chartKinds);
-    const types = /var TYPES = \[([^\]]+)\]/.exec(template("inline-report-block"))![1]!.split(",").map((type) => type.trim().replace(/'/g, ""));
-    expect([...REPORT_BLOCK_TYPES]).toEqual(types);
+  it("every chart kind and report block type the repo's templates draw is known here (the live copy in the library may have more: targets), and the types are exactly the same", () => {
+    const chartKinds = liveList(template("inline-chart"), "KINDS")!;
+    for (const kind of chartKinds) expect(CHART_KIND_NAMES, kind).toContain(kind);
+    expect(CHART_KIND_NAMES).toContain("targets");
+    expect([...REPORT_BLOCK_TYPES]).toEqual(liveList(template("inline-report-block"), "TYPES"));
+  });
+
+  it("liveList reads the KINDS / TYPES list a template names, and nothing when there is none", () => {
+    expect(liveList("var MAX = 12, KINDS = ['bars', \"gantt\" , 'targets'];", "KINDS")).toEqual(["bars", "gantt", "targets"]);
+    expect(liveList("var TYPES = ['kpi', 'table'];", "TYPES")).toEqual(["kpi", "table"]);
+    expect(liveList("var TYPES = ['kpi'];", "KINDS")).toBeNull();
+    expect(liveList("var MYKINDS = ['a'];", "KINDS")).toBeNull();
+    expect(liveList("KINDS = [];", "KINDS")).toBeNull();
+    expect(liveList(null, "KINDS")).toBeNull();
+    expect(liveList(undefined, "TYPES")).toBeNull();
   });
 
   it("every example the card worker is given passes, and the real drawer draws it without its error card", () => {
@@ -46,7 +56,7 @@ describe("validateCardShow: the lists are the templates' own", () => {
 
 describe("validateCardShow: inline-chart", () => {
   const wrong: Array<[string, unknown, RegExp]> = [
-    ["a waterfall written with `items` (what a bot guessed)", { kind: "waterfall", title: "x", items: [{ label: "a", value: 1 }] }, /steps must be an array/],
+    ["a waterfall with neither steps nor items", { kind: "waterfall", title: "x" }, /steps must be an array/],
     ["no kind", { title: "x", items: [] }, /kind is missing/],
     ["an unknown kind", { kind: "pie", items: [] }, /kind "pie" is unknown/],
     ["a wrong better", { ...BARS, better: "best" }, /better must be/],
@@ -72,6 +82,79 @@ describe("validateCardShow: inline-chart", () => {
     expect(validateCardShow("inline-chart", "{}")).toMatch(/kind is missing/);
     expect(validateCardShow("inline-chart", "")).toBeNull();
     expect(validateCardShow("inline-chart", "null")).toBeNull();
+  });
+});
+
+describe("validateCardShow: the live inline-chart (the library's copy: `items` on every kind, targets, kinds Maintainer adds)", () => {
+  const check = (data: unknown, template?: string) => validateCardShow("inline-chart", JSON.stringify(data), template);
+  const ROWS = [{ label: "冷啟", median: 13.1, p90: 26.8 }, { label: "重啟", median: 14.7, p90: 30.6 }];
+  const TARGETS = { kind: "targets", title: "兩項都超過 10 s 目標", unit: "s", target: 10, items: ROWS };
+
+  it("`items` is the main array of every kind: a waterfall, a dumbbell and a line written with it pass, and the kind's own field wins when both are given", () => {
+    expect(check({ kind: "waterfall", items: [{ label: "a", value: 1 }] })).toBeNull();
+    expect(check({ kind: "dumbbell", items: [{ label: "a", before: 2, after: 1 }] })).toBeNull();
+    expect(check({ kind: "line", x: ["a", "b"], items: [{ name: "p", values: [1, 2] }] })).toBeNull();
+    expect(check({ kind: "waterfall", steps: [{ label: "a", value: 1 }], items: "junk" })).toBeNull();
+    // Errors name the field the worker really used.
+    expect(check({ kind: "waterfall", items: [{ label: "a", value: "x" }] })).toMatch(/^items\[0\]\.value must be a number/);
+    expect(check({ kind: "dumbbell", items: [{ label: "a", before: 1 }] })).toMatch(/^items\[0\]\.after must be a number/);
+    expect(check({ kind: "waterfall", steps: [{ label: "a", value: "x" }], items: [{ label: "a", value: 1 }] })).toMatch(/^steps\[0\]\.value must be a number/);
+    // A line takes `items` only when every element has the series shape: {label, value} items do not fit, so the message is about `series`.
+    expect(check({ kind: "line", x: ["a"], items: [{ label: "a", value: 1 }] })).toMatch(/series must be an array/);
+    expect(check({ kind: "line", x: ["a", "b"], items: [{ name: "p", values: [1] }] })).toMatch(/items\[0\]\.values has 1 values but x has 2/);
+    expect(check({ kind: "line", x: ["a"], items: [1, 2, 3, 4].map((n) => ({ name: String(n), values: [n] })) })).toMatch(/items holds at most 3 lines/);
+  });
+
+  it("targets: median and p90 per row against one target; the example of its usage passes, with `rows` as the alias", () => {
+    expect(check(TARGETS)).toBeNull();
+    expect(check({ ...TARGETS, items: undefined, rows: ROWS })).toBeNull();
+    expect(check({ ...TARGETS, log: false })).toBeNull();
+    expect(check({ ...TARGETS, target: 0.1, log: true })).toBeNull();
+    // Two worlds at once are no mistake: a median of 0 with auto log off (a 0 stops the span test) draws.
+    expect(check({ ...TARGETS, target: 10, items: [{ label: "a", median: 0, p90: 500 }] })).toBeNull();
+  });
+
+  it("targets: what its drawer rejects is rejected here with the field named", () => {
+    expect(check({ ...TARGETS, target: undefined })).toMatch(/^target must be a number \(got no such field\)/);
+    expect(check({ ...TARGETS, target: "10" })).toMatch(/^target must be a number/);
+    expect(check({ ...TARGETS, target: -1 })).toMatch(/^target must not be negative/);
+    expect(check({ ...TARGETS, log: "yes" })).toMatch(/^log must be true or false/);
+    expect(check({ ...TARGETS, items: [] })).toMatch(/^items needs at least 1 entry/);
+    expect(check({ ...TARGETS, items: undefined })).toMatch(/^items must be an array/);
+    expect(check({ ...TARGETS, items: undefined, rows: [1] })).toMatch(/^rows\[0\] must be an object/);
+    expect(check({ ...TARGETS, items: [{ median: 1, p90: 2 }] })).toMatch(/^items\[0\]\.label is missing/);
+    expect(check({ ...TARGETS, items: [{ label: "a", median: "1", p90: 2 }] })).toMatch(/^items\[0\]\.median must be a number/);
+    expect(check({ ...TARGETS, items: [{ label: "a", median: 1 }] })).toMatch(/^items\[0\]\.p90 must be a number/);
+    expect(check({ ...TARGETS, items: [{ label: "a", median: 5, p90: 4 }] })).toMatch(/^items\[0\]\.p90 \(4\) must not be below median \(5\)/);
+    // A log scale cannot draw 0: asked for, or chosen by itself when the values span more than 20×.
+    expect(check({ ...TARGETS, log: true, items: [{ label: "a", median: 0, p90: 1 }] })).toMatch(/^items\[0\]\.median is 0, and a log scale cannot draw 0/);
+    expect(check({ ...TARGETS, log: true, target: 0 })).toMatch(/^a log scale cannot draw a target of 0/);
+    expect(check({ ...TARGETS, target: 1, items: [{ label: "a", median: 2, p90: 100 }] })).toBeNull();
+    expect(check({ ...TARGETS, target: 1, items: [{ label: "a", median: 2, p90: 100 }, { label: "b", median: 0, p90: 3 }] })).toBeNull();
+    // Only the 12 rows drawn are looked at for a 0 on a log scale, as the drawer does: a 13th is cut off before it.
+    const many = Array.from({ length: 12 }, (_, i) => ({ label: `r${i}`, median: 5, p90: 6 }));
+    expect(check({ ...TARGETS, log: true, items: [...many, { label: "cut", median: 0, p90: 900 }] })).toBeNull();
+    expect(check({ ...TARGETS, log: true, items: [{ label: "zero", median: 0, p90: 900 }, ...many] })).toMatch(/^items\[0\]\.median is 0/);
+  });
+
+  it("the kinds are the live template's own: one it lists is known (and a kind of fields this check does not know is never rejected); one it does not list is unknown; no template falls back to the built-in list", () => {
+    const template = "var MAX = 12, KINDS = ['bars', 'heatmap'];";
+    expect(check({ kind: "heatmap", cells: "anything" }, template)).toBeNull();
+    expect(check({ kind: "targets", target: "x" }, template)).toMatch(/kind "targets" is unknown \(bars \/ heatmap\)/);
+    expect(check({ kind: "pie" }, template)).toMatch(/kind "pie" is unknown \(bars \/ heatmap\)/);
+    expect(check({ title: "x" }, template)).toMatch(/kind is missing \(bars \/ heatmap\)/);
+    expect(check({ kind: "bars", items: [{ label: "a", value: "x" }] }, template)).toMatch(/items\[0\]\.value must be a number/);
+    expect(check({ kind: "targets", target: "x", items: ROWS })).toMatch(/^target must be a number/);
+    expect(check({ kind: "heatmap" })).toMatch(/kind "heatmap" is unknown \(bars \/ waterfall \/ dumbbell \/ line \/ targets\)/);
+    expect(check({ kind: "heatmap" }, "no list in this one")).toMatch(/kind "heatmap" is unknown/);
+  });
+
+  it("the report block types are the live template's own too: a type it lists is known, any other is not", () => {
+    const template = "var TYPES = ['kpi', 'gantt'];";
+    expect(validateCardShow("inline-report-block", '{"type":"gantt","items":[]}', template)).toBeNull();
+    expect(validateCardShow("inline-report-block", '{"type":"table"}', template)).toMatch(/type "table" is unknown \(kpi, gantt\)/);
+    expect(validateCardShow("inline-report-block", '{"items":[]}', template)).toMatch(/type is missing \(kpi, gantt\)/);
+    expect(validateCardShow("inline-report-block", '{"type":"gantt"}')).toMatch(/type "gantt" is unknown/);
   });
 });
 

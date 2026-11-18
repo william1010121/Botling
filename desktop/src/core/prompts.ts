@@ -11,7 +11,7 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CARD_TAG_RULE } from "./card-rule";
-import { CARD_WHEN_RULE, headWritesCards, INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
+import { CARD_WHEN_RULE, headWritesCards, INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, REPORT_RULE_BY_CARD, REPORT_RULE_BY_SIZE, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
 import { maintainerEditorRoute } from "./maintainer-text";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
@@ -693,6 +693,8 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // the examples) is the card worker's own fixed instructions then (worker-cards.ts `cardSystemPrompt`), and the head keeps only the rule saying when to use a card.
   if (headWritesCards(engine, claudeWorkers, inlineBlocks, profile.id === MAINTAINER_PROMPT_ID) && system.includes(INLINE_BLOCK_GUIDANCE) && system.includes(CARD_TAG_RULE)) {
     system = system.replace(`\n${INLINE_BLOCK_GUIDANCE}`, () => `\n${CARD_WHEN_RULE}`);
+    // The page rule's by-size sentence names the blocks, inline-chart and a matplotlib PNG: the head that writes only `<card>` is told the same rule in terms of the card.
+    system = system.replace(REPORT_RULE_BY_SIZE, () => REPORT_RULE_BY_CARD);
   }
   return system === prompts.system && codexWorkerSystem === prompts.codexWorkerSystem ? prompts : { ...prompts, system, codexWorkerSystem };
 }

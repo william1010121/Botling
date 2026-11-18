@@ -41,6 +41,14 @@ function realFolder(path: string): string {
 export const REPORT_RULE_ALL_TO_PAGE = "A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat (\"Do you want this as a report page?\") and the user agreed; never on your own, however long or visual the result is. Without that, the result stays in chat as text. When a page is made, the chat reply carries only a brief conclusion and the link to the page; never paste the report body into chat.";
 /** What it says for a bot with the inline guidance: the same ask-only rule, with inline blocks as the way to show a result. */
 export const REPORT_RULE_BY_SIZE = "Default is inline; a report page is made only when asked. A settled result that is one table, KPI row, comparison, timeline or flow goes into ONE inline report block in the chat reply (the inline blocks rule), and a chart into ONE inline chart (inline-chart) or a matplotlib PNG shown inline (the chart rule); long content goes in as several blocks or as text. Make a report page ONLY when the user explicitly asks for a report or a page, or after you asked in the chat (\"Do you want this as a report page?\") and the user agreed; never on your own, however long the content is. The chat reply then carries only a brief conclusion and the link to the page; never paste the report body into chat.";
+/**
+ * The same rule for a head that writes only `<card>` (`headWritesCards`): it names no block, component or picture (the head only wishes for a figure, 2026-11-18, the user);
+ * the chart rule it would point to is the card worker's. Derived from the sentence above, so the rest of the rule is one text.
+ */
+export const REPORT_RULE_BY_CARD = REPORT_RULE_BY_SIZE.replace(
+  "goes into ONE inline report block in the chat reply (the inline blocks rule), and a chart into ONE inline chart (inline-chart) or a matplotlib PNG shown inline (the chart rule);",
+  "or a chart goes into ONE <card> in the chat reply (the <card> rule);",
+);
 /** The page rule's text for a bot with the inline guidance (the sentence swapped; any other wording of a plugin's own stays as it is). */
 export const inlineReportRule = (text: string): string => text.replace(REPORT_RULE_ALL_TO_PAGE, () => REPORT_RULE_BY_SIZE);
 

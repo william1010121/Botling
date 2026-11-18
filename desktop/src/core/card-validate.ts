@@ -3,13 +3,23 @@
 // inline-report-block (its `type`, and the rules of a progress bar). Any other component (the library's, Maintainer's own) has none and is never
 // rejected here. A message is one line, in English, and names the field, so the worker can fix it from the text alone.
 //
-// Kept in step with the drawers by hand: a test draws wrong data with the real templates (jsdom) and requires this check to say wrong too, and
-// reads the `type` and `kind` lists out of the templates, so a kind added there without one here fails it.
+// Kept in step with the drawers by hand: a test draws wrong data with the repo's templates (jsdom) and requires this check to say wrong too. The lists of kinds and
+// types are the live template's own (`liveList`), so a kind Maintainer adds to a component is never rejected here; only the fields of the kinds below are checked.
 
-const CHART_KINDS = ["bars", "waterfall", "dumbbell", "line"] as const;
+// The kinds this check knows the fields of. The live template (the library's own copy, which Maintainer extends: `targets` came that way) decides which kinds exist: its
+// `KINDS` list is read from it (`liveList`), a kind it lists that is not known here is never rejected, and a missing template falls back to these.
+const CHART_KINDS = ["bars", "waterfall", "dumbbell", "line", "targets"] as const;
 /** inline-report-block's own `type` list (its template's TYPES); `flow` is the old name of `flowchart`. */
 export const REPORT_BLOCK_TYPES = ["kpi", "table", "options", "proscons", "checklist", "progress", "timeline", "roadmap", "steps", "callout", "matrix", "flowchart", "sequence", "prose", "quote", "glossary", "sources", "image"] as const;
 export const CHART_KIND_NAMES: readonly string[] = CHART_KINDS;
+
+/** The list a template names in `<marker> = [...]` (its `KINDS`, its `TYPES`), or null when it has none that can be read. */
+export function liveList(template: string | null | undefined, marker: "KINDS" | "TYPES"): string[] | null {
+  const found = new RegExp(`\\b${marker} = \\[([^\\]]+)\\]`).exec(template ?? "");
+  if (!found) return null;
+  const names = found[1]!.split(",").map((entry) => entry.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+  return names.length ? names : null;
+}
 
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -38,10 +48,16 @@ function plainNumber(value: unknown, path: string): string | null {
 const label = (value: unknown, path: string): string | null => (value == null || String(value) === "" ? `${path} is missing` : null);
 const list = (value: unknown, path: string, min: number): string | null => (!Array.isArray(value) ? `${path} must be an array` : value.length < min ? `${path} needs at least ${min} entr${min === 1 ? "y" : "ies"}` : null);
 
-function checkChart(chart: Record<string, unknown>): string | null {
+/** `items` works as the main array of every kind, an alias for the kind's own field (the live template's `field()`): the own field wins; for a line only when every element is a series. */
+function arrayField(chart: Record<string, unknown>, own: string, fits?: (item: unknown) => boolean): [unknown, string] {
+  if (chart[own] != null || own === "items" || !Array.isArray(chart.items) || (fits && !chart.items.every(fits))) return [chart[own], own];
+  return [chart.items, "items"];
+}
+
+function checkChart(chart: Record<string, unknown>, kinds: readonly string[]): string | null {
   const kind = chart.kind;
-  if (!kind) return `kind is missing (${CHART_KINDS.join(" / ")})`;
-  if (typeof kind !== "string" || !CHART_KIND_NAMES.includes(kind)) return `kind ${JSON.stringify(kind)} is unknown (${CHART_KINDS.join(" / ")})`;
+  if (!kind) return `kind is missing (${kinds.join(" / ")})`;
+  if (typeof kind !== "string" || !kinds.includes(kind)) return `kind ${JSON.stringify(kind)} is unknown (${kinds.join(" / ")})`;
   if (chart.better != null && chart.better !== "higher" && chart.better !== "lower") return `better must be "higher" or "lower" (got ${JSON.stringify(chart.better)})`;
   const each = (items: unknown[], path: string, check: (item: Record<string, unknown>, at: string) => string | null): string | null => {
     for (let i = 0; i < items.length; i++) {
@@ -62,25 +78,63 @@ function checkChart(chart: Record<string, unknown>): string | null {
     return null;
   }
   if (kind === "waterfall") {
-    return list(chart.steps, "steps", 1) ?? each(chart.steps as unknown[], "steps", (step, at) => label(step.label, `${at}.label`) ?? plainNumber(step.value, `${at}.value`) ?? (step.start != null ? plainNumber(step.start, `${at}.start`) : null));
+    const [steps, at] = arrayField(chart, "steps");
+    return list(steps, at, 1) ?? each(steps as unknown[], at, (step, path) => label(step.label, `${path}.label`) ?? plainNumber(step.value, `${path}.value`) ?? (step.start != null ? plainNumber(step.start, `${path}.start`) : null));
   }
   if (kind === "dumbbell") {
-    return list(chart.rows, "rows", 1) ?? each(chart.rows as unknown[], "rows", (row, at) => label(row.label, `${at}.label`) ?? plainNumber(row.before, `${at}.before`) ?? plainNumber(row.after, `${at}.after`));
+    const [rows, at] = arrayField(chart, "rows");
+    return list(rows, at, 1) ?? each(rows as unknown[], at, (row, path) => label(row.label, `${path}.label`) ?? plainNumber(row.before, `${path}.before`) ?? plainNumber(row.after, `${path}.after`));
   }
-  const shape = list(chart.x, "x", 1) ?? list(chart.series, "series", 1);
-  if (shape) return shape;
-  const xs = chart.x as unknown[], series = chart.series as unknown[];
-  if (series.length > 3) return `series holds at most 3 lines (got ${series.length})`;
-  const lines = each(series, "series", (one, at) => {
-    const bad = list(one.values, `${at}.values`, 1);
+  if (kind === "line") {
+    const shape = list(chart.x, "x", 1);
+    if (shape) return shape;
+    const xs = chart.x as unknown[];
+    const [lines, at] = arrayField(chart, "series", (one) => isObject(one) && Array.isArray(one.values));
+    const found = list(lines, at, 1);
+    if (found) return found;
+    const series = lines as unknown[];
+    if (series.length > 3) return `${at} holds at most 3 lines (got ${series.length})`;
+    const bad = each(series, at, (one, path) => {
+      const empty = list(one.values, `${path}.values`, 1);
+      if (empty) return empty;
+      const values = one.values as unknown[];
+      if (values.length !== xs.length) return `${path}.values has ${values.length} values but x has ${xs.length}`;
+      for (let i = 0; i < values.length; i++) { const wrong = plainNumber(values[i], `${path}.values[${i}]`); if (wrong) return wrong; }
+      return null;
+    });
     if (bad) return bad;
-    const values = one.values as unknown[];
-    if (values.length !== xs.length) return `${at}.values has ${values.length} values but x has ${xs.length}`;
-    for (let i = 0; i < values.length; i++) { const wrong = plainNumber(values[i], `${at}.values[${i}]`); if (wrong) return wrong; }
+    if (chart.ref != null) { if (!isObject(chart.ref)) return "ref must be an object {value, label}"; return plainNumber(chart.ref.value, "ref.value"); }
     return null;
+  }
+  if (kind === "targets") return checkTargets(chart, each);
+  // A kind the live template lists and this check does not know the fields of (Maintainer added it): nothing to say.
+  return null;
+}
+
+/** targets: rows `{label, median, p90}` (p90 ≥ median) against one `target`; `log` only true / false, and a log scale cannot draw a 0 (chosen by `log: true`, or by itself when the values span more than 20×). */
+function checkTargets(chart: Record<string, unknown>, each: (items: unknown[], path: string, check: (item: Record<string, unknown>, at: string) => string | null) => string | null): string | null {
+  const at = chart.items != null || chart.rows == null ? "items" : "rows";
+  const rows = chart[at];
+  const bad = list(rows, at, 1);
+  if (bad) return bad;
+  const wrongTarget = plainNumber(chart.target, "target");
+  if (wrongTarget) return wrongTarget;
+  if (chart.log != null && typeof chart.log !== "boolean") return `log must be true or false (got ${JSON.stringify(chart.log)})`;
+  const inner = each(rows as unknown[], at, (row, path) => {
+    const wrong = label(row.label, `${path}.label`) ?? plainNumber(row.median, `${path}.median`) ?? plainNumber(row.p90, `${path}.p90`);
+    if (wrong) return wrong;
+    return (row.p90 as number) < (row.median as number) ? `${path}.p90 (${row.p90}) must not be below median (${row.median})` : null;
   });
-  if (lines) return lines;
-  if (chart.ref != null) { if (!isObject(chart.ref)) return "ref must be an object {value, label}"; return plainNumber(chart.ref.value, "ref.value"); }
+  if (inner) return inner;
+  const shown = (rows as Array<Record<string, number>>).slice(0, 12);
+  const values = [chart.target as number, ...shown.flatMap((row) => [row.median!, row.p90!])];
+  const low = Math.min(...values), high = Math.max(...values);
+  const log = chart.log === true || (chart.log == null && low > 0 && high / low > 20);
+  if (log) {
+    if (!((chart.target as number) > 0)) return `a log scale cannot draw a target of 0: make target above 0, or give "log": false`;
+    const zero = shown.findIndex((row) => !(row.median! > 0));
+    if (zero >= 0) return `${at}[${zero}].median is 0, and a log scale cannot draw 0: make it above 0, or give "log": false`;
+  }
   return null;
 }
 
@@ -108,22 +162,24 @@ function checkProgress(block: Record<string, unknown>): string | null {
 
 /**
  * The error of one `<show>`'s JSON for the component `name`, or null when it is fine, the component has no schema here, or the check itself could not run. Never throws.
+ * `template` is the component's live template.html (the library's copy, which Maintainer may have extended): its own list of kinds / types is the one that counts.
  */
-export function validateCardShow(name: string, data: string): string | null {
+export function validateCardShow(name: string, data: string, template?: string | null): string | null {
   try {
     if (name === "inline-chart") {
       const got = read(data, "chart");
       if (!got) return null;
-      return "error" in got ? got.error : checkChart(got.value);
+      return "error" in got ? got.error : checkChart(got.value, liveList(template, "KINDS") ?? CHART_KINDS);
     }
     if (name === "inline-report-block") {
       const got = read(data, "block");
       if (!got) return null;
       if ("error" in got) return got.error;
       const block = got.value;
-      if (!block.type) return `type is missing (${REPORT_BLOCK_TYPES.join(", ")})`;
+      const types: readonly string[] = liveList(template, "TYPES") ?? REPORT_BLOCK_TYPES;
+      if (!block.type) return `type is missing (${types.join(", ")})`;
       const type = block.type === "flow" ? "flowchart" : block.type;
-      if (typeof type !== "string" || !(REPORT_BLOCK_TYPES as readonly string[]).includes(type)) return `type ${JSON.stringify(block.type)} is unknown (${REPORT_BLOCK_TYPES.join(", ")})`;
+      if (typeof type !== "string" || !types.includes(type)) return `type ${JSON.stringify(block.type)} is unknown (${types.join(", ")})`;
       if (type === "progress") return checkProgress(block);
     }
   } catch { /* a check that cannot run says nothing: the component's own drawer still shows its error card */ }

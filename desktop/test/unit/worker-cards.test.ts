@@ -918,6 +918,17 @@ describe("the component JSON of a report is checked before the card is drawn (Ca
     expect(still.text).toBe("");
   });
 
+  it("a run that did not end well (failed, interrupted) cannot be told: its report is drawn with the errors stated, never held at work", () => {
+    for (const status of ["failed", "interrupted"] as const) {
+      const c = card();
+      followWorker(c, ledger({ status, run: 1, text: `Partial.\n${OVER}` }), VRULES);
+      expect(c.status, status).not.toBe("running");
+      expect(c.shows, status).toHaveLength(1);
+      expect(splitCardWarning(c).warning, status).toContain(ERROR);
+      expect(takeInvalid(c), status).toBeNull();
+    }
+  });
+
   it("a worker that could not be told (invalidRun -1) is drawn as it is with the errors stated, never held; it is not told", () => {
     const c = card();
     followWorker(c, ledger({ status: "done", run: 1, text: OVER }), VRULES);

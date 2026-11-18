@@ -11,7 +11,7 @@ import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
 import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
-import { CARD_CHART_RULE, CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_EXAMPLES, INLINE_HANDOFF_SENTENCE, headWritesCards, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
+import { CARD_CHART_RULE, CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_EXAMPLES, INLINE_HANDOFF_SENTENCE, headWritesCards, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_CARD, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
@@ -257,8 +257,9 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
 
 describe("the report rule by size", () => {
   const manifestText = REPORT_SECTION.text;
-  const page = (inlineBlocks: boolean, engine: "claude" | "codex" | "agy" = "claude", role: "main" | "manager" | "bot" = "manager") =>
-    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), profile(role), engine, true, reportSections(tool), undefined, inlineBlocks);
+  // `workers` false: a head without app workers writes no <card>, so it keeps the by-size rule (its inline blocks are its own); with workers it writes only <card>.
+  const page = (inlineBlocks: boolean, engine: "claude" | "codex" | "agy" = "claude", role: "main" | "manager" | "bot" = "manager", workers = true) =>
+    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), profile(role), engine, workers, reportSections(tool), undefined, inlineBlocks);
 
   it("the manifest still says the sentence the swap replaces (change the swap with the manifest, never one of them)", () => {
     expect(manifestText).toContain(`- ${REPORT_RULE_ALL_TO_PAGE}`);
@@ -274,7 +275,7 @@ describe("the report rule by size", () => {
     expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is made only when the user explicitly asks for a report or a page, or after you asked in the chat and they agreed \(link only\); long content goes in as several blocks or as text/);
   });
   it("a bot with the guidance is told by size; the rest of the page rule is untouched", () => {
-    const text = page(true).system;
+    const text = page(true, "claude", "manager", false).system;
     expect(text).toContain(REPORT_RULE_BY_SIZE);
     expect(text).not.toContain(REPORT_RULE_ALL_TO_PAGE);
     expect(text).toContain("Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON");
@@ -286,8 +287,25 @@ describe("the report rule by size", () => {
     for (const role of ["main", "manager", "bot"] as const) {
       expect(page(true, "claude", role).codexWorkerSystem).toContain(REPORT_RULE_ALL_TO_PAGE);
       expect(page(true, "claude", role).codexWorkerSystem).not.toContain(REPORT_RULE_BY_SIZE);
-      expect(page(true, "claude", role).system).toContain(REPORT_RULE_BY_SIZE);
+      expect(page(true, "claude", role, false).system).toContain(REPORT_RULE_BY_SIZE);
     }
+  });
+  it("a head that writes only <card> is told the same rule in terms of the card: no inline block, inline-chart or matplotlib named to it; Maintainer keeps the by-size rule (it draws)", () => {
+    expect(REPORT_RULE_BY_CARD).not.toBe(REPORT_RULE_BY_SIZE);
+    expect(REPORT_RULE_BY_CARD).toContain("or a chart goes into ONE <card> in the chat reply (the <card> rule);");
+    for (const gone of ["inline report block", "inline-chart", "matplotlib", "the chart rule", "the inline blocks rule"]) expect(REPORT_RULE_BY_CARD).not.toContain(gone);
+    // Only that sentence differs: the ask-only rule for a page is word for word the same.
+    expect(REPORT_RULE_BY_CARD.slice(REPORT_RULE_BY_CARD.indexOf("long content goes in")).length).toBeGreaterThan(200);
+    expect(REPORT_RULE_BY_SIZE.endsWith(REPORT_RULE_BY_CARD.slice(REPORT_RULE_BY_CARD.indexOf("long content goes in")))).toBe(true);
+    for (const role of ["main", "manager", "bot"] as const) {
+      const text = page(true, "claude", role).system;
+      expect(text, role).toContain(REPORT_RULE_BY_CARD);
+      expect(text, role).not.toContain(REPORT_RULE_BY_SIZE);
+    }
+    const maintainer = { ...profile("bot"), id: "DEC0DE00-0000-4000-8000-00000000DEC0" };
+    const text = desktopPrompts(botPrompts({ profile: maintainer, engine: "claude", inlineBlocks: true }), maintainer, "claude", true, reportSections(tool), undefined, true).system;
+    expect(text).toContain(REPORT_RULE_BY_SIZE);
+    expect(text).not.toContain(REPORT_RULE_BY_CARD);
   });
   it("the whole rule names no inline blocks (Antigravity, Codex workers and a bot without the guidance have none), and the component docs send nothing to a page on their own", () => {
     expect(REPORT_RULE_ALL_TO_PAGE).not.toMatch(/block|component|<card>/);

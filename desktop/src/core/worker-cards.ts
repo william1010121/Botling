@@ -399,8 +399,8 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
       const content = cardContent(report, rules);
       const invalid = content.invalid.join("\n").slice(0, 2_000);
       // A component's JSON that breaks its usage is not drawn the first time: the card stays at work, with what it had, while the worker is told once and corrects it
-      // (`takeInvalid`). Held back for the run that ended with it only; a worker that could not be told (`invalidRun` -1) or ran again and is still wrong is drawn as it is.
-      if (invalid && card.invalidRun !== -1 && (card.invalidRun === undefined || worker.run <= card.invalidRun)) {
+      // (`takeInvalid`). Held back only for a run that ended well (a failed, stopped or interrupted one cannot be told) and for the run that ended with it only; a worker that could not be told (`invalidRun` -1) or ran again and is still wrong is drawn as it is.
+      if (invalid && status === "done" && card.invalidRun !== -1 && (card.invalidRun === undefined || worker.run <= card.invalidRun)) {
         if (card.invalid !== invalid || card.invalidRun !== worker.run) { card.invalid = invalid; card.invalidRun = worker.run; delete card.invalidTold; }
         card.status = "running";
         delete card.error;
