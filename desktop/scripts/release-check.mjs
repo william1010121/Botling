@@ -6,6 +6,10 @@
 //                                                      key=value lines for the workflow: track, version, release_flags
 //   node scripts/release-check.mjs --published v3 --tag <tag> --release <view.json> [--latest-tag <tag>]
 //                                                      a v3 release is a pre-release and never GitHub's Latest
+//   node scripts/release-check.mjs --ci-green <sha> --runs <runs.json>
+//                                                      the CI workflow's runs for that commit (gh run list --commit <sha>
+//                                                      --workflow ci.yml --json databaseId,status,conclusion,headSha,createdAt):
+//                                                      fails unless there is one and it has finished with success
 //   node scripts/release-check.mjs [--track v3] --artifacts <dir> --platform mac|win|linux
 //                                                      the installers and the update feed (latest*.yml) that
 //                                                      electron-updater reads are all there, and the feed's
@@ -74,6 +78,24 @@ export function checkPublishedV3(tag, view, latestTag) {
   if (latestTag === tag) throw new Error(`${tag} is GitHub's Latest release: 2.x installs would read it and fail to find latest-mac.yml`);
 }
 
+/**
+ * The release builds a commit CI has already tested (the release job runs no full unit suite: it takes over an hour and CI runs
+ * it on the same commit). `runs` is what `gh run list --commit <sha> --workflow ci.yml --json databaseId,status,conclusion,headSha,createdAt`
+ * printed. Fails closed: no run for the commit, a run still queued or running, or the newest run not a success all refuse the release.
+ * Runs of other commits in the list are ignored (a list that does not hold the commit's own run is no evidence).
+ */
+export function checkCiGreen(sha, runs) {
+  if (!/^[0-9a-f]{40}$/.test(sha ?? '')) throw new Error('--ci-green needs the full 40-character commit sha');
+  if (!Array.isArray(runs)) throw new Error('the CI run list is not a JSON array');
+  const own = runs.filter(run => run && typeof run === 'object' && run.headSha === sha);
+  if (own.length === 0) throw new Error(`no CI run found for ${sha}: push main, wait for its CI run to finish green, then push the tag`);
+  const open = own.filter(run => run.status !== 'completed');
+  if (open.length > 0) throw new Error(`CI run ${open[0].databaseId} for ${sha} is still ${open[0].status || 'not finished'}: wait for it, then run this workflow again`);
+  const newest = [...own].sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+  if (newest.conclusion !== 'success') throw new Error(`the newest CI run ${newest.databaseId} for ${sha} concluded ${newest.conclusion || 'without a result'}, not success`);
+  return newest.databaseId;
+}
+
 /** What electron-builder writes for each platform (electron-builder.config.cjs: artifactName, and the feed names electron-updater reads). */
 export function assetNames(version, platform, track = 'v2') {
   if (track === 'v3') {
@@ -125,6 +147,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const tag = value('--print-plan') ?? '';
     const track = releaseTrack(tag, pkg.version);
     console.log(`track=${track}\nversion=${tag ? tagVersion(tag) : ''}\nrelease_flags=${releaseFlags(track).join(' ')}`);
+  } else if (args.includes('--ci-green')) {
+    const file = value('--runs');
+    if (!file || file.startsWith('--')) throw new Error('--ci-green needs --runs <gh run list json>');
+    let runs;
+    try { runs = JSON.parse(readFileSync(file, 'utf8')); } catch { throw new Error(`cannot read the CI run list ${file}`); }
+    console.log(`CI run ${checkCiGreen(value('--ci-green'), runs)} for ${value('--ci-green')}: success`);
   } else if (args.includes('--published')) {
     if (value('--published') !== 'v3') throw new Error('--published checks a v3 release');
     const file = value('--release');

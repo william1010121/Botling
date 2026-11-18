@@ -8,6 +8,10 @@ name: Electron release candidate
 #    The v3 release is a pre-release, never Latest (2.x installs read the Latest release's latest-mac.yml and would
 #    show an update error on a v3 one), and stays a DRAFT: publish it by hand after a look
 #    (`gh release edit <tag> --draft=false --prerelease --latest=false`).
+# The release job runs no full unit suite (it takes over an hour on macOS, and CI runs it on the same commit). Instead the
+# `plan` job refuses a tag build unless the CI workflow's run for the tagged commit has finished with success (release-check.mjs
+# --ci-green; no run, a run still going or a failed one stops it). So: push main, wait for its CI run to turn green, then push the
+# tag. A tag pushed too early fails in `plan`; once CI is green, re-run the failed workflow run.
 # The final `publish` job attaches the assets to the GitHub release for the tag. To publish an existing tag from a
 # previous successful run without rebuilding, dispatch this workflow with `tag` and `run_id` (the build jobs are
 # skipped and that run's artifacts are used).
@@ -43,6 +47,9 @@ jobs:
     # that publishes an old tag still has them.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       track: ${{ steps.plan.outputs.track }}
       version: ${{ steps.plan.outputs.version }}
@@ -51,6 +58,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: CI must be green for the tagged commit (the release job runs no full unit suite)
+        # A tag push only; a manual dispatch republishes an earlier run's artifacts and builds nothing. Fails closed: a failing `gh`,
+        # an unreadable list, no CI run, a running one and a failed one all stop the release before anything is built.
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" --limit 50 \
+            --json databaseId,status,conclusion,headSha,createdAt > "$RUNNER_TEMP/ci-runs.json"
+          node desktop/scripts/release-check.mjs --ci-green "$SHA" --runs "$RUNNER_TEMP/ci-runs.json"
       - id: plan
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -104,14 +122,11 @@ jobs:
           fi
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund --prefix ../Web
-      # test:unit starts relay/src as a child process, which imports `ws` from relay/node_modules (as in ci.yml).
-      - run: npm ci --no-audit --no-fund --prefix ../relay
       - run: npm run test:release
       # tsc ran out of Node's default ~2 GB heap on a cold cache (exit 134, as in ci.yml; the release has no .cache/tsc).
       - run: npm run typecheck
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      - run: npm run test:unit
       - run: npm run test:reports
       - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation

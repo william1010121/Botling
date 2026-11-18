@@ -37,7 +37,13 @@ both cases. The app's own version stays `3.2.2`; only the tag carries the suffix
 
 1. On `main` (CI green): bump `desktop/package.json` and `desktop/package-lock.json` (both `version` fields) to `3.x.y`
    and add a `## 3.x.y` section to `CHANGELOG.md` (the workflow copies it into the release notes).
-2. `git tag v3.x.y-v3 && git push origin main v3.x.y-v3`.
+2. Push `main` first and wait until its CI run (`gh run list --workflow ci.yml --commit <sha>`) has finished with success.
+   Then tag that same commit and push the tag: `git tag v3.x.y-v3 <sha> && git push origin v3.x.y-v3`.
+   The release job runs no full unit suite (about 65 minutes on macOS, and CI already runs it on this commit). Instead its `plan`
+   job runs `release-check.mjs --ci-green <sha>` and fails the release when CI has no run for the tagged commit, still runs, or
+   did not conclude `success`. A tag pushed before CI is green fails there, before anything is built; once CI is green, re-run
+   the failed workflow run (`gh run rerun <id> -R william1010121/Botling`). A manual dispatch that only republishes an earlier
+   run's artifacts skips this check.
 3. The workflow builds, signs, notarizes, verifies and creates a **draft pre-release** with the assets.
 4. Look at the draft, edit the notes, then publish it as a pre-release that is not Latest:
    `gh release edit v3.x.y-v3 -R william1010121/Botling --draft=false --prerelease --latest=false`.

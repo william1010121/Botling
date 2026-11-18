@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, copyFileSync, real
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkMetadata, checkMetadataV3, checkFeed, assetNames, parseFeed, releaseTrack, tagVersion, releaseFlags, checkPublishedV3, v3Tag, V3_CHANNEL } from './release-check.mjs';
+import { checkMetadata, checkMetadataV3, checkFeed, assetNames, parseFeed, releaseTrack, tagVersion, releaseFlags, checkPublishedV3, checkCiGreen, v3Tag, V3_CHANNEL } from './release-check.mjs';
 
 const pkg = { version: '2.0.0', botlingDevTrial: false };
 const lock = { version: '2.0.0', packages: { '': { version: '2.0.0' } } };
@@ -288,4 +288,75 @@ test('release.yml publish: a v3 release holds the macOS assets and no 2.x feed; 
   for (const missing of assets2) assert.notEqual(publishCheck('v2', '2.6.0', assets2.filter(name => name !== missing)).status, 0, missing);
   // 2.x does not need SHA256SUMS.txt, and a 3.x tag's assets do not satisfy it.
   assert.notEqual(publishCheck('v2', '3.2.2', assets3).status, 0);
+});
+
+// The release job runs no full unit suite: the plan job refuses a tag build unless CI finished green for the tagged commit.
+const SHA = 'a7d379a0d10a0afe8f470fa0469cf1892a543a9a';
+const OTHER = '4f2745f9e142065b3e28c0a9e0b933984db37626';
+const ciRun = (databaseId, status, conclusion, createdAt, headSha = SHA) => ({ databaseId, status, conclusion, headSha, createdAt });
+test('the CI gate passes only a finished, successful CI run of the tagged commit and fails closed otherwise', () => {
+  assert.equal(checkCiGreen(SHA, [ciRun(7, 'completed', 'success', '2026-11-18T15:17:35Z')]), 7);
+  assert.throws(() => checkCiGreen(SHA, []), /no CI run found/);
+  // Runs of other commits are no evidence for this one.
+  assert.throws(() => checkCiGreen(SHA, [ciRun(8, 'completed', 'success', '2026-11-18T15:17:35Z', OTHER)]), /no CI run found/);
+  assert.throws(() => checkCiGreen(SHA, [ciRun(9, 'queued', '', '2026-11-18T15:17:35Z')]), /still queued/);
+  assert.throws(() => checkCiGreen(SHA, [ciRun(9, 'in_progress', '', '2026-11-18T15:17:35Z')]), /still in_progress/);
+  assert.throws(() => checkCiGreen(SHA, [ciRun(9, 'pending', null, '2026-11-18T15:17:35Z')]), /still pending/);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped', 'neutral', '', null, undefined]) {
+    assert.throws(() => checkCiGreen(SHA, [ciRun(10, 'completed', conclusion, '2026-11-18T15:17:35Z')]), /not success/, String(conclusion));
+  }
+  // A run still going blocks even when an older one passed; among finished runs the newest decides (a cancelled older run, as the concurrency group makes, does not block).
+  assert.throws(() => checkCiGreen(SHA, [ciRun(11, 'in_progress', '', '2026-11-18T16:00:00Z'), ciRun(10, 'completed', 'success', '2026-11-18T15:00:00Z')]), /still in_progress/);
+  assert.equal(checkCiGreen(SHA, [ciRun(10, 'completed', 'cancelled', '2026-11-18T15:00:00Z'), ciRun(11, 'completed', 'success', '2026-11-18T16:00:00Z')]), 11);
+  assert.equal(checkCiGreen(SHA, [ciRun(11, 'completed', 'success', '2026-11-18T16:00:00Z'), ciRun(10, 'completed', 'failure', '2026-11-18T15:00:00Z')]), 11);
+  assert.throws(() => checkCiGreen(SHA, [ciRun(10, 'completed', 'success', '2026-11-18T15:00:00Z'), ciRun(11, 'completed', 'failure', '2026-11-18T16:00:00Z')]), /newest CI run 11/);
+  // Not a list, junk entries, a short or empty sha.
+  assert.throws(() => checkCiGreen(SHA, { message: 'Not Found' }), /not a JSON array/);
+  assert.throws(() => checkCiGreen(SHA, [null, 'x', 3]), /no CI run found/);
+  assert.throws(() => checkCiGreen(SHA.slice(0, 9), [ciRun(7, 'completed', 'success', '2026-11-18T15:17:35Z', SHA.slice(0, 9))]), /40-character/);
+  assert.throws(() => checkCiGreen('', []), /40-character/);
+  assert.throws(() => checkCiGreen(undefined, []), /40-character/);
+});
+
+test('--ci-green reads the gh run list file and exits non-zero for every case that is not a finished success', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'release-check-ci-'));
+  const file = join(dir, 'runs.json');
+  const put = value => writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+  put([ciRun(7, 'completed', 'success', '2026-11-18T15:17:35Z')]);
+  const ok = run('--ci-green', SHA, '--runs', file);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /CI run 7 for a7d379a0d.*: success/);
+  for (const bad of [[], [ciRun(7, 'in_progress', '', '2026-11-18T15:17:35Z')], [ciRun(7, 'completed', 'failure', '2026-11-18T15:17:35Z')], [ciRun(7, 'completed', 'success', '2026-11-18T15:17:35Z', OTHER)], '', 'not json', '{"message":"Bad credentials"}']) {
+    put(bad);
+    assert.notEqual(run('--ci-green', SHA, '--runs', file).status, 0, JSON.stringify(bad));
+  }
+  put([ciRun(7, 'completed', 'success', '2026-11-18T15:17:35Z')]);
+  assert.notEqual(run('--ci-green', SHA).status, 0, 'no --runs');
+  assert.notEqual(run('--ci-green', SHA, '--runs', join(dir, 'missing.json')).status, 0, 'no such file');
+  assert.notEqual(run('--ci-green', 'abc123', '--runs', file).status, 0, 'a short sha');
+});
+
+test('release.yml: the plan job gates a tag build on CI, and the candidate job runs no full unit suite but keeps the typecheck and the whole signed build', () => {
+  const gate = step('plan', 'name: CI must be green for the tagged commit');
+  assert.equal(ifOf(gate), "${{ github.ref_type == 'tag' }}");
+  assert.match(gate, /\n {10}GH_TOKEN: \$\{\{ github\.token \}\}\n/);
+  assert.match(gate, /\n {10}SHA: \$\{\{ github\.sha \}\}\n/);
+  const body = script(gate);
+  assert.match(body, /gh run list -R "\$GITHUB_REPOSITORY" --workflow ci\.yml --commit "\$SHA" /);
+  assert.match(body, /--json databaseId,status,conclusion,headSha,createdAt > "\$RUNNER_TEMP\/ci-runs\.json"/);
+  assert.match(body, /node desktop\/scripts\/release-check\.mjs --ci-green "\$SHA" --runs "\$RUNNER_TEMP\/ci-runs\.json"/);
+  // Fail closed: nothing in the step may turn a failure into a pass.
+  assert.doesNotMatch(gate, /continue-on-error|\|\| *(true|:)|set \+e/);
+  // It runs before the plan step, in the job whose failure stops every build job, and the job may read workflow runs.
+  const names = steps('plan').map(s => /(?:^|\n) *(?:- )?(?:name|id): (\S[^\n]*)/.exec(s)?.[1] ?? '');
+  const at = names.findIndex(n => n.startsWith('CI must be green'));
+  assert.ok(at >= 0 && at < names.indexOf('plan'), JSON.stringify(names));
+  assert.match(job('plan'), /\n {4}permissions:\n {6}contents: read\n {6}actions: read\n/);
+  for (const name of ['candidate', 'linux', 'windows']) assert.match(job(name), /\n {4}needs: plan\n/, name);
+  // The candidate job: no unit suite (CI owns it); the typecheck and the packaging, signing, verification and feed checks stay.
+  const candidate = job('candidate');
+  assert.doesNotMatch(candidate, /test:unit|vitest/);
+  assert.match(candidate, /\n {6}- run: npm run typecheck\n/);
+  for (const marker of ['name: Require signing credentials', 'name: Package macOS arm64', 'name: Verify the signature, notarization and Gatekeeper', 'name: Check the installers and the update feed']) step('candidate', marker);
+  assert.match(script(step('candidate', 'name: Package macOS arm64')), /npm run dist:mac:v3/);
 });
