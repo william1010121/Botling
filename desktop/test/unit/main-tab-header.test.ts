@@ -184,7 +184,7 @@ it("a plugin that opens its tab (botling.openTab) brings it into the header, as 
 });
 
 it("the pin in the menu keeps a tab in the header for that bot; pinning is asked of main, per bot", async () => {
-  const { host, requests, update, buttons } = await render(PROJECT, { plugins: dynamic });
+  const { host, requests, update } = await render(PROJECT, { plugins: dynamic });
   await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
   const pin = host.querySelector<HTMLButtonElement>(`.tab-more-pin[data-tab="${GIT}"]`)!;
   expect(pin.getAttribute("aria-pressed")).toBe("false");
@@ -194,7 +194,8 @@ it("the pin in the menu keeps a tab in the header for that bot; pinning is asked
   // A pin does not open the tab.
   expect(requests.filter((request) => request.change?.key === "mainTab")).toEqual([]);
   await update(pinned(PROJECT, [GIT]));
-  expect(buttons()).toEqual(["Chat", "Note", "Git", "Reading", "Storage", "More tabs"]);
+  // (The menu, still open, is inside the switch too: count the header's own buttons.)
+  expect([...host.querySelectorAll(".board-switch > button")].map((button) => button.textContent)).toEqual(["Chat", "Note", "Git", "Reading", "Storage"]);
   // Chat is the view and the tab stays: it is pinned.
   expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"]`)?.getAttribute("aria-pressed")).toBe("false");
   expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"] svg`)).not.toBeNull();

@@ -92,7 +92,8 @@ describe("pinning a tab (settings.json pinnedTabs)", () => {
     expect(SettingsChange.safeParse(pin(MAIN, "", true)).success).toBe(false);
     expect(SettingsChange.safeParse(pin(MAIN, "x".repeat(400), true)).success).toBe(false);
     expect(SettingsChange.safeParse({ key: "pinTab", value: { botId: MAIN, tab: "a/b" } }).success).toBe(false);
-    expect(SettingsChange.safeParse({ key: "pinTab", value: { botId: "nope", tab: "a/b", pinned: true } }).success).toBe(false);
+    expect(SettingsChange.safeParse({ key: "pinTab", value: { tab: "a/b", pinned: true } }).success).toBe(false);
+    expect(SettingsChange.safeParse({ key: "pinTab", value: { botId: MAIN, tab: "a/b", pinned: true, extra: 1 } }).success).toBe(false);
   });
 
   it("is a per-device layout key, left out of a 1.x import", () => {
