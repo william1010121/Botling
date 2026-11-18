@@ -127,7 +127,11 @@ OwnEnd(b) ==
   /\ own[b] > 0 /\ ~guest[b] /\ own' = [own EXCEPT ![b] = @ - 1]
   /\ UNCHANGED <<ev, pending, cur, phase, followUp, recent, guest, gone>>
 
-\* A sub bot is removed while idle, its chat with no call-in open (one removed mid call-in in its chat is not modelled).
+\* A sub bot is removed while idle, its chat with no call-in open. Removed with one open, the app still ends each (removeBot
+\* leaves Conversations' queue: one queued is told "can no longer be called into this chat", one answering finishes and
+\* frees its callee) but hands the gone bot no turn (appMessage refuses a bot shutting down). A variant with that
+\* (Remove without the last two guards, HandBack only into a chat not gone, CallerHearsBack "or its chat is gone") passes
+\* every invariant and property of Callin.cfg (review of 2026-11-18); not kept, as reference and adapter would need it too.
 Remove(s) ==
   /\ s \notin gone /\ own[s] = 0 /\ ~guest[s] /\ pending[s] = <<>> /\ cur[s] = 0 /\ gone' = gone \cup {s}
   /\ UNCHANGED <<ev, pending, cur, phase, followUp, recent, own, guest>>

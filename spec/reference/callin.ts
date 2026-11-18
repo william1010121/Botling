@@ -152,7 +152,7 @@ export class CallinReference {
         return s;
       }
       case "Remove": {
-        // Its chat with no call-in open (one removed mid call-in in its chat is not modelled).
+        // Its chat with no call-in open (Callin.tla Remove says what the app does when one is).
         if (!Object.hasOwn(this.config.parent, a.s) || s.gone.includes(a.s) || s.own[a.s]! > 0 || s.guest[a.s] || s.pending[a.s]!.length > 0 || s.cur[a.s] !== 0) return null;
         s.gone.push(a.s);
         return s;
