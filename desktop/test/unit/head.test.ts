@@ -263,7 +263,7 @@ describe("a bot's head", () => {
     expect(starts(dir)[1]!.session).not.toBe(starts(dir)[0]!.session);
     const woke = JSON.parse(readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").at(-1)!).text as string;
     // The main bot's wake note (its project list) follows the wake line, as in 1.x.
-    expect(woke.startsWith("(App: You were just woken up. Read memory.md before answering; if the file does not exist, treat this as our first meeting.)\n\n(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n(No projects yet.)\n- Maintainer (")).toBe(true);
+    expect(woke.startsWith("(App: You were just woken up. Read memory.md before answering; if the file does not exist, treat this as our first meeting.)\n\n(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file. If you have no file or shell tools (Codex), have an app_handoff worker do either, and say it is done only after its report arrives.)\n(No projects yet.)\n- Maintainer (")).toBe(true);
     // The project list, then the chat.
     expect(woke).not.toMatch(/<team|[Tt]emporary team/);
     // …then its components (the app's own preview card, as 1.x gives every bot the built-ins), then the chat.

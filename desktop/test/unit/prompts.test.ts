@@ -5,12 +5,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, SITE_TOOLS_RULE, FILE_LINK_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, CODEX_MAIN_NO_FILES_LINE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { FILES_TOUCHED_HANDOFF_RULE, WORKER_LOOKUP_RULE, WORKER_NOTIFY_RULE, WORKER_REPORT_BLOCK_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
 import { CARD_TAG_RULE } from "../../src/core/card-rule";
 import { CLAUDE_WORKER_POLICY } from "../../src/core/agent/claude-workers";
 import { AGY_WORKER_POLICY } from "../../src/core/prompts-agy";
 import { codexWorkerInstructions, desktopPrompts } from "../../src/core/prompts";
+import { MAINTAINER_CODEX_NO_TOOLS_LINE, MAINTAINER_EDITOR_NATIVE_TEXT, maintainerInstructions } from "../../src/core/maintainer-text";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -63,6 +64,7 @@ function withDesktopReportGuidance(swift: string, worker: boolean): string {
 
 // Approved desktop-only routing rules (2026-11-04): discuss in chat when asked, restate a doubtful question first,
 // long text still being discussed stays short in chat (no .md results), and a worker's follow-ups go to that same worker.
+const PERMISSION_RETRY_RULE = "When \"(App: The user allowed …\" arrives, it says whose call it was. Your own call: run it again exactly as it was. A worker's or subagent's call: do not run it yourself; tell that worker to run it again, as the message says. If the retry is refused again, or when the user did not allow it, do not try it again: carry on without it, or tell the user in one sentence.";
 const MAINTAINER_ROUTE = "application source work must not be redirected to Maintainer as a plugin.";
 const OLD_FOLLOW_UP = "Use app_send_message with task_id and message for that follow-up; do not append a separate feature, rename, or policy fix to it merely to reuse context or keep one writer.";
 function withApprovedRouting(swift: string): string {
@@ -92,6 +94,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace(/^(- When the user says "\/design" or asks for a design)/m, `${CARD_TAG_RULE}\n$1`);
   // Approved 2026-11-08 (the user): task cards are gone, so no bot is told to write <task …/> lines any more.
   expected = expected.replace(/^- The app keeps a task card for each piece of work[^\n]*\n/m, "");
+  // Approved 2026-11-18 (the user, prompt audit #7): an allowed call is re-run by its owner: the head's own call by the head, a worker's or subagent's by that worker; a refusal or a second refusal ends it.
+  expected = expected.replace("When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.", PERMISSION_RETRY_RULE);
   // Approved 2026-11-16 (the user, M7-F03): the earlier worker's "Files touched" block goes to the next worker on the same work.
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${FILES_TOUCHED_HANDOFF_RULE}`);
 }
@@ -100,6 +104,11 @@ function withApprovedRouting(swift: string): string {
 // words (its own reviewer refuses instead), the /design steps (its note hands a Design to Claude) and Claude Code's tool names.
 function withoutClaudeOnly(swift: string): string {
   return swift
+    // Approved 2026-11-18 (the user, prompt audit #4): the Codex main bot has no file tools, so its file steps go through an app_handoff worker.
+    .replace(/(- You may read anything that helps you answer or decide where work goes\.[^\n]*)/, (line) => `${line}\n${CODEX_MAIN_NO_FILES_LINE}`)
+    // Approved 2026-11-18 (the user, prompt audit #6): a maintenance turn goes receipt, end, report, checkpoint, OK.
+    .replaceAll("When app_task_result confirms the update completed, reply only OK.", "When app_task_result arrives, record app_task_checkpoint for its task_id (complete only if the report confirms the update, else blocked), then reply only OK if the memory was saved.")
+    .replace("Maintenance reports also require a checkpoint before OK.", "A maintenance (tidy or switch) turn goes: acceptance receipt, end the turn, worker report, checkpoint, then OK.")
     .replace(/- When auto mode blocks a tool call you need \("denied by the Claude Code auto mode classifier"\),/, "- When Codex's reviewer refuses a tool call you need,")
     .replace(/^- When the user says "\/design" or asks for a design[^\n]*\n/m, "")
     .replace(`${CARD_TAG_RULE}\n`, "")
@@ -270,5 +279,60 @@ describe("briefing: the wake-up's recent lines, the archive, reactions", () => {
 
   it("asks once for a finished subagent's report as the Swift app does", () => {
     expect(reportNote([{ description: "Research the API", status: "completed" }, { description: "Check tests", status: "failed" }])).toBe(golden.notes.reportNote);
+  });
+});
+
+// Prompt audit 2026-11-18 (items 3-7, approved by the user): text that promised what the engine cannot do.
+describe("prompts say what each engine can really do", () => {
+  const base = { memoryPath: ".bot/memory.md", job: null, instructions: null };
+  const main = { name: "Main", role: "main" as const, folder: "/m", ...base, memoryPath: "memory.md" };
+  const MAINTAINER_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+
+  it("#4: only the Codex main bot is told it has no file tools; a worker does its memory reads and inbox lines", () => {
+    expect(botPrompts({ profile: main, engine: "codex", language: "en" }).system).toContain(CODEX_MAIN_NO_FILES_LINE);
+    expect(botPrompts({ profile: main, engine: "claude", language: "en" }).system).not.toContain(CODEX_MAIN_NO_FILES_LINE);
+    expect(botPrompts({ profile: { ...main, role: "manager" }, engine: "codex", language: "en" }).system).not.toContain(CODEX_MAIN_NO_FILES_LINE);
+  });
+
+  it("#6: the Codex tidy and switch turns go receipt, end, report, checkpoint, OK", () => {
+    const { tidy, handoff } = botPrompts({ profile: { ...main, role: "manager" }, engine: "codex", language: "en" });
+    for (const text of [tidy, handoff]) {
+      const order = ["acceptance receipt", "END YOUR CURRENT TURN", "app_task_result arrives", "app_task_checkpoint", "reply only OK"].map((part) => text.indexOf(part));
+      expect(order.every((at) => at >= 0), text).toBe(true);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+      expect(text).not.toContain("confirms the update completed, reply only OK");
+    }
+  });
+
+  it("#7: an allowed call is re-run by its owner, and a refusal ends it", () => {
+    for (const engine of ["claude", "codex"] as const) {
+      const system = botPrompts({ profile: { ...main, role: "manager" }, engine, language: "en" }).system;
+      expect(system).toContain("it says whose call it was. Your own call: run it again exactly as it was. A worker's or subagent's call: do not run it yourself");
+      expect(system).toContain("do not try it again");
+      expect(system).not.toContain("arrives, run it again exactly as it was;");
+    }
+  });
+
+  it("#5: Maintainer's component editor is started and followed up the way its transport does it", () => {
+    const profile = { id: MAINTAINER_ID, name: "Maintainer", role: "manager" as const, folder: "/lib", ...base, instructions: maintainerInstructions("/lib", "check", "shot") };
+    const system = (engine: "claude" | "codex" | "agy", workers: boolean) => desktopPrompts(botPrompts({ profile, engine, language: "en" }), profile, engine, workers).system;
+    for (const text of MAINTAINER_EDITOR_NATIVE_TEXT) expect(profile.instructions).toContain(text);
+    const codex = system("codex", true);
+    expect(codex).toContain('call app_handoff with role "component-editor"');
+    expect(codex).toContain("app_send_message with its task_id");
+    const claude = system("claude", true);
+    expect(claude).toContain('call app_handoff with subagent_type "ccb-core:component-editor"');
+    expect(claude).toContain("app_send_message with its task_id");
+    // Only the Codex Maintainer has no file or shell tools: its edits, version bumps, check, shot and git go to an ordinary worker.
+    expect(codex).toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
+    expect(codex.indexOf(MAINTAINER_CODEX_NO_TOOLS_LINE)).toBeLessThan(codex.indexOf("- Every time you change a plugin:"));
+    expect(claude).not.toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
+    expect(system("claude", false)).not.toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
+    for (const text of [codex, claude]) for (const native of MAINTAINER_EDITOR_NATIVE_TEXT) expect(text).not.toContain(native);
+    // Native Claude keeps the Agent tool; another bot's text is never rewritten.
+    const native = system("claude", false);
+    for (const text of MAINTAINER_EDITOR_NATIVE_TEXT) expect(native).toContain(text);
+    const other = { ...profile, id: "other-id" };
+    expect(desktopPrompts(botPrompts({ profile: other, engine: "codex", language: "en" }), other, "codex", true).system).not.toContain('role "component-editor"');
   });
 });

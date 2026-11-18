@@ -255,5 +255,5 @@ export function projectBriefingText(input: { projects: BriefingRow[]; bots: Brie
   const maintainerLine = line(input.maintainer);
   const asking = [...input.projects, ...input.bots, input.maintainer].some((row) => row.question !== null);
   const cardLine = asking ? '\n(App: A decision marked "open question in its chat" already has its card there. To bring it up, write <open-question from="its name"/> in your reply: the app shows that same card here. Never write a new choices block for it.)' : "";
-  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}${peerLines}\n${maintainerLine}${cardLine}`;
+  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file. If you have no file or shell tools (Codex), have an app_handoff worker do either, and say it is done only after its report arrives.)\n${projectLines}${botLines}${peerLines}\n${maintainerLine}${cardLine}`;
 }
