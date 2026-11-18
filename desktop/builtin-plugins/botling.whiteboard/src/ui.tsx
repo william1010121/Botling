@@ -522,13 +522,17 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
  * component posts (answers, saves) goes nowhere.
  */
 function PictureFrame({ api, botId, picture, size, title }: { api: BoardApi; botId: string; picture: Picture; size: "1x1" | "2x1" | "2x2"; title: string }) {
-  // `shown` is the page on screen; `next` a page being made for new data, loading out of sight beside it until it has loaded and
-  // been painted (two animation frames), when it takes the place: the old picture stays up while the new one is made.
+  // `shown` is the page on screen; `next` a page being made for new data, loading out of sight beside it until its own page says
+  // it is ready ({ ccb: "ready" }: loaded, fonts and pictures decoded, painted, sized; its `load` event or the clock are not that),
+  // when it takes the place: the old picture stays up while the new one is made. A page not ready in PICTURE_READY_WAIT is given up
+  // (the shown one stays) and asked for again.
   const [shown, setShown] = useState<Page | null>(null);
   const [next, setNext] = useState<Page | null>(null);
+  const [again, setAgain] = useState(0);
   const now = useRef({ shown, next });
   now.current = { shown, next };
   const frame = useRef<HTMLIFrameElement>(null);
+  const coming = useRef<HTMLIFrameElement>(null);
   const live = useRef(new WeakSet<object>()); // the pages that said they take new data themselves (ccb.onData)
   const asked = useRef(0); // the request whose answer is wanted
   const gone = useRef(false);
@@ -536,11 +540,21 @@ function PictureFrame({ api, botId, picture, size, title }: { api: BoardApi; bot
     gone.current = false;
     const onMessage = (event: MessageEvent) => {
       const message = event.data as { ccb?: unknown } | null;
-      if (message && typeof message === "object" && message.ccb === "live" && event.source) live.current.add(event.source as object);
+      if (!message || typeof message !== "object" || !event.source) return;
+      if (message.ccb === "live") live.current.add(event.source as object);
+      else if (message.ccb === "ready" && now.current.next && event.source === coming.current?.contentWindow) {
+        setShown(now.current.next);
+        setNext(null);
+      }
     };
     window.addEventListener("message", onMessage);
     return () => { gone.current = true; asked.current++; window.removeEventListener("message", onMessage); };
   }, []);
+  useEffect(() => {
+    if (!next) return;
+    const timer = setTimeout(() => { setNext(null); setAgain((count) => count + 1); }, PICTURE_READY_WAIT);
+    return () => clearTimeout(timer);
+  }, [next]);
   useEffect(() => {
     const shape = `${picture.name}\u0000${size}\u0000${botId}`;
     const have = now.current.shown;
@@ -562,22 +576,18 @@ function PictureFrame({ api, botId, picture, size, title }: { api: BoardApi; bot
       const page: Page = { url, shape, data: picture.data };
       if (now.current.shown) setNext(page); else setShown(page);
     }, () => { /* the picture stays as it is */ });
-  }, [api, botId, picture.name, picture.data, size]);
-  const painted = (page: Page) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (gone.current || now.current.next !== page) return;
-      setShown(page);
-      setNext(null);
-    }));
-  };
+  }, [api, botId, picture.name, picture.data, size, again]);
   return (
     <span className={`wb-picture wb-picture-${size}`} aria-hidden={shown ? undefined : true}>
       {shown && <iframe key={shown.url} ref={frame} className="wb-picture-frame" sandbox="allow-scripts" src={shown.url} title={title} tabIndex={-1} />}
-      {next && <iframe key={next.url} className="wb-picture-frame wb-picture-next" sandbox="allow-scripts" src={next.url} title={title} tabIndex={-1}
-        style={{ visibility: "hidden" }} onLoad={() => painted(next)} />}
+      {next && <iframe key={next.url} ref={coming} className="wb-picture-frame wb-picture-next" sandbox="allow-scripts" src={next.url} title={title} tabIndex={-1}
+        style={{ visibility: "hidden" }} />}
     </span>
   );
 }
+
+/** How long a page being made for a picture may take to say it is ready before it is given up, in ms. */
+const PICTURE_READY_WAIT = 10_000;
 
 /** A page of a picture: its URL, the page's shape (component, size, bot) and the data it was made for (JSON text). */
 interface Page { url: string; shape: string; data: string }

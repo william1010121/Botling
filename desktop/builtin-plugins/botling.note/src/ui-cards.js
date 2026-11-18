@@ -181,12 +181,17 @@ export function install(st, api) {
   relayout.observe(st.doc);
   const onCardMsg = (e) => {
     const d = e.data;
-    if (!d || typeof d !== "object" || (d.ccb !== "size" && d.ccb !== "live")) return;
+    if (!d || typeof d !== "object" || (d.ccb !== "size" && d.ccb !== "live" && d.ccb !== "ready")) return;
     for (const v of views.values()) {
       const shown = !!v.frame && e.source === v.frame.contentWindow;
       const coming = !shown && !!v.next && e.source === v.next.frame.contentWindow;
       if (!shown && !coming) continue;
       const frame = shown ? v.frame : v.next.frame;
+      // the page being made says it is ready: it takes the shown one's place now
+      if (d.ccb === "ready") {
+        if (coming) takeOver(v, v.next, d.height);
+        continue;
+      }
       // the frame takes new data itself (ccb.onData): a change of its data is posted to it, the frame is kept
       if (d.ccb === "live") {
         frame.ccbLive = true;
@@ -295,32 +300,42 @@ export function install(st, api) {
   }
   // A page being made for a card that already shows one is dropped: what the card must show changed again, or it is gone.
   function cancelNext(v) {
-    v.next?.frame.remove();
+    if (!v.next) return;
+    clearTimeout(v.next.timer);
+    v.next.frame.remove();
     v.next = null;
   }
-  // The new page takes the old one's place when it has loaded and been painted (two animation frames after its load), and not
-  // before: until then the old one stays on screen, at its height. It is never moved in the page (that would load it again).
+  // How long a page being made for a card may take to say it is ready before it is given up (the one shown stays, and the page is asked for again).
+  const READY_WAIT = 10_000;
+  // The new page takes the old one's place only when its own page says it is ready ({ ccb: "ready", height }: loaded, fonts and
+  // pictures decoded, painted, sized; the page's `load` event, a size or the clock are not that), and not before: until then the
+  // old one stays on screen, at its height. It is never moved in the page (that would load it again).
   function handOff(v, next) {
     cancelNext(v);
     next.frame.style.visibility = "hidden";
     next.frame.style.pointerEvents = "none";
     v.next = next;
     cardLayer.append(next.frame);
-    next.frame.addEventListener("load", () => {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (st.gone || v.next !== next || views.get(v.lk) !== v) return;
-        const old = v.frame;
-        v.next = null;
-        if (next.height > 0) v.height = next.height; // the height the new page measured, not a default
-        next.frame.style.visibility = "";
-        v.frame = next.frame;
-        v.shape = next.shape;
-        v.data = next.data;
-        old?.remove();
-        layoutCards();
-        paintHead(v);
-      }));
-    }, { once: true });
+    next.timer = setTimeout(() => {
+      if (st.gone || v.next !== next || views.get(v.lk) !== v) return;
+      cancelNext(v);
+      drawView(v); // asks for the page again; the old one is still shown
+    }, READY_WAIT);
+  }
+  function takeOver(v, next, readyHeight) {
+    clearTimeout(next.timer);
+    const old = v.frame;
+    v.next = null;
+    // the height it measured last (its size messages), else the one it was ready at: never a default
+    const h = next.height > 0 ? next.height : Math.max(24, Math.min(6000, Math.ceil(Number(readyHeight) || 0)));
+    if (h > 0) v.height = h;
+    next.frame.style.visibility = "";
+    v.frame = next.frame;
+    v.shape = next.shape;
+    v.data = next.data;
+    old?.remove();
+    layoutCards();
+    paintHead(v);
   }
   async function drawView(v) {
     const cs = v.state;
