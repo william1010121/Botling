@@ -27,6 +27,10 @@ Check: The reviewer lists each `await` in the changed code that follows a check 
 Why: Mutation batches at review found unprotected guards on all four days: nine guards in M5-07b (2026-11-15), 1 of 16 in the install check (2026-11-16), 6 of 44, 6 of 35 and 7 unprotected guards on the Pin area cards (2026-11-17), and a dozen probes written for survivors on 2026-11-18.
 Check: The reviewer's one-connection batch (L-010); every survivor is either killed by a probe in the fix round or named an equivalent mutant in the review with the reason.
 
+## CS-04 · When a cause breaks one test (a moved file, a re-recorded golden or fixture, a new id or count), search every test that reads the same file, fixture or value and fix them in the same commit   (from L-011, proposed 2026-11-18)
+Why: main went red after M7-S30b moved a line out of the file a test's allowlist named, and four more tests read the old file after the splits (2026-11-16); the re-recorded `plugins-list` golden broke `renderer-plugin-feed` and `m7-surfaces-2x` and the same fixture was fixed in three more commits (2026-11-17); the minted-id change of 2026-11-15 broke five tests after the first fix repaired two.
+Check: The reviewer runs `grep` for the moved path, the fixture name or the changed value across `desktop/test` and `Web`, and every hit is in the diff or named as unaffected.
+
 Format of a rule:
 
 ```markdown
