@@ -37,6 +37,9 @@ import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
 import { subagentView } from "./view-functions";
 
+/** What a card says when no Claude worker can draw it (plain words: the user reads this on the card). */
+export const CARD_NEEDS_CLAUDE = "No card was drawn: a card is made by a Claude worker that Botling starts, and this bot cannot run one (it has no Claude head, or Claude workers are turned off in settings). Nothing was started.";
+
 export class BotWorkers {
   constructor(private readonly host: Bot, private readonly ctx: BotContext = new BotContext(host)) {}
 
@@ -519,6 +522,9 @@ export class BotWorkers {
    * limit is, that is only logged as a warning.
    */
   startCards(record: ChatRecord) {
+    // A card from an Antigravity or Codex head is drawn by the chat's Claude head's workers, as one from the Claude head is (`cardHome`).
+    const home = this.cardHome(record);
+    if (home) return home.workers.startCards(home.record);
     for (const card of record.workerCards ?? []) {
       // A second call for the same reply (a redelivery) while the first is still asking the host starts nothing: one card, one worker.
       if (card.status !== "starting" || card.taskId || this.startingCards.has(card.id)) continue;
@@ -527,6 +533,19 @@ export class BotWorkers {
       if (at > limit) this.log(`warn: ${at} card workers are at work at once, above the worker limit of ${limit} (card workers take no slot of it; nothing was held back)`);
       void this.startCard(record, card).finally(() => this.startingCards.delete(card.id));
     }
+  }
+
+  /**
+   * Where the card workers of a reply written by this head run. The worker is the app's haiku Claude worker, whatever engine wrote the reply, but it is started from a Claude
+   * head's workers (the ledger, the reply box and "redo with Opus" are that head's): the chat's own Claude head (its primary) when this head is another engine. Null: this head
+   * is the Claude head (it starts the card itself), or the chat has no Claude head with app-managed workers that holds the line (the card then says so, `CARD_NEEDS_CLAUDE`).
+   */
+  private cardHome(record: ChatRecord): { workers: BotWorkers; record: ChatRecord } | null {
+    if (this.engine === "claude") return null;
+    const owner = this.owner;
+    if (owner === this.host || owner.engine !== "claude" || !owner.workers.claudeWorkersOn()) return null;
+    const held = owner.records.find((line) => line.id === record.id);
+    return held ? { workers: owner.workers, record: held } : null;
   }
 
   /** The cards whose worker is being asked for (`startCards`). */
@@ -547,7 +566,7 @@ export class BotWorkers {
 
   private async startCard(record: ChatRecord, card: NonNullable<ChatRecord["workerCards"]>[number]) {
     try {
-      if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new Error("A card needs a Claude bot with app-managed Claude workers; nothing was started.");
+      if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new Error(CARD_NEEDS_CLAUDE);
       if (this.shuttingDown) throw new Error("The app is stopping; nothing was started.");
       // The card's worker runs on the small model (settings.json `cardWorkerModel`, haiku) at low effort, lean (no plugins, skills or other MCP servers),
       // its rules are its system prompt (`ClaudeWorkers` `cardSystem`, the same bytes for every card, so it is cached); the components it may pick from
@@ -598,7 +617,7 @@ export class BotWorkers {
     if (card.model === CARD_REDO_MODEL) throw new ContractError("conflict", "This card is already redone by Opus; reply on it to go on.");
     if (card.status === "starting" || card.status === "running") throw new ContractError("conflict", "The card's worker is still at work; redo it when it has finished.");
     if (this.redoingCards.has(card.id)) throw new ContractError("conflict", "The redo of this card is already being started.");
-    if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new ContractError("conflict", "A card needs a Claude bot with app-managed Claude workers; nothing was started.");
+    if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new ContractError("conflict", CARD_NEEDS_CLAUDE);
     this.redoingCards.add(card.id);
     try {
       const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: `${card.title} (Opus)`, instructions: cardRedoInstructions(card, this.cardBriefNow() ?? undefined, note), group: card.title, model: CARD_REDO_MODEL, effort: CARD_REDO_EFFORT }) as { task_id: string; run: number };
