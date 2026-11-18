@@ -70,7 +70,7 @@ import type { CoreOptions } from "./server/options";
 import { PhaseMarks, PhaseTally, Slowest } from "./phase-marks";
 export { PEER_ID, PEER_MESSAGE_BYTES, oneLine } from "./server/options";
 export type { AppOp, AppAnswer, ApplyNowCommand, BotMaking, CoreOptions } from "./server/options";
-import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
+import { CoreSwap } from "./server/swap";
 
 export class Core {
   readonly mainBotId: string;
@@ -416,7 +416,7 @@ export class Core {
     marks.lap(`${this.bots.size} bots activateStartup`);
     this.options.phaseLog?.(`timing: core activate: bots ${slowestBots.line(this.bots.size)}`);
     // Started by a core hot swap: the old core's sessions go on, and what waited there is delivered.
-    this.adoptSwap();
+    this.coreSwap.adoptSwap();
     marks.lap("adopt swap");
     try { new RestartJournal(this.options.dataDir).recover(entry => {
       const bot=this.bots.get(entry.botId);if(!bot)throw Error("Original bot unavailable.");bot.adoptRestart(entry);
@@ -736,72 +736,16 @@ export class Core {
   settingsNow(...a: Parameters<CoreCommands["settingsNow"]>) { return this.coreCommands.settingsNow(...a); }
   changeSetting(...a: Parameters<CoreCommands["changeSetting"]>) { return this.coreCommands.changeSetting(...a); }
 
-  // ------------------------------------------------------------------------------------------
-  // Core hot swap (hot-swap.ts)
-
-  /** Drained for a swap: quitting now hands over instead of tidying. */
-  private swapping = false;
-
-  /** Stops beginning turns, lets those under way finish (or stops them at a tool-call boundary), and writes the handover. */
-  async drainForSwap(timeoutMs: number, boundaryMs: number): Promise<{ entries: number; interrupted: string[] }> {
-    if (this.swapping) throw new ContractError("conflict", "A core swap is already under way.");
-    this.swapping = true;
-    this.event({ type: "core.swap", phase: "draining" });
-    try {
-      const result = await drainBots([...this.bots.values()], { timeoutMs, boundaryMs, log: (line) => this.log(line) });
-      writeHandover(this.options.dataDir, result.entries);
-      this.log(`core swap: drained; ${result.entries.length} head(s) handed over, ${result.interrupted.length} stopped mid-turn`);
-      this.event({ type: "core.swap", phase: "updating" });
-      return { entries: result.entries.length, interrupted: result.interrupted };
-    } catch (error) {
-      this.cancelSwap();
-      throw error;
-    }
-  }
-
-  /** The swap was called off (the new core did not start): this core goes on as before. */
-  cancelSwap() {
-    discardHandover(this.options.dataDir);
-    this.swapping = false;
-    for (const bot of this.bots.values()) bot.holdForSwap(false);
-    this.event({ type: "core.swap", phase: null });
-  }
-
-  private adoptSwap() {
-    let handover;
-    try { handover = takeHandover(this.options.dataDir); } catch (error) { this.log(`core swap: handover unreadable: ${(error as Error).message}`); return; }
-    if (!handover) return;
-    this.log(`core swap: taking over ${handover.entries.length} head(s) from the previous core`);
-    for (const botId of new Set(handover.entries.map((entry) => entry.botId))) {
-      const entries = handover.entries.filter((entry) => entry.botId === botId);
-      const bot = this.bots.get(botId);
-      if (!bot) continue;
-      try { bot.adoptSwap(entries); } catch (error) { this.log(`core swap: ${botId}: ${(error as Error).message}`); }
-    }
-  }
-
-  /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
-  private restarting = false;
-  prepareRestart() {
-    if(this.restarting)throw Error("Restart is already prepared.");
-    if(this.swapping)throw Error("A core swap is already in progress.");
-    const journal=new RestartJournal(this.options.dataDir);
-    journal.prepare([...this.bots.values()].flatMap(bot=>bot.restartEntries()));
-    this.restarting=true;
-    for(const bot of this.bots.values())bot.holdForSwap(true);
-  }
-  /** Quit-time variant: arms continuation only if a turn is in flight; never throws, never disturbs an update restart. */
-  prepareQuitContinuation(): boolean {
-    if(this.restarting||this.swapping)return false;
-    if(![...this.bots.values()].some(bot=>bot.restartEntries().length))return false;
-    try{this.prepareRestart();return true;}
-    catch(error){this.log(`quit continuation skipped: ${String((error as Error)?.message??error)}`);return false;}
-  }
-  cancelRestart(){
-    if(!this.restarting)return;
-    new RestartJournal(this.options.dataDir).cancel();this.restarting=false;
-    for(const bot of this.bots.values())bot.holdForSwap(false);
-  }
+  // Core hot swap and restart continuation (server/swap.ts)
+  private madeSwap?: CoreSwap;
+  private get coreSwap(): CoreSwap { return (this.madeSwap ??= new CoreSwap(this)); }
+  private get swapping() { return this.coreSwap.swapping; }
+  private get restarting() { return this.coreSwap.restarting; }
+  drainForSwap(...a: Parameters<CoreSwap["drainForSwap"]>) { return this.coreSwap.drainForSwap(...a); }
+  cancelSwap(...a: Parameters<CoreSwap["cancelSwap"]>) { return this.coreSwap.cancelSwap(...a); }
+  prepareRestart(...a: Parameters<CoreSwap["prepareRestart"]>) { return this.coreSwap.prepareRestart(...a); }
+  prepareQuitContinuation(...a: Parameters<CoreSwap["prepareQuitContinuation"]>) { return this.coreSwap.prepareQuitContinuation(...a); }
+  cancelRestart(...a: Parameters<CoreSwap["cancelRestart"]>) { return this.coreSwap.cancelRestart(...a); }
 
   async shutdown() {
     // M5-06c: no pick will come: a fetch waiting for its card is told "no" (the card itself stays for the next start to close).

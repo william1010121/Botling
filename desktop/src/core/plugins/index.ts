@@ -7,9 +7,8 @@
 // process). Everything else is refused. A plugin's message to a bot shows as sent by it unless it
 // asked to send as the user (plugin-platform.md §5, N1). Any plugin may read the workspace (`workspace.*`,
 // what the whiteboard shows: bots, memory, results, what waits on you); none may answer for you.
-// Reading a chat (`chat.messages`) needs the "messages" permission; what a plugin draws among a chat's
-// messages (`chat.decorate`, chat extension v2) is kept here per chat until it unloads, and its web part draws it.
-//
+// Reading a chat (`chat.messages`) needs the "messages" permission; what a plugin draws among a chat's messages
+// (`chat.decorate`, chat extension v2) is kept here per chat until it unloads, and its web part draws it.
 // Web parts: since Phase 4a the chat page has an origin of its own (botling-chat://chat, no bridge,
 // nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
 // composer, markdown and component hooks, commands and `host.call`; their stylesheets are served by the
@@ -41,7 +40,6 @@ import { BriefingBook, type AppWorld } from "./app-seam";
 import type { StudioWorld } from "./studio-seam";
 import { NoteWatcher } from "../bot-note";
 import type { PluginLinkTarget } from "../plugin-link";
-
 import * as hostEvents from "./host-events";
 import { requested } from "./requests";
 import { PluginWorkers } from "../orchestration/plugin-workers";
