@@ -227,6 +227,10 @@ export function install(st, api) {
     mg.draft = d;
     d.el = draftCard(d);
     layout();
+    d.el.classList.add("nm-enter"); // the fade-in plays once, on open: render() re-inserts the box and a kept animation would replay (a flicker)
+    const settled = () => d.el.classList.remove("nm-enter");
+    d.el.addEventListener("animationend", settled, { once: true });
+    setTimeout(settled, 400);
     d.el.querySelector("textarea")?.focus({ preventScroll: true });
     if (typeof d.el.scrollIntoView === "function") d.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
@@ -248,10 +252,13 @@ export function install(st, api) {
     const d = mg.draft;
     if (!d) return;
     const cell = draftCell(d);
+    const wiped = !d.el.isConnected; // render() empties the doc: the box comes back as a detached node, and a detached node drops the focus
     if (cell) {
       d.cellNode = cell;
       if (cell.nextElementSibling !== d.el) cell.after(d.el);
     } else if (d.el.parentElement !== st.doc) st.doc.append(d.el);
+    const ta = d.el.querySelector("textarea");
+    if (wiped && d.focused && ta && document.activeElement !== ta) ta.focus({ preventScroll: true });
   }
   function markDraft() {
     const d = mg.draft;
@@ -295,6 +302,10 @@ export function install(st, api) {
       ta.setAttribute("aria-label", "提問");
       ta.placeholder = "問這一段…";
       ta.addEventListener("input", () => { d.text = ta.value; });
+      ta.addEventListener("focus", () => { d.focused = true; });
+      // Leaving the box clears it; a blur that comes from render() removing the box (Chrome fires one) does not: placeDraft() has already
+      // given the focus back by the time this timer looks, so what counts is whether the box has it a tick later.
+      ta.addEventListener("blur", () => { setTimeout(() => { if (document.activeElement !== ta) d.focused = false; }, 0); });
       ta.addEventListener("keydown", (e) => {
         if (e.isComposing) return;
         e.stopPropagation();
@@ -848,7 +859,7 @@ export function install(st, api) {
     const railKids = [];
     if (!wide) {
       const head = h("div", "nm-rail-head");
-      head.innerHTML = `<b>旁註</b><span class="nm-n">${rows.filter((r) => !r.draft).length}</span><small>只掛在 Note 旁邊，不寫進內容${hidden ? ` · ${hidden} 則在沒顯示的路線` : ""}</small>`;
+      head.innerHTML = `<b>旁註</b><span class="nm-n">${rows.length}</span><small>只掛在 Note 旁邊，不寫進內容${hidden ? ` · ${hidden} 則在沒顯示的路線` : ""}</small>`;
       railKids.push(head);
     }
     for (const r of rows) {

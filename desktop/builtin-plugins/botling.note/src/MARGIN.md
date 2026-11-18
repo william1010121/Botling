@@ -61,6 +61,8 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
   card **right under the passage's cell, in the flow of the note** (the cells below move down; nothing in the margin until
   an answer exists; `placeDraft()` puts it back after every render); scope tabs 選取文字 / 整個 cell / 整份 Note on one row
   with 改為引用到對話 / 取消 / 送出 (no explanatory line under them), ⌘↵ sends, Esc closes. The answer then appears as a card in the margin (narrow frame: under the note).
+  `render()` empties the doc, so `placeDraft()` also hands the typing focus back to the box if it had it (`d.focused`), and the fade-in
+  (`nm-enter`) is a one-off class, removed after it ends, so a re-insert never replays it (the screen must not flicker). Tests: test/ui-margin-askbox.test.js.
 * **Answering…**: the card shows a spinner and "bot 還在回答…", with 不等了 (drops the question; a late reply stays in the chat).
 * **Read**: question, answer as small Markdown (paragraphs, lists, code, links through the note's link opener), time,
   "不會寫進 Note"; fold/unfold (kept), 複製, 刪除 (two presses), 存成 cell (the only way an answer enters the note: a new
