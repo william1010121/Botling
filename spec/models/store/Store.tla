@@ -111,7 +111,8 @@ Reject(c) ==
 \* and the answer leaves when the batch settles; that batch is flushed only when the writer owes a flush.
 Resend(c) ==
   /\ up /\ c \in Acks /\ c \in Range(log) /\ c \notin owed
-  /\ synced' = IF debt THEN Len(log) ELSE synced /\ debt' = FALSE
+  /\ synced' = (IF debt THEN Len(log) ELSE synced)
+  /\ debt' = FALSE
   /\ acked' = acked \cup {c}
   /\ UNCHANGED <<up, log, owed, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
 
