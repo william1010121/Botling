@@ -296,6 +296,16 @@ describe("a bot with the cards", () => {
       for (const known of ["status", "inline-chart", "choices", "網頁預覽卡片"]) expect(rules.validate!(known, "{}") ?? "", known).not.toContain("not in the library");
     } finally { await core.shutdown(); }
   });
+  it("the card rules do not list a pin-only component to the worker (D4), though naming it is no error", async () => {
+    const { core, flux } = bot(null, "flux-pin-only", { "inline-chart": "Inline chart.\nBuilt-in: yes\nData: {}", pinned: "A pin.\nPin only: yes\nCommand: echo hi\n", plain: "A plain card.\nData: {}" });
+    try {
+      const rules = flux.cards.cardRules();
+      const said = rules.validate!("nope", "{}")!;
+      expect(said).toContain("plain");
+      expect(said).not.toContain("pinned");
+      expect(rules.validate!("pinned", "{}") ?? "").not.toContain("not in the library");
+    } finally { await core.shutdown(); }
+  });
   it("the shipped library (inline-report-block without the Built-in tag, the preview card named web-preview): both stay in the note, and the worker has their usage, though neither is on the bot's list", async () => {
     const shipped = {
       "inline-chart": 'Inline chart: a chart inside the words.\nBuilt-in: yes\nData: {"type": "bar"}',

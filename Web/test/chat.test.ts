@@ -5,7 +5,7 @@ import { readChatCss } from "./helpers/chat-css";
 import { Composer } from "../src/composer";
 import { setLanguage } from "../src/i18n";
 import { regatherText } from "../src/regather";
-import { feedback, messageElement, messageMenu, openReportBox, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
+import { extensions, feedback, messageElement, messageMenu, openReportBox, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -474,6 +474,22 @@ describe("messages", () => {
     // A prototype key is no component either (CS-01): it is not the Object function.
     const proto = messageElement(message({ id: "u3", displays: [{ name: "constructor", data: "{}", at: null }] }), components);
     expect(proto.querySelector(".unknown-component")!.textContent).toContain("Component not found: constructor");
+  });
+
+  it("the error card for an unknown component has no plugin bar (no pin on it), where a known component's does, and cuts a long name at 100 characters", () => {
+    const components = { table: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const bar = () => { const element = document.createElement("div"); element.className = "test-bar"; return element; };
+    extensions.cardBars.push({ plugin: "test-bars", make: bar });
+    try {
+      // The control: the bar mechanism works, so its absence below is the guard's doing.
+      const known = messageElement(message({ id: "v1", displays: [{ name: "table", data: "[1]", at: null }] }), components);
+      expect(known.querySelector(".pin-holder .test-bar")).not.toBeNull();
+      const unknown = messageElement(message({ id: "v2", displays: [{ name: "x".repeat(200), data: "{}", at: null }] }), components);
+      expect(unknown.querySelector(".unknown-component")).not.toBeNull();
+      expect(unknown.querySelector(".pin-holder")).toBeNull();
+      expect(unknown.querySelector(".test-bar")).toBeNull();
+      expect(unknown.querySelector(".unknown-component strong")!.textContent).toBe(`Component not found: ${"x".repeat(100)}`);
+    } finally { extensions.cardBars.pop(); }
   });
 
   it("name who said a line in the group chat", () => {
