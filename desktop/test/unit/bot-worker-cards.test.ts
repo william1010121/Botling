@@ -250,7 +250,7 @@ describe("a card follows its worker", () => {
     await waitFor("bound", () => record.workerCards![0]!.taskId);
     const changed = vi.spyOn(r.b as any, "changed");
 
-    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Plans: A $5, B $9.\n<show name="inline-chart">{"series":[5,9]}</show>' }));
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Plans: A $5, B $9.\n<show name="inline-chart">{"kind":"bars","items":[{"label":"A","value":5},{"label":"B","value":9}]}</show>' }));
     expect(record.workerCards![0]).toMatchObject({ status: "done", run: 1, text: "Plans: A $5, B $9." });
     expect(record.workerCards![0]!.shows).toHaveLength(1);
     expect(changed).toHaveBeenCalledWith(record);
@@ -331,7 +331,7 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     record.workerCards![0]!.askedAt = Date.now() - 31 * 60_000;
     expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ waiting: "late" });
     // The component came and the worker filled the card: no longer waiting.
-    r.peek.projectWorker(ledger({ status: "done", run: 2, text: 'Done.\n<show name="inline-chart">{"x":1}</show>' }));
+    r.peek.projectWorker(ledger({ status: "done", run: 2, text: 'Done.\n<show name="inline-chart">{"kind":"bars","items":[{"label":"x","value":1}]}</show>' }));
     expect(r.peek.messageView(record).workerCards[0].waiting).toBeUndefined();
     // A rejected command: the warning is its own field, not in the words.
     r.peek.projectWorker(ledger({ status: "done", run: 3, text: 'Words.\n<show name="git-log" command="python3 /elsewhere/g.py"></show>' }));
@@ -379,6 +379,103 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     expect(r.handoff.mock.calls.filter(([tool]) => tool === "app_send_message")).toHaveLength(0);
   });
 
+  describe("a report whose component JSON breaks its usage (a progress value above its max)", () => {
+    const over = 'Scenarios.\n<show name="inline-report-block">{"type":"progress","items":[{"label":"p50","value":120,"max":100}]}</show>';
+    const good = 'Scenarios.\n<show name="inline-report-block">{"type":"progress","items":[{"label":"p50","value":80,"max":100}]}</show>';
+    const MESSAGE = "items[0].value 120 is more than its max 100";
+    const told = (r: ReturnType<typeof rig>) => r.handoff.mock.calls.filter(([tool]) => tool === "app_send_message");
+    async function bound(r: ReturnType<typeof rig>) {
+      const record = await answer(r, '<card title="Perf">Show p50 per scenario.</card>');
+      await waitFor("bound", () => record.workerCards![0]!.taskId);
+      return record;
+    }
+
+    it("is not drawn: the card stays at work, the worker is told the exact errors once, and its corrected report is drawn clean", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }));
+      const card = record.workerCards![0]!;
+      expect(card).toMatchObject({ status: "running", invalidRun: 1, invalidTold: true });
+      expect(card.shows).toBeUndefined();
+      expect(card.text).toBeUndefined();
+      expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ status: "running" });
+      await waitFor("the correction told", () => told(r).length === 1);
+      expect(told(r)[0]![1]).toMatchObject({ task_id: "T1", message: expect.stringContaining(MESSAGE) });
+      expect(String(told(r)[0]![1].message)).toContain("This is your one correction.");
+      // The worker's next run ends with a corrected report: drawn, nothing more told.
+      r.peek.projectWorker(ledger({ status: "running", run: 2 }));
+      r.peek.projectWorker(ledger({ status: "done", run: 2, text: good }));
+      expect(card).toMatchObject({ status: "done", text: "Scenarios.", shows: [{ name: "inline-report-block" }] });
+      expect(card.invalid).toBeUndefined();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(told(r)).toHaveLength(1);
+    });
+
+    it("a worker whose run ended before app_handoff answered (its ledger is already there) is held and told too", async () => {
+      const r = rig();
+      r.handoff.mockImplementation(async (tool: string) => {
+        if (tool !== "app_handoff") return {};
+        r.peek.workers.workerViews.set("T1", ledger({ status: "done", run: 1, text: over }));
+        return { task_id: "T1", run: 1 };
+      });
+      const record = await answer(r, '<card title="Perf">Show p50 per scenario.</card>');
+      await waitFor("the correction told", () => told(r).length === 1);
+      expect(record.workerCards![0]).toMatchObject({ status: "running", invalidRun: 1, invalidTold: true });
+      expect(told(r)[0]![1]).toMatchObject({ task_id: "T1", message: expect.stringContaining(MESSAGE) });
+    });
+
+    it("still wrong after the one correction: the card is drawn with the errors stated, and the worker is not told again", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }));
+      await waitFor("the correction told", () => told(r).length === 1);
+      r.peek.projectWorker(ledger({ status: "running", run: 2 }));
+      r.peek.projectWorker(ledger({ status: "done", run: 2, text: over }));
+      const view = r.peek.messageView(record).workerCards[0];
+      expect(view).toMatchObject({ status: "done", text: "Scenarios." });
+      expect(view.warning).toContain("still wrong after the one correction");
+      expect(view.warning).toContain(MESSAGE);
+      expect(record.workerCards![0]!.shows).toHaveLength(1);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(told(r)).toHaveLength(1);
+    });
+
+    it("a report read again at the app's start is drawn as it is (nobody is left to correct it) and is not told", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }), true);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(record.workerCards![0]).toMatchObject({ status: "done", shows: [{ name: "inline-report-block" }] });
+      expect(record.workerCards![0]!.invalid).toBeUndefined();
+      expect(told(r)).toHaveLength(0);
+    });
+
+    it("a worker that cannot be told gives up the correction: the card is drawn with the errors stated, not left at work for ever", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.handoff.mockImplementation(async (tool: string) => { if (tool === "app_send_message") throw new Error("worker is gone"); return { task_id: "T1", run: 1 }; });
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }));
+      await waitFor("the card to be drawn", () => record.workerCards![0]!.status === "done");
+      expect(record.workerCards![0]).toMatchObject({ invalidRun: -1, shows: [{ name: "inline-report-block" }] });
+      expect(r.peek.messageView(record).workerCards[0].warning).toContain(MESSAGE);
+    });
+
+    it("a failure to tell a worker that the card no longer follows (the card was rebound to another worker meanwhile) changes nothing", async () => {
+      const r = rig();
+      const record = await bound(r);
+      r.handoff.mockImplementation(async (tool: string) => {
+        if (tool !== "app_send_message") return { task_id: "T1", run: 1 };
+        record.workerCards![0]!.taskId = "T9";
+        throw new Error("worker is gone");
+      });
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: over }));
+      await waitFor("the send tried", () => record.workerCards![0]!.taskId === "T9");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(record.workerCards![0]).toMatchObject({ status: "running", invalidRun: 1 });
+      expect(record.workerCards![0]!.shows).toBeUndefined();
+    });
+  });
+
   it("tellCardWorker sends the words to the worker as app_send_message", async () => {
     const r = rig();
     r.peek.workers.tellCardWorker("T1", "gpu-gauge is ready.");
@@ -391,7 +488,7 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
   async function finished(r: ReturnType<typeof rig>) {
     const record = await answer(r, '<card title="Prices">Collect the prices.</card>');
     await waitFor("bound", () => record.workerCards![0]!.taskId);
-    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Plans: A $5.\n<show name="inline-chart">{"series":[5]}</show>' }));
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Plans: A $5.\n<show name="inline-chart">{"kind":"bars","items":[{"label":"A","value":5}]}</show>' }));
     expect(record.workerCards![0]).toMatchObject({ status: "done" });
     return record;
   }
@@ -409,7 +506,7 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBeUndefined();
     expect(String(args.instructions)).toContain("Collect the prices.");
     expect(String(args.instructions)).toContain(JSON.stringify("Plans: A $5."));
-    expect(String(args.instructions)).toContain(JSON.stringify('{"series":[5]}'));
+    expect(String(args.instructions)).toContain(JSON.stringify('{"kind":"bars","items":[{"label":"A","value":5}]}'));
     expect(String(args.instructions)).toContain(JSON.stringify("a bar chart"));
     expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "running", run: 1, earlier: ["T1"], text: "Plans: A $5." });
     expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ taskId: "T2", model: "opus", status: "running" });
@@ -445,9 +542,9 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     await r.peek.workers.redoCard("T1");
     r.peek.projectWorker(ledger({ id: "T1", status: "done", run: 2, text: "late words of the first worker" }));
     expect(record.workerCards![0]!.text).toBe("Plans: A $5.");
-    r.peek.projectWorker(ledger({ id: "T2", status: "done", run: 1, text: 'Better.\n<show name="inline-chart">{"series":[5,9]}</show>' }));
+    r.peek.projectWorker(ledger({ id: "T2", status: "done", run: 1, text: 'Better.\n<show name="inline-chart">{"kind":"bars","items":[{"label":"A","value":5},{"label":"B","value":9}]}</show>' }));
     expect(record.workerCards![0]).toMatchObject({ status: "done", text: "Better.", taskId: "T2" });
-    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5,9]}');
+    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"kind":"bars","items":[{"label":"A","value":5},{"label":"B","value":9}]}');
     // The reply box sends to the card's task id: the opus worker's.
     const view = r.peek.messageView(record).workerCards[0];
     expect(Command.safeParse({ type: "agent.message", botId: "b", subagentId: view.taskId, text: "and yearly?" }).success).toBe(true);
@@ -521,7 +618,7 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     await r.peek.workers.redoCard("T1");
     r.peek.projectWorker(ledger({ id: "T2", status: "failed", run: 1 }));
     expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "failed", text: "Plans: A $5.", error: expect.stringMatching(/failed without a report.*earlier drawing is kept/) });
-    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5]}');
+    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"kind":"bars","items":[{"label":"A","value":5}]}');
     const view = r.peek.messageView(record).workerCards[0];
     expect(view).toMatchObject({ status: "failed", model: "opus", text: "Plans: A $5.", error: expect.stringMatching(/earlier drawing is kept/) });
   });

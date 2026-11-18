@@ -31,7 +31,7 @@ import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
 import type { CardBrief } from "../worker-cards";
-import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, cardSystemPrompt, followWorker, projectCard, rebindCard, takeRejection } from "../worker-cards";
+import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, cardSystemPrompt, followWorker, projectCard, rebindCard, takeInvalid, takeRejection } from "../worker-cards";
 import { CARD_USAGE_FILES, CARD_WORKER_EFFORT, CARD_WORKER_MODEL } from "../settings";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
@@ -484,9 +484,11 @@ export class BotWorkers {
     const projected = projectWorker(this.subagents, pending ? [...this.records, pending] : this.records, record);
     if (projected.chip && projected.chip !== pending) this.changed(projected.chip);
     // The card a `<card>` tag drew for it follows (worker-cards.ts).
-    const drawn = projectCard(this.records, record, this.host.cards.cardRules());
+    // A component's JSON is checked only for a run that ends while the app is up: one that ended before a restart is drawn as it is (nobody is left to correct it).
+    const rules = this.host.cards.cardRules();
+    const drawn = projectCard(this.records, record, atStart ? { ...rules, validate: undefined } : rules);
     if (drawn) {
-      if (!atStart) { this.passOnCardRequests(drawn); this.tellCardRejections(drawn); }
+      if (!atStart) { this.passOnCardRequests(drawn); this.tellCardRejections(drawn); this.tellCardInvalid(drawn); }
       this.changed(drawn);
     }
     const row = projected.row;
@@ -549,7 +551,7 @@ export class BotWorkers {
       card.run = started.run;
       // Its ledger may have moved on while the tool call was answered (a run that ended at once).
       const worker = this.workerViews.get(started.task_id);
-      if (worker) followWorker(card, worker, this.host.cards.cardRules());
+      if (worker) { followWorker(card, worker, this.host.cards.cardRules()); this.tellCardInvalid(record); }
     } catch (error) {
       card.status = "failed";
       card.error = (error as Error).message.slice(0, 1_000);
@@ -592,7 +594,7 @@ export class BotWorkers {
       this.cardWorkerIds.add(started.task_id);
       // Its ledger may have moved on while the tool call was answered.
       const worker = this.workerViews.get(started.task_id);
-      if (worker) followWorker(card, worker, this.host.cards.cardRules());
+      if (worker) { followWorker(card, worker, this.host.cards.cardRules()); this.tellCardInvalid(record); }
       this.changed(record);
       return { taskId: started.task_id, run: started.run };
     } catch (error) {
@@ -630,11 +632,29 @@ export class BotWorkers {
     }
   }
 
-  /** Words from the app to a card's worker (a component it asked for is ready, or was declined): they join its run or start the next one. */
-  tellCardWorker(taskId: string, text: string) {
+  /**
+   * The errors in the component JSON of a card's report go back to its worker once, to fix and end its report again (`takeInvalid`: the card was held back, not drawn). A worker
+   * that cannot be told (the send fails) gives up the correction: the card is drawn as it is, with the errors stated (`invalidRun` -1).
+   */
+  private tellCardInvalid(record: ChatRecord) {
+    for (const card of record.workerCards ?? []) {
+      const taskId = card.taskId, told = taskId ? takeInvalid(card) : null;
+      if (!taskId || !told) continue;
+      queueMicrotask(() => this.tellCardWorker(taskId, told, () => {
+        if (card.taskId !== taskId || !card.invalid) return;
+        card.invalidRun = -1;
+        const worker = this.workerViews.get(taskId);
+        if (worker) followWorker(card, worker, this.host.cards.cardRules());
+        this.changed(record);
+      }));
+    }
+  }
+
+  /** Words from the app to a card's worker (a component it asked for is ready, or was declined): they join its run or start the next one. `failed` runs when they could not be sent. */
+  tellCardWorker(taskId: string, text: string, failed?: () => void) {
     if (this.shuttingDown) return;
     void this.ensureClaudeWorkers().tool("app_send_message", { task_id: taskId, message: text })
-      .catch((error: Error) => this.log(`card worker ${taskId}: ${error.message}`));
+      .catch((error: Error) => { this.log(`card worker ${taskId}: ${error.message}`); failed?.(); });
   }
 
   /** The step that started a worker shows how its latest run ended (a report left unresolved later fails it too). */

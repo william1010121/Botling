@@ -137,7 +137,7 @@ describe("a bot with the cards", () => {
       routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
     const flux = ((core as unknown as { bots: Map<string, Bot> }).bots.get(FLUX)!) as unknown as { setComponentList(names: string[]): void; componentNote(): string; cards: any; options: any; workers: any };
     flux.setComponentList(["status", "todo", "網頁預覽卡片"]);
-    return { core, flux, folder };
+    return { core, flux, folder, dir };
   }
 
   it("is told the built-ins and the preview card only: status, todo and gitlog are not in its wake note", async () => {
@@ -263,6 +263,20 @@ describe("a bot with the cards", () => {
       expect(rules).toMatchObject({ scriptsDir: join(folder, ".bot", "card-scripts"), folder });
       expect(rules.hasCommand("gitlog")).toBe(true);
       expect(rules.hasCommand("status")).toBe(false);
+    } finally { await core.shutdown(); }
+  });
+  it("the card rules check a component's JSON against the library's live template: a kind its KINDS lists is known, one it does not list is not, a component with no schema is never checked", async () => {
+    const { core, flux, dir } = bot(null);
+    try {
+      const rules = flux.cards.cardRules();
+      const own = join(dir, "plugins", "ccb-components", "components", "inline-chart", "template.html");
+      writeFileSync(own, "var MAX = 12, KINDS = ['bars', 'heatmap'];");
+      expect(rules.validate!("inline-chart", '{"kind":"heatmap"}')).toBeNull();
+      expect(rules.validate!("inline-chart", '{"kind":"targets"}')).toMatch(/kind "targets" is unknown \(bars \/ heatmap\)/);
+      // Maintainer adds a kind to the live template: the next report is checked against it, no restart.
+      writeFileSync(own, "var MAX = 12, KINDS = ['bars', 'heatmap', 'targets'];");
+      expect(rules.validate!("inline-chart", '{"kind":"targets","target":1,"items":[{"label":"a","median":1,"p90":2}]}')).toBeNull();
+      expect(rules.validate!("not-in-the-library", "{not json")).toBeNull();
     } finally { await core.shutdown(); }
   });
   it("the shipped library (inline-report-block without the Built-in tag, the preview card named web-preview): both stay in the note, and the worker has their usage, though neither is on the bot's list", async () => {
