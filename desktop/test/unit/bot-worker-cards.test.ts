@@ -411,6 +411,19 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
       expect(told(r)).toHaveLength(1);
     });
 
+    it("a worker whose run ended before app_handoff answered (its ledger is already there) is held and told too", async () => {
+      const r = rig();
+      r.handoff.mockImplementation(async (tool: string) => {
+        if (tool !== "app_handoff") return {};
+        r.peek.workers.workerViews.set("T1", ledger({ status: "done", run: 1, text: over }));
+        return { task_id: "T1", run: 1 };
+      });
+      const record = await answer(r, '<card title="Perf">Show p50 per scenario.</card>');
+      await waitFor("the correction told", () => told(r).length === 1);
+      expect(record.workerCards![0]).toMatchObject({ status: "running", invalidRun: 1, invalidTold: true });
+      expect(told(r)[0]![1]).toMatchObject({ task_id: "T1", message: expect.stringContaining(MESSAGE) });
+    });
+
     it("still wrong after the one correction: the card is drawn with the errors stated, and the worker is not told again", async () => {
       const r = rig();
       const record = await bound(r);
