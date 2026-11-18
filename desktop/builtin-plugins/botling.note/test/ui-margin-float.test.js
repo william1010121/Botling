@@ -14,7 +14,7 @@ globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {
 const VW = 1280;
 let VH = 800;
 let floatH = 2000; // what a long answer would measure
-let pillRect = { left: 1000, top: 300, width: 340, height: 36 };
+let pillRect = { left: 900, top: 300, width: 340, height: 36 };
 const rect = (r) => ({ left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height, width: r.width, height: r.height, x: r.left, y: r.top, toJSON() {} });
 const realRect = Element.prototype.getBoundingClientRect;
 const realOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
@@ -24,7 +24,7 @@ const realInner = [Object.getOwnPropertyDescriptor(window, "innerHeight"), Objec
 beforeEach(() => {
   VH = 800;
   floatH = 2000;
-  pillRect = { left: 1000, top: 300, width: 340, height: 36 };
+  pillRect = { left: 900, top: 300, width: 340, height: 36 };
   Object.defineProperty(window, "innerHeight", { get: () => VH, configurable: true });
   Object.defineProperty(window, "innerWidth", { get: () => VW, configurable: true });
   Element.prototype.getBoundingClientRect = function () {
@@ -142,8 +142,8 @@ describe("an opened side note floats over the page", () => {
     expect(p.querySelector(".nm-head .nm-st").textContent).toBe("已回答");
     expect(p.textContent).toContain("第 60 行");
     for (const label of ["在視窗追問", "複製", "存成 cell", "刪除", "收起"]) expect(byText(p, ".nm-foot button", label), label).toBeDefined();
-    // over its own pill
-    expect(px(p.style.left)).toBe(1000);
+    // over its own pill (the stubbed pill sits at x 900..1240, inside the 1280 px frame: no clamping)
+    expect(px(p.style.left)).toBe(900);
     expect(px(p.style.width)).toBe(340);
     // closing is as quiet as opening
     click(byText(p, ".nm-foot button", "收起"));
