@@ -57,7 +57,8 @@ function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unkn
   bots.push(b);
   const peek = b as any;
   // The Claude worker host stands in: it takes the same `tool("app_handoff", …)` call a bot's own tool call makes.
-  const handoff = vi.fn(async (_name: string, _args: Record<string, unknown>) => ({ task_id: "T1", run: 1 }));
+  // Typed as ClaudeWorkers.tool is (it answers unknown), so a test may answer other tools with {}.
+  const handoff = vi.fn(async (_name: string, _args: Record<string, unknown>): Promise<unknown> => ({ task_id: "T1", run: 1 }));
   peek.workers.ensureClaudeWorkers = () => ({ tool: handoff });
   return { b, peek, events, handoff };
 }

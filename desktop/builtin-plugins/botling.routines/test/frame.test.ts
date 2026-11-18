@@ -5,7 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop } from "../../../test/helpers";
-import { cadence, distance, groupOf, nextRun, operationsFor, standing, summary, zoneName } from "../src/routines-text";
+import { cadence, distance, groupOf, nextRun, operationsFor, standing, summary, zoneName, type RoutineLike } from "../src/routines-text";
 import { frameSource } from "../src/source";
 
 it("a routine's buttons follow its state: Pause while it will run, Resume while paused, Cancel until it is over", () => {
@@ -131,7 +131,7 @@ it("an empty list says so, and the core's own problem is shown above it", async 
 
 it("a watch shows its command and how its last run went", async () => {
   const { watchResult } = await import("../src/routines-text");
-  const base = { id: "W", kind: "legacy" as const, task: "Disk: !./check.sh", title: "Disk", schedule: "*/10 * * * *", cron: "*/10 * * * *", timezone: "system_local", status: "enabled", next: null };
+  const base: RoutineLike = { kind: "legacy", schedule: "*/10 * * * *", cron: "*/10 * * * *", timezone: "system_local", status: "enabled", next: null };
   const now = Date.parse("2026-11-11T02:30:00.000Z");
   const ran = "2026-11-11T02:20:00.000Z";
   expect(watchResult(base, now)).toBeNull();

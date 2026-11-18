@@ -31,6 +31,9 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
   let hub: LogHub | null = null;
   let reader: LogReader | null = null;
   let lastBatch: BatchInfo | null = null;
+  /** The batch onBatch saw last. Read through a call: TypeScript keeps `lastBatch` narrowed to null after `lastBatch = null`,
+   * not knowing that the awaited submit's onBatch set it. */
+  const seenBatch = (): BatchInfo | null => lastBatch;
   /** Commits on the disk (as the OS shows it), and how many the last flush covered. */
   let commits = 0;
   let synced = 0;
@@ -144,13 +147,13 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
           if (kind === "ack") writeNext(db, QUEUE, n);
         });
       } catch (error) {
-        if (!(error instanceof StoreCommitError) || !lastBatch?.committed) throw error;
+        if (!(error instanceof StoreCommitError) || !seenBatch()?.committed) throw error;
         rejected = true;
       } finally {
         failFlush = false;
       }
       if (kind === "ack") slotOf.set(cmd, n);
-      const durable = lastBatch!.durable;
+      const durable = seenBatch()!.durable;
       commits += 1;
       if (durable) synced = commits;
       noteWal();
@@ -162,7 +165,7 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
       lastBatch = null;
       const n = slotOf.get(cmd) ?? Infinity;
       const found = await store!.submit((db) => readNext(db, QUEUE) >= n);
-      const durable = lastBatch!.durable;
+      const durable = seenBatch()!.durable;
       if (durable) synced = commits;
       noteWal();
       return { durable, found };
@@ -201,7 +204,7 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
       if (!result.ok) throw new Error(`store adapter: sub refused (${result.reason})`);
       await tick();
       // A rewind's retire was a durable batch: flushed.
-      if (lastBatch?.durable) synced = commits;
+      if (seenBatch()?.durable) synced = commits;
       noteWal();
     },
     disconnect() {
