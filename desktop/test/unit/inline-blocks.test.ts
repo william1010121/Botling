@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
+import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
 import { INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
@@ -230,6 +231,10 @@ describe("the report rule by size", () => {
     const skill = readFileSync(new URL("../../builtin-plugins/botling.report/skills/report/SKILL.md", import.meta.url).pathname, "utf8");
     expect(skill).toContain("A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat and the user agreed");
     expect(skill).not.toMatch(/many visuals|more than 3 blocks|really long/);
+  });
+  it("the Antigravity per-turn reminder has no length trigger either (agy-acp.test.ts runs on the Mac only, so this guard lives here)", () => {
+    expect(AGY_REPLY_REMINDER).toContain("long content is not a reason for a report page: make one only when the user asks for it or agrees after you ask in the chat");
+    expect(AGY_REPLY_REMINDER).not.toMatch(/goes into a report page|really long|more than 3 blocks/);
   });
   it("Antigravity keeps the whole rule (no inline blocks there), whatever it is asked for", () => {
     expect(page(true, "agy").system).toContain(REPORT_RULE_ALL_TO_PAGE);

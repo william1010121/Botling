@@ -3,7 +3,6 @@
 // opens by answering the question, and a worker's follow-ups go to that same worker with the user's own words.
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../src/core/agent/agy-capabilities", async (original) => ({ ...await original<any>(), agyWorkerRuntimeEnabled: () => true }));
-import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
 import { AGY_BREVITY_RULE, botPrompts, desktopPrompts, reportOnlyRule, resultsRule, RESTATE_RULE } from "../../src/core/prompts";
 
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
@@ -20,10 +19,6 @@ describe("routing rules", () => {
     for (const choice of ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const) expect(resultsRule(choice, "/a")).toContain(reportOnlyRule("/a"));
   });
 
-  it("the Antigravity per-turn reminder says the same: length is no reason for a report page", () => {
-    expect(AGY_REPLY_REMINDER).toContain("long content is not a reason for a report page: make one only when the user asks for it or agrees after you ask in the chat");
-    expect(AGY_REPLY_REMINDER).not.toMatch(/goes into a report page/);
-  });
   it("asks before a report page for long text, never a .md file", () => {
     expect(AGY_BREVITY_RULE).toContain("ask in one sentence whether the user wants a report page, and make it (see the results rule) only after they ask or agree");
     expect(AGY_BREVITY_RULE).not.toContain(".md");
