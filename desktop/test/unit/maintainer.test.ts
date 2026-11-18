@@ -99,6 +99,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       setComponentList(names: string[]) { list = names; },
       appMessage(text: string) { sent.push(text); },
       appNotice(text: string) { sent.push(`notice: ${text}`); return "n"; },
+      queueNote() {},
       workers: { tellCardWorker(task: string, text: string) { told.push([task, text]); } },
     } as never;
     const desk = new MaintainerDesk({ root, maintainer: () => null, mainBot: () => bot, bots: () => [bot], library, plugins: () => null, log: (line: string) => logs.push(line) });
@@ -267,10 +268,12 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     const r = cardRig(["status"]);
     const handedTo: string[] = [];
     (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
-    r.desk.requestComponentChange("todo", "a todo list for me", "Main bot", r.bot, []);
-    r.desk.requestCardNeed("A todo-like chart.", r.bot, "TASK-A");
+    r.desk.requestComponentChange("weather", "the weather for me", "Main bot", r.bot, []);
+    r.desk.requestCardNeed("A weather-like chart.", r.bot, "TASK-A");
     const key = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!;
-    r.desk.changeList(true, "todo", "Main bot", key);
+    r.make("weather");
+    r.library.rescan();
+    r.desk.changeList(true, "weather", "Main bot", key);
     expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
     expect(r.list()).toEqual(["status"]);
     // A name that is not in the library (or is pin-only) with the card's id answers nothing and keeps the ask waiting.

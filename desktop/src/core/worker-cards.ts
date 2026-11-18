@@ -41,11 +41,14 @@ export interface CardRules {
 }
 
 /**
- * A component the worker asks Maintainer for (the first one only). The worker only describes the chart it wants in a nameless `<component>description</component>`:
- * Maintainer decides what is built (a new component, or a new kind in an existing one such as inline-chart), what it is called and where it goes. The app gives
- * such an ask a placeholder name (`unnamedCardAsk`); a worker that still writes `<component name="…">` keeps that name.
+ * What the worker asks for in its report (the first ask only), of two kinds:
+ * - `need`: a chart it describes in a nameless `<component>description</component>` (what it must show, the shape of its data, an example). Maintainer decides what is built
+ *   (a new component, or a new kind in an existing one such as inline-chart), what it is called and where it goes; the app gives the ask a placeholder name (`unnamedCardAsk`).
+ *   This is the only kind that reaches Maintainer, and it always wins: a worker that also names a component has its description read, never its name.
+ * - `usage`: a component it names (`<component name="…">`), when no description is there. The app answers with that component's usage when the library has it; a name the
+ *   library does not have becomes a `need` (the name only a hint in the description, at Maintainer's desk).
  */
-export interface CardWant { name: string; request: string }
+export interface CardWant { kind: "need" | "usage"; name: string; request: string }
 
 /** The placeholder name of an ask the worker did not name: stable for the same description, so a re-read report is the same ask. */
 export const UNNAMED_CARD_ASK = "chart-request-";
@@ -134,8 +137,9 @@ export function readCards(value: unknown): WorkerCardRecord[] {
       ? [{ name: show.name, data: show.data, ...(typeof show.at === "number" && Number.isInteger(show.at) && show.at >= 0 ? { at: show.at } : {}),
         ...(typeof show.command === "string" && show.command && show.command.length <= 2_000 ? { command: show.command } : {}),
         ...(typeof show.refresh === "number" && Number.isInteger(show.refresh) && show.refresh >= 1 && show.refresh <= 3600 ? { refresh: show.refresh } : {}) }] : [])).slice(0, CARD_SHOWS_MAX) : [];
-    const wants = isObject(each.wants) && typeof each.wants.name === "string" && typeof each.wants.request === "string" && each.wants.name && each.wants.request
-      ? { name: each.wants.name.slice(0, 100), request: each.wants.request.slice(0, 4_000) } : null;
+    // A record from before the kind was written is read by its name: a placeholder name is a described need.
+    const wants: CardWant | null = isObject(each.wants) && typeof each.wants.name === "string" && typeof each.wants.request === "string" && each.wants.name && each.wants.request
+      ? { kind: each.wants.kind === "need" ? "need" : each.wants.kind === "usage" ? "usage" : isUnnamedCardAsk(each.wants.name) ? "need" : "usage", name: each.wants.name.slice(0, 100), request: each.wants.request.slice(0, 4_000) } : null;
     cards.push({
       id: each.id, title: each.title, prompt: each.prompt, status: each.status as WorkerCardStatus, run: each.run,
       ...(typeof each.at === "number" && Number.isInteger(each.at) && each.at >= 0 ? { at: each.at } : {}),
@@ -331,9 +335,10 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
       shows.push({ name: "inline-report-block", data: JSON.stringify({ type: "image", src: picture.path, alt: picture.alt || "picture", ...(picture.alt ? { caption: picture.alt } : {}) }) });
     }
   }
+  // A described need first: the worker's own name for a component never outranks the description (the name is Maintainer's to give). A named one is only a lookup.
   const asked = parsed.requests.find((request) => request.kind === "component");
-  const want = asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) }
-    : unnamed.request ? { name: unnamedCardAsk(unnamed.request), request: unnamed.request } : undefined;
+  const want: CardWant | undefined = unnamed.request ? { kind: "need", name: unnamedCardAsk(unnamed.request), request: unnamed.request }
+    : asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { kind: "usage", name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) } : undefined;
   return { text: words.slice(0, CARD_TEXT_MAX), shows, rejected, invalid, ...(want ? { want } : {}) };
 }
 
@@ -423,7 +428,7 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
       if (content.shows.length) card.shows = content.shows; else delete card.shows;
       // A component asked for is passed on once; the same ask again (the next run repeats it) is not.
       if (!content.want) { delete card.wants; delete card.asked; delete card.askedAt; }
-      else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; delete card.askedAt; }
+      else if (card.wants?.kind !== content.want.kind || card.wants.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; delete card.askedAt; }
     } else if (card.model) {
       // A card redone by another worker (`rebindCard`) whose run ended with no report keeps the drawing it had (the first worker's, or the last good one): the failure is said beside it.
       delete card.wants; delete card.asked; delete card.askedAt; delete card.invalid; delete card.invalidRun; delete card.invalidTold;
