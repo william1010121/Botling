@@ -65,13 +65,18 @@ export function standardFolder(path: string): string {
 /** A manifest's text as one JSON-quoted line (control characters escaped, at most 100 characters) before it goes into a message to Maintainer. */
 const quoted = (text: string): string => JSON.stringify(text.slice(0, 100));
 
+/** The most card asks kept for a restart (the oldest go first). */
+const CARD_ASKS_MAX = 200;
+
 export class MaintainerDesk {
   readonly git: LibraryGit;
+  /** The asks waiting for an answer. A card worker's are kept in `card-asks.json` (`saveCardAsks`) and read back at start; a bot's own are in memory only. */
   private asks: ComponentAsk[] = [];
   private installing = new Set<string>();
 
   constructor(private readonly deps: MaintainerDeps) {
     this.git = new LibraryGit(join(deps.root, "plugins"));
+    this.asks = this.loadCardAsks();
     // The library asks the plugin library's git about earlier versions (`ComponentLibrary.git`).
     deps.library.git = this.git;
     this.git.onPrepared = () => deps.library.forgetHistory();
@@ -101,7 +106,14 @@ export class MaintainerDesk {
     for (const request of requests) {
       switch (request.kind) {
         case "component":
-          later.push(() => this.requestComponentChange(request.name, request.request, from.id === mainId ? "Main bot" : from.profile.name, from, [], request.card));
+          later.push(() => this.requestComponentChange(request.name, request.request, from.id === mainId ? "Main bot" : from.profile.name, from, []));
+          break;
+        // A card worker's own kinds (worker-cards.ts), made by the app from the card's record: never parsed from text, and never a plain `component` request.
+        case "cardNeed":
+          later.push(() => this.requestCardNeed(request.request, from, request.card));
+          break;
+        case "cardUsage":
+          later.push(() => this.requestCardUsage(request.name, request.request, from, request.card));
           break;
         case "plugin":
           if (!isMaintainer) later.push(() => this.handTo(`${from.id === mainId ? "Main bot" : from.profile.name}'s request for Botling: ${request.request}`));
@@ -177,30 +189,53 @@ export class MaintainerDesk {
   // Components
 
   /** Someone asked for a component change (`requestComponentChange`): Maintainer hands it to a component editor. */
-  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null, files: string[] = [], card?: string) {
-    let name = safeName(rawName);
+  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null, files: string[] = []) {
+    const name = safeName(rawName);
     if (!name) return;
-    let request = rawRequest.trim();
-    // A card worker only describes the chart it wants; the name is Maintainer's to give (2026-11-18, the user). A name the worker still wrote for a component the library does not
-    // have is a hint in the description, not a name to build under (it would otherwise also decide when the ask counts as answered, `deliverAsked`).
-    if (card && bot && !isUnnamedCardAsk(name) && !this.deps.library.names.includes(name)) {
-      request = `${request}\n(The worker called it "${name}": a hint only, not the name to give it.)`;
-      name = unnamedCardAsk(request);
-    }
-    // A card worker's ask: a component the library has is only looked up for it, and Maintainer is not woken (`askForCard`).
-    const forCard = card && bot ? this.askForCard(name, request, bot, card) : undefined;
-    if (forCard === null) return;
+    const request = rawRequest.trim();
     // Pictures alone say it: what is wrong is in them.
     const said = request || `see the attached picture${files.length === 1 ? "" : "s"}`;
-    const unnamed = !!card && isUnnamedCardAsk(name);
-    // A chart the worker only described has no name yet: nothing in the library is "worked on" until Maintainer picks one.
-    if (!unnamed) this.deps.library.markWorking(name, said);
+    this.deps.library.markWorking(name, said);
     const exists = this.deps.library.names.includes(name);
     const pictures = files.length ? ` (Attached: ${files.length === 1 ? "a picture" : `${files.length} pictures`} of how it looks now or should look.)` : "";
     // Which bot asked, and how full its own list is (the library has no cap).
-    const note = forCard ?? this.askNote(name, request, exists, bot);
-    if (unnamed) { this.handTo(`${asker} asks for a chart it describes without naming a component: ${said}${pictures}${note}`, files); return; }
+    const note = this.askNote(name, request, exists, bot);
     this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${pictures}${note}` : `${asker} wants a new component "${name}": ${said}${pictures}${note}`, files);
+  }
+
+  /**
+   * A card worker describes a chart it needs (`cardNeed`): the only thing of a card that reaches Maintainer. The worker named nothing and chose nothing: what is built (a new
+   * component, or a new kind in an existing one), its name and where it goes are Maintainer's. The ask is kept with the worker's task id and an id of its own, which the answer
+   * (`<give-component id>`, `<component-declined id>`) must carry; the worker's earlier ask is replaced by this one. It never touches the bot's list, and its limit is no part of it.
+   */
+  requestCardNeed(rawRequest: string, bot: Bot, card: string) {
+    const request = rawRequest.trim();
+    if (!request || !card) return;
+    const botName = this.nameOf(bot);
+    const ask: ComponentAsk = { key: randomUUID().slice(0, 8).toLowerCase(), name: unnamedCardAsk(request), botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300), stamp: "", changing: false, card };
+    this.asks = this.asks.filter((other) => other.card !== card);
+    this.asks.push(ask);
+    this.saveCardAsks();
+    // A chart the worker only described has no name yet: nothing in the library is "worked on" until Maintainer picks one.
+    const note = ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
+    this.handTo(`${botName} asks for a chart it describes without naming a component: ${request}${note}`);
+  }
+
+  /**
+   * A card worker names a component (`cardUsage`): a lookup, not a request. One the library has is answered by the app at once with its usage (a pin-only one is not available)
+   * and Maintainer is not woken; it can never get a component changed (it may have read web text). A name the library does not have (or that is no name) is the worker's guess,
+   * not a name to build under: it becomes a described need, with the name only a hint in the description.
+   */
+  requestCardUsage(rawName: string, rawRequest: string, bot: Bot, card: string) {
+    const name = safeName(rawName);
+    const library = this.deps.library;
+    if (name && library.names.includes(name)) {
+      bot.workers.tellCardWorker(card, library.pinOnly(name)
+        ? `(App: "${name}" is not available for a card. Show the data another way: another component from your list that fits exactly as its usage defines it, or end with <component>the chart you want, described: what it must show, the shape of its data, a short example</component> and stop (no name; Maintainer decides). Do not draw it yourself.)`
+        : this.cardReadyText(name, name, false));
+      return;
+    }
+    this.requestCardNeed(`${rawRequest.trim()}\n(The worker called it ${JSON.stringify((name || rawName).slice(0, 100))}: a hint only, not the name to give it.)`, bot, card);
   }
 
   /**
@@ -271,31 +306,6 @@ export class MaintainerDesk {
     return ` (App: ${botName} has ${countedComponents(own, this.deps.library.builtInNames()).length} / ${limit} components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="${botName}">its name</give-component>. Otherwise build it; once it is in the library the app adds it to ${botName}'s list.${answerBack})`;
   }
 
-  /**
-   * What a card worker's component ask comes to (worker-cards.ts). The worker draws its card itself, so the ask never touches the bot's list (and
-   * its 20-component limit is no part of it), and it can only get a component made, never one of the library's changed: it may have read web text.
-   * One the library has is answered by the app at once with its usage (null: nothing for Maintainer); a pin-only one is not available. A new one is
-   * kept as an ask with the worker's task id, answered when the library has it (`deliverAsked`) or Maintainer declines it (`decline`); the text
-   * Maintainer is given, otherwise.
-   */
-  private askForCard(name: string, request: string, bot: Bot, card: string): string | null {
-    const library = this.deps.library;
-    if (library.names.includes(name)) {
-      bot.workers.tellCardWorker(card, library.pinOnly(name)
-        ? `(App: "${name}" is not available for a card. Show the data another way: another component from your list that fits exactly as its usage defines it, or end with <component>the chart you want, described: what it must show, the shape of its data, a short example</component> and stop (no name; Maintainer decides). Do not draw it yourself.)`
-        : this.cardReadyText(name, name, false));
-      return null;
-    }
-    const botName = this.nameOf(bot);
-    const ask: ComponentAsk = { key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300), stamp: library.stampOf(name), changing: false, card };
-    // A card worker that describes its chart again (another description, so another placeholder name) replaces its own earlier unnamed ask.
-    this.asks = this.asks.filter((other) => !(other.card === card && (other.name === name || (isUnnamedCardAsk(name) && isUnnamedCardAsk(other.name)))));
-    this.asks.push(ask);
-    // The worker described a chart and named nothing: Maintainer decides all of it (an existing component, a new kind in one, or a new component; its name).
-    if (isUnnamedCardAsk(name)) return ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
-    return ` (App: A card worker of ${botName} asks for this; it is not on ${botName}'s list and nothing is added there (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <component-declined id="${ask.key}">it already exists: its name</component>. Otherwise build it; once it is in the library the app tells the worker. If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component>.)`;
-  }
-
   /** What a card worker is told when the component it asked for is in the library (`instead`: what it was named when it asked, if differently). */
   private cardReadyText(name: string, asked: string, changed: boolean): string {
     const instead = asked === name || isUnnamedCardAsk(asked) ? "" : ` in place of the "${asked}" you asked for`;
@@ -327,11 +337,11 @@ export class MaintainerDesk {
   /** The library changed: components bots asked for that are in it now go on their lists (`deliverAskedComponents`). */
   deliverAsked() {
     for (const ask of [...this.asks]) {
-      if (ask.changing || !this.deps.library.names.includes(ask.name)) continue;
+      // A card worker's ask is answered by Maintainer under its id alone (`changeList`, `decline`): a library that gains some name answers no card.
+      if (ask.card || ask.changing || !this.deps.library.names.includes(ask.name)) continue;
       const bot = this.deps.bots().find((candidate) => candidate.id === ask.botId);
       if (!bot) { this.asks = this.asks.filter((other) => other !== ask); continue; }
-      // A card's component is the worker's to draw: it goes on no list.
-      if (!ask.card && !this.giveComponent(ask.name, bot)) continue;
+      if (!this.giveComponent(ask.name, bot)) continue;
       this.asks = this.asks.filter((other) => other !== ask);
       this.arrived(ask.name, ask, bot, "Maintainer");
     }
@@ -360,21 +370,68 @@ export class MaintainerDesk {
   decline(rawId: string, rawReason: string) {
     const id = rawId.trim().toLowerCase();
     const ask = this.asks.find((candidate) => candidate.key === id);
-    if (!ask) return;
+    if (!ask) { this.unmatchedAsk("<component-declined>", id, this.asks.filter((candidate) => candidate.card)); return; }
     this.asks = this.asks.filter((other) => other !== ask);
+    if (ask.card) this.saveCardAsks();
     const bot = this.deps.bots().find((candidate) => candidate.id === ask.botId);
     if (!bot) return;
     const reason = rawReason.trim();
     const said = reason ? ` Maintainer said: "${shortened(reason, 500)}".` : "";
     const user = ask.userAsked ? ` The user had asked you: "${ask.userAsked}".` : "";
     if (ask.card) {
-      // A card ask is always the nameless one (`requestComponentChange`): it is "the chart you described", never a placeholder name.
+      // A card ask is always a described need (`requestCardNeed`): it is "the chart you described", never a placeholder name.
       bot.workers.tellCardWorker(ask.card, `(App: Maintainer did not add a component for the chart you described.${said} Show the data another way with another component from your list that fits exactly as its usage defines it, or, if none does, say plainly in one or two sentences that no fitting component exists. Do not draw it yourself, do not force a component to fit, and do not ask again.)`);
       bot.appNotice(`Maintainer did not add a component for a card:` + (reason ? " " + shortened(firstLine(reason), 160) : ""));
       return;
     }
     bot.appMessage(`(App: Maintainer did not add the component "${ask.name}" you asked for${ask.changing ? " (or change it)" : ""}.${said}${user} Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)`);
     bot.appNotice((ask.changing ? `Maintainer did not change ${ask.name}:` : `Maintainer did not add ${ask.name}:`) + (reason ? " " + shortened(firstLine(reason), 160) : ""));
+  }
+
+  /**
+   * An answer whose id names no waiting ask (answered already, or mistyped) reaches nothing: it is logged and told to Maintainer with the ids that still wait, so it can answer again with
+   * the right one. `id` is Maintainer's text: one quoted, cut line.
+   */
+  private unmatchedAsk(tag: string, id: string, waiting: readonly ComponentAsk[]) {
+    const shownId = JSON.stringify(id.slice(0, 40));
+    const ids = waiting.map((ask) => ask.key);
+    this.deps.log(`${tag}: no waiting ask has the id ${shownId}; dropped${ids.length ? ` (waiting: ${ids.join(", ")})` : ""}`);
+    this.maintainer?.queueNote(`(App: No ask is waiting under the id ${shownId} (it was answered already, or the id is wrong), so nothing was sent to any card worker.${ids.length ? ` Card asks still waiting: ${ids.join(", ")}.` : ""} Answer with the id the app gave in the ask.)`);
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // The card asks that wait, kept across a restart
+
+  private get cardAsksFile() { return join(this.deps.root, "card-asks.json"); }
+
+  /** The card asks that wait (`card-asks.json`), written whenever one comes or goes; a bot's own asks are not kept. A failed write is logged, never thrown. */
+  private saveCardAsks() {
+    const cards = this.asks.filter((ask) => ask.card).slice(-CARD_ASKS_MAX);
+    try {
+      if (!cards.length && !existsSync(this.cardAsksFile)) return;
+      writeFileAtomic(this.cardAsksFile, JSON.stringify(cards));
+    } catch (error) {
+      this.deps.log(`card asks not kept: ${(error as Error).message}`);
+    }
+  }
+
+  /** The card asks kept before the app went away; a missing or damaged file, and any entry of the wrong shape, is none. An ask whose bot or card is gone is dropped when it is answered, as before. */
+  private loadCardAsks(): ComponentAsk[] {
+    let value: unknown;
+    try { value = JSON.parse(readFileSync(this.cardAsksFile, "utf8")); } catch { return []; }
+    if (!Array.isArray(value)) return [];
+    const asks: ComponentAsk[] = [];
+    for (const each of value.slice(-CARD_ASKS_MAX)) {
+      if (!each || typeof each !== "object" || Array.isArray(each)) continue;
+      const row = each as Record<string, unknown>;
+      if (typeof row.key !== "string" || !/^[0-9a-f]{8}$/.test(row.key) || asks.some((ask) => ask.key === row.key)) continue;
+      if (typeof row.card !== "string" || !row.card || typeof row.botId !== "string" || !row.botId || typeof row.name !== "string" || typeof row.request !== "string") continue;
+      asks.push({
+        key: row.key, name: row.name.slice(0, 100), botId: row.botId, request: row.request.slice(0, 5_000), card: row.card,
+        userAsked: typeof row.userAsked === "string" ? row.userAsked.slice(0, 300) : "", stamp: typeof row.stamp === "string" ? row.stamp : "", changing: false,
+      });
+    }
+    return asks;
   }
 
   /** The bot a tag names (`componentHolder(named:)`). */
@@ -393,28 +450,38 @@ export class MaintainerDesk {
     const name = this.deps.library.names.find((candidate) => candidate.toLowerCase() === rawName.toLowerCase()) ?? rawName;
     const shown = this.nameOf(bot);
     if (give) {
-      // The answer to a chart a card worker only described: the worker gets it, and no list changes.
-      // With several cards of one bot waiting, the id the app gave in the ask picks the right worker; without a matching one, the oldest.
-      const pending = this.asks.filter((ask) => ask.botId === bot.id && ask.card && isUnnamedCardAsk(ask.name));
-      const forCard = (askId ? pending.find((ask) => ask.key === askId) : undefined) ?? pending[0];
-      if (forCard && this.deps.library.names.includes(name) && !this.deps.library.pinOnly(name) && !this.asks.some((ask) => ask.botId === bot.id && !ask.card && ask.name === name)) {
+      const waiting = this.asks.filter((ask) => ask.botId === bot.id && ask.card);
+      if (askId !== undefined) {
+        // An id is the answer to a chart a card worker only described: the worker whose ask carries that id gets it, and no list changes. Nothing else answers a card: an id that names
+        // no waiting ask of this bot (answered already, or wrong) is logged and told to Maintainer, never given to another card and never a change of the bot's list.
+        const id = askId.trim().toLowerCase();
+        const forCard = waiting.find((ask) => ask.key === id);
+        if (!forCard) { this.unmatchedAsk("<give-component>", id, waiting); return; }
+        if (!this.deps.library.names.includes(name)) { maintainer?.queueNote(`(App: "${name}" is not in the library, so nothing was sent to the card worker; its ask ${forCard.key} is still waiting.)`); return; }
+        if (this.deps.library.pinOnly(name)) { maintainer?.queueNote(`(App: "${name}" is a pin-only component (only the pin strip offers it), so nothing was sent to the card worker; its ask ${forCard.key} is still waiting.)`); return; }
         this.asks = this.asks.filter((other) => other !== forCard);
+        this.saveCardAsks();
         this.arrived(name, forCard, bot, "Maintainer");
         return;
       }
-      if (!this.deps.library.names.includes(name)) { maintainer?.queueNote(`(App: "${name}" is not in the library, so it was not added to ${shown}'s list.)`); return; }
-      if (this.deps.library.pinOnly(name)) { maintainer?.queueNote(`(App: "${name}" is a pin-only component (only the pin strip offers it), so it was not added to ${shown}'s list. A bot is never told about it.)`); return; }
+      // No id: this is the bot's own plain give, and it answers no card, whatever waits (the card asks that still wait are said, with their ids, in the one note Maintainer gets).
+      const hint = waiting.length ? ` That <give-component> had no id, so it answered no card. Card asks of ${shown} still waiting: ${waiting.map((ask) => ask.key).join(", ")}. To answer one, repeat it with id="…".` : "";
+      const note = (text: string) => maintainer?.queueNote(`${text}${hint}`);
+      if (!this.deps.library.names.includes(name)) { note(`(App: "${name}" is not in the library, so it was not added to ${shown}'s list.)`); return; }
+      if (this.deps.library.pinOnly(name)) { note(`(App: "${name}" is a pin-only component (only the pin strip offers it), so it was not added to ${shown}'s list. A bot is never told about it.)`); return; }
       if (!this.giveComponent(name, bot)) {
-        maintainer?.queueNote(`(App: ${shown} already has ${countedComponents(bot.ownComponentNames, this.deps.library.builtInNames()).length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
+        note(`(App: ${shown} already has ${countedComponents(bot.ownComponentNames, this.deps.library.builtInNames()).length} / ${COMPONENT_LIMIT} components, so "${name}" was not added. Ask the user which one to remove from ${shown}'s list first.)`);
         return;
       }
-      const asked = this.asks.find((ask) => ask.botId === bot.id && ask.name === name) ?? this.asks.find((ask) => ask.botId === bot.id && !ask.changing);
+      // A card worker's ask is never this reply's (it is answered under its id above).
+      const asked = this.asks.find((ask) => ask.botId === bot.id && !ask.card && ask.name === name) ?? this.asks.find((ask) => ask.botId === bot.id && !ask.card && !ask.changing);
       if (asked) {
         this.asks = this.asks.filter((other) => other !== asked);
         this.arrived(name, asked, bot, "Maintainer");
       } else {
         bot.queueNote(`(App: Maintainer gave you the component "${name}".)`);
       }
+      if (hint) maintainer?.queueNote(hint.trim());
     } else if (this.takeComponent(name, bot)) {
       bot.queueNote(`(App: "${name}" was taken off your components; it stays in the shared library.)`);
       this.deliverAsked();

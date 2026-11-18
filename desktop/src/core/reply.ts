@@ -21,7 +21,14 @@ import { REACTION_PALETTE } from "./briefing";
 import { isGroupBlock, isMultiple, questionGroup, type Question } from "./questions";
 
 export type BotRequest =
-  | { kind: "component"; name: string; request: string; /** The task id of the card worker that asked (worker-cards.ts): the answer goes to it, not to the bot. */ card?: string }
+  | { kind: "component"; name: string; request: string }
+  /**
+   * What a card worker (worker-cards.ts) asks for, never parsed from a reply: the app makes these from the card's record. `card` is the worker's task id: the answer goes
+   * to it, not to the bot. `cardNeed` is a chart it describes (what it must show, the shape of its data): what is built, its name and where it goes are Maintainer's.
+   * `cardUsage` is a component it names: the app answers with its usage when the library has it, and turns an unknown name into a `cardNeed`.
+   */
+  | { kind: "cardNeed"; request: string; card: string }
+  | { kind: "cardUsage"; name: string; request: string; card: string }
   | { kind: "plugin"; request: string }
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }
@@ -46,7 +53,7 @@ export type BotRequest =
   /** `machine` (M5-04d): a project on another machine is not added from here; the main bot is told so. */
   | { kind: "newProject"; folder: string; task: string; machine?: string }
   | { kind: "openQuestion"; from: string }
-  /** `id`: the ask a card worker's nameless chart request was handed to Maintainer under (`<give-component bot="…" id="…">`); optional, without it the bot's oldest such ask is answered. */
+  /** `id`: the ask a card worker's nameless chart request was handed to Maintainer under (`<give-component bot="…" id="…">`); without it the reply answers no card (it is the bot's plain give). */
   | { kind: "giveComponent"; bot: string; name: string; id?: string }
   | { kind: "takeComponent"; bot: string; name: string }
   | { kind: "componentDeclined"; id: string; reason: string };
@@ -418,6 +425,8 @@ export function saysNothing(reply: string): boolean {
 export function unsupportedRequest(request: BotRequest): string {
   switch (request.kind) {
     case "component": return `a component change ("${request.name}")`;
+    case "cardNeed": return "a chart for a card";
+    case "cardUsage": return `the usage of the component "${request.name}" for a card`;
     case "plugin": return "a change to Botling (a plugin)";
     case "folder": return "access to another folder";
     case "install": return "installing a plugin";

@@ -12,7 +12,6 @@ import golden from "../fixtures/prompts-golden.json";
 import { componentEditorAgent, maintainerInstructions, pluginGuide } from "../../src/core/maintainer-text";
 import { MaintainerDesk, arrivalLead, classifySource, prepareLibrary } from "../../src/core/maintainer";
 import { ComponentLibrary } from "../../src/core/components/library";
-import { unnamedCardAsk } from "../../src/core/worker-cards";
 import { parseReply } from "../../src/core/reply";
 
 const M = (golden as unknown as { maintainer: Record<string, any> }).maintainer;
@@ -100,15 +99,16 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       setComponentList(names: string[]) { list = names; },
       appMessage(text: string) { sent.push(text); },
       appNotice(text: string) { sent.push(`notice: ${text}`); return "n"; },
+      queueNote() {},
       workers: { tellCardWorker(task: string, text: string) { told.push([task, text]); } },
     } as never;
     const desk = new MaintainerDesk({ root, maintainer: () => null, mainBot: () => bot, bots: () => [bot], library, plugins: () => null, log: (line: string) => logs.push(line) });
-    return { desk, bot, library, sent, told, logs, make, list: () => list };
+    return { desk, bot, library, sent, told, logs, make, root, list: () => list };
   }
 
   it("a component the library has goes to the worker at once, with its usage: nothing is added to the bot's list, Maintainer is not woken, the bot hears nothing", () => {
     const r = cardRig();
-    r.desk.requestComponentChange("todo", "add it to my list", "Main bot", r.bot, [], "TASK1");
+    r.desk.requestCardUsage("todo", "add it to my list", r.bot, "TASK1");
     expect(r.told).toHaveLength(1);
     expect(r.told[0]![0]).toBe("TASK1");
     expect(r.told[0]![1]).toContain('The component "todo" is ready');
@@ -121,10 +121,10 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
 
   it("a card never gets an existing component changed (a request to change `status` is a lookup), and a pin-only one is not available to it", () => {
     const r = cardRig(["status"]);
-    r.desk.requestComponentChange("status", "make the header red", "Main bot", r.bot, [], "TASK1");
+    r.desk.requestCardUsage("status", "make the header red", r.bot, "TASK1");
     expect(r.told[0]![1]).toContain('The component "status" is ready');
     expect(r.logs.some((line) => line.includes("no Maintainer"))).toBe(false);
-    r.desk.requestComponentChange("secret", "show me", "Main bot", r.bot, [], "TASK1");
+    r.desk.requestCardUsage("secret", "show me", r.bot, "TASK1");
     expect(r.told[1]![1]).toContain('"secret" is not available for a card');
     expect(r.told[1]![1]).not.toContain("echo hi");
     // Not available: another component that fits exactly, or a description for Maintainer; never a picture of its own.
@@ -140,7 +140,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       const r = cardRig(list as string[] | null, own as string[]);
       const handedTo: string[] = [];
       (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
-      r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK2");
+      r.desk.requestCardUsage("weather", "the weather", r.bot, "TASK2");
       expect(handedTo).toHaveLength(1);
       const handed = handedTo[0]!;
       expect(handed).not.toContain('wants a new component "weather"');
@@ -169,12 +169,11 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     const r = cardRig(full, full);
     const handedTo: string[] = [];
     (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
-    const placeholder = unnamedCardAsk("A dumbbell chart of median and p90 seconds per model.");
     // Nothing in the library is "worked on" for a name nobody has picked yet.
     const working: string[] = [];
     const markWorking = r.library.markWorking.bind(r.library);
     r.library.markWorking = ((name: string, said: string) => { working.push(name); return markWorking(name, said); }) as typeof r.library.markWorking;
-    r.desk.requestComponentChange(placeholder, "A dumbbell chart of median and p90 seconds per model.", "Main bot", r.bot, [], "TASK4");
+    r.desk.requestCardNeed("A dumbbell chart of median and p90 seconds per model.", r.bot, "TASK4");
     expect(handedTo).toHaveLength(1);
     const handed = handedTo[0]!;
     expect(handed).toContain("describes without naming a component: A dumbbell chart");
@@ -189,7 +188,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     r.desk.deliverAsked();
     expect(r.told).toEqual([]);
     // Maintainer built (or extended) `todo`... any name: the worker is told, no list changes, the bot is not woken.
-    r.desk.changeList(true, "todo", "Main bot");
+    r.desk.changeList(true, "todo", "Main bot", /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handed)![1]!);
     expect(r.told).toHaveLength(1);
     expect(r.told[0]![0]).toBe("TASK4");
     expect(r.told[0]![1]).toContain('The component "todo" is ready.');
@@ -197,7 +196,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(r.list()).toEqual(full);
     expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
     // And a refusal.
-    r.desk.requestComponentChange(placeholder + "x", "Another.", "Main bot", r.bot, [], "TASK5");
+    r.desk.requestCardNeed("Another.", r.bot, "TASK5");
     const key = /component-declined id="([0-9a-f]{8})"/.exec(handedTo[1]!)![1]!;
     r.desk.decline(key, "Out of scope.");
     expect(r.told[1]![0]).toBe("TASK5");
@@ -211,18 +210,29 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(requests("ok <take-component bot='Main bot'>todo</take-component>")).toEqual([{ kind: "takeComponent", bot: "Main bot", name: "todo" }]);
   });
 
-  it("two cards of one bot wait for a chart each: <give-component id> answers the worker whose ask it names; without an id (or a wrong one) the oldest ask is answered; a new description from one card replaces that card's own earlier ask", () => {
+  it("two cards of one bot wait for a chart each: <give-component id> answers the worker whose ask it names, and only that one; an id that names nothing answers no card (nothing is sent, it is logged and Maintainer is told); a new description from one card replaces that card's own earlier ask", () => {
     const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
     const r = cardRig(full, full);
     const handedTo: string[] = [];
     (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
-    const ask = (task: string, text: string) => { r.desk.requestComponentChange(unnamedCardAsk(text), text, "Main bot", r.bot, [], task); return /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!; };
+    const notes: string[] = [];
+    (r.desk as unknown as { deps: { maintainer: () => unknown } }).deps.maintainer = () => ({ queueNote: (note: string) => { notes.push(note); } });
+    const ask = (task: string, text: string) => { r.desk.requestCardNeed(text, r.bot, task); return /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!; };
     const first = ask("TASK-A", "A dumbbell chart."), second = ask("TASK-B", "A waterfall chart.");
     expect(first).not.toBe(second);
     r.desk.changeList(true, "todo", "Main bot", second);
     expect(r.told.map(([task]) => task)).toEqual(["TASK-B"]);
-    // The other one is still waiting: an id that names nothing falls back to the oldest, and each ask is answered once.
+    // The other one is still waiting: an id that names nothing is no card's reply (never the oldest), and nothing leaves the list or the ask.
     r.desk.changeList(true, "status", "Main bot", "ffffffff");
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B"]);
+    expect(r.logs.some((line) => line.includes("ffffffff"))).toBe(true);
+    expect(notes.some((note) => note.includes("ffffffff") && note.includes(first))).toBe(true);
+    expect(r.list()).toEqual(full);
+    // The id of an answered ask names nothing any more: it is dropped and flagged too, never given to the other card.
+    r.desk.changeList(true, "todo", "Main bot", second);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B"]);
+    // The waiting one is answered by its own id, once.
+    r.desk.changeList(true, "todo", "Main bot", first);
     expect(r.told.map(([task]) => task)).toEqual(["TASK-B", "TASK-A"]);
     r.desk.changeList(true, "todo", "Main bot", first);
     expect(r.told).toHaveLength(2);
@@ -230,20 +240,61 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     const third = ask("TASK-C", "One chart.");
     const fourth = ask("TASK-C", "A different chart.");
     r.desk.changeList(true, "todo", "Main bot", third);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B", "TASK-A"]);
+    r.desk.changeList(true, "todo", "Main bot", fourth);
     expect(r.told.map(([task]) => task)).toEqual(["TASK-B", "TASK-A", "TASK-C"]);
-    r.desk.changeList(true, "status", "Main bot", fourth);
-    expect(r.told).toHaveLength(3);
-    // Neither of them touched the list.
+    // None of them touched the list.
     expect(r.list()).toEqual(full);
+  });
+
+  it("a <give-component> without an id answers no card, whatever is waiting: it is the bot's plain give (its list), and Maintainer is told which cards still wait", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    const notes: string[] = [];
+    (r.desk as unknown as { deps: { maintainer: () => unknown } }).deps.maintainer = () => ({ queueNote: (note: string) => { notes.push(note); } });
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    const key = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo[0]!)![1]!;
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told).toEqual([]);
+    expect(r.list()).toContain("todo");
+    expect(notes.some((note) => note.includes(key) && note.includes("no id"))).toBe(true);
+    // The card is still waiting for its own id.
+    r.desk.changeList(true, "todo", "Main bot", key);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
+  });
+
+  it("an id that names a card ask is a card's reply even when the bot waits for the same name itself: the card is answered and the bot's list does not change", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestComponentChange("weather", "the weather for me", "Main bot", r.bot, []);
+    r.desk.requestCardNeed("A weather-like chart.", r.bot, "TASK-A");
+    const key = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!;
+    r.make("weather");
+    r.library.rescan();
+    r.desk.changeList(true, "weather", "Main bot", key);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
+    expect(r.list()).toEqual(["status"]);
+    // A name that is not in the library (or is pin-only) with the card's id answers nothing and keeps the ask waiting.
+    r.desk.requestCardNeed("Another chart.", r.bot, "TASK-B");
+    const key2 = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!;
+    r.desk.changeList(true, "nowhere", "Main bot", key2);
+    r.desk.changeList(true, "secret", "Main bot", key2);
+    expect(r.told).toHaveLength(1);
+    expect(r.list()).toEqual(["status"]);
+    r.desk.changeList(true, "status", "Main bot", key2);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A", "TASK-B"]);
   });
 
   it("a pin-only name does not answer a card's chart; a name the bot asked for itself goes on its list as before, and a nameless-looking ask of the bot's own (no card) is no card's", () => {
     const r = cardRig(["status"]);
-    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
-    const ask = unnamedCardAsk("A chart.");
-    r.desk.requestComponentChange(ask, "A chart.", "Main bot", r.bot, [], "TASK-A");
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    const key = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo[0]!)![1]!;
     // A pin-only component is never a card's.
-    r.desk.changeList(true, "secret", "Main bot");
+    r.desk.changeList(true, "secret", "Main bot", key);
     expect(r.told).toEqual([]);
     // The bot itself waits for `weather` (no card): the library gets it, Maintainer gives it: the bot's ask is answered and the list grows, the card keeps waiting.
     r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, []);
@@ -253,7 +304,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(r.told).toEqual([]);
     expect(r.list()).toContain("weather");
     // Then the card's own answer still works.
-    r.desk.changeList(true, "todo", "Main bot");
+    r.desk.changeList(true, "todo", "Main bot", key);
     expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
     // A bot's own plain ask that happens to carry a placeholder-looking name is not a card's: the component goes on its list.
     const r2 = cardRig(["status"]);
@@ -267,11 +318,160 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
   it("<give-component bot=…> answers only a card of that bot, never another bot's waiting card", () => {
     const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
     const r = cardRig(full, full);
-    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
     const other = { id: "OTHER-BOT", profile: { name: "Other" }, components: full, ownComponentNames: full, lastAsked: "", appMessage() {}, appNotice() { return "n"; }, workers: { tellCardWorker() {} } } as never;
-    r.desk.requestComponentChange(unnamedCardAsk("Somebody else's chart."), "Somebody else's chart.", "Other", other, [], "TASK-OTHER");
+    r.desk.requestCardNeed("Somebody else's chart.", other, "TASK-OTHER");
+    const key = /give-component bot="Other" id="([0-9a-f]{8})"/.exec(handedTo[0]!)![1]!;
+    // Neither without an id nor with the other bot's id does the main bot's reply reach it.
     r.desk.changeList(true, "todo", "Main bot");
+    r.desk.changeList(true, "todo", "Main bot", key);
     expect(r.told).toEqual([]);
+  });
+
+  it("a card worker's request reaches the desk as one of two kinds: a described need (to Maintainer) or a named lookup (answered by the app, an unknown name turns into a need); a plain component request carries no card any more", async () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.handle(r.bot as never, [
+      { kind: "cardNeed", request: "A dumbbell chart.", card: "TASK-A" },
+      { kind: "cardUsage", name: "todo", request: "its usage", card: "TASK-B" },
+      { kind: "cardUsage", name: "gpu-heat", request: "a heatmap", card: "TASK-D" },
+      { kind: "component", name: "weather", request: "the weather", card: "TASK-C" } as never,
+    ]);
+    await new Promise((resolve) => setImmediate(resolve));
+    // The known name was answered by the app; the need and the unknown name went to Maintainer as described needs; the plain request was the bot's own.
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B"]);
+    expect(handedTo).toHaveLength(3);
+    expect(handedTo[0]).toContain("describes without naming a component: A dumbbell chart.");
+    expect(handedTo[1]).toContain("describes without naming a component: a heatmap");
+    expect(handedTo[1]).toContain('The worker called it "gpu-heat": a hint only, not the name to give it.');
+    expect(handedTo[2]).toContain('wants a new component "weather"');
+    expect(handedTo[2]).not.toContain("card worker");
+    expect(r.told.some(([task]) => task === "TASK-C")).toBe(false);
+  });
+
+  it("a card ask Maintainer has not answered yet survives a restart of the app: a new desk over the same folder answers it by its id, once; an answer or a decline takes it out of the file; a damaged file is no ask", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    const desk = () => { const d = new MaintainerDesk({ root: r.root, maintainer: () => null, mainBot: () => r.bot, bots: () => [r.bot], library: r.library, plugins: () => null, log: (line: string) => r.logs.push(line) }); return d; };
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    r.desk.requestCardNeed("Another chart.", r.bot, "TASK-B");
+    const keys = handedTo.map((text) => /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(text)![1]!);
+    const file = join(r.root, "card-asks.json");
+    expect(existsSync(file)).toBe(true);
+    // Restart: the asks are still there. One is answered, the other declined.
+    const again = desk();
+    again.changeList(true, "todo", "Main bot", keys[0]!);
+    again.decline(keys[1]!, "Not now.");
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A", "TASK-B"]);
+    expect(r.told[1]![1]).toContain("Not now.");
+    // Neither is asked for again after another restart (the file no longer holds them).
+    const third = desk();
+    third.changeList(true, "todo", "Main bot", keys[0]!);
+    third.decline(keys[1]!, "Again.");
+    expect(r.told).toHaveLength(2);
+    // A damaged file, or one with entries of the wrong shape, starts with no asks and never throws.
+    writeFileSync(file, "{not json");
+    expect(() => desk()).not.toThrow();
+    writeFileSync(file, JSON.stringify([{ key: "zz", card: 5 }, null, "x", { key: "a1b2c3d4", name: "n", botId: "b", request: "r", userAsked: "", stamp: "", changing: false }]));
+    expect(() => desk()).not.toThrow();
+    desk().changeList(true, "todo", "Main bot", "a1b2c3d4");
+    expect(r.told).toHaveLength(2);
+  });
+
+  // The card asks kept in card-asks.json (`saveCardAsks`, `loadCardAsks`): one probe per guard (L-010).
+  // Equivalent mutants, so no probe: dropping `ask.card ||` in `deliverAsked` (M1), `!ask.card` in the by-name find of the no-id give (M3) and the stored kind in `readCards` (M10b) change
+  // nothing the app can do: a card ask's name is always a placeholder (`chart-request-<hash>`) and never the name of a library component, and a stored kind always agrees with its name
+  // (need = placeholder name). Only a component hand-made under a placeholder name would tell them apart. The by-kind fallback of the same give (M3b) is killed above.
+  const asksFile = (root: string) => join(root, "card-asks.json");
+  const keptKeys = (root: string): string[] => (JSON.parse(readFileSync(asksFile(root), "utf8")) as Array<{ key: string }>).map((ask) => ask.key);
+  const waitingAsks = (desk: MaintainerDesk) => (desk as unknown as { asks: Array<{ key: string; card?: string }> }).asks;
+  const storedAsk = (key: string, card = `T-${key}`) => ({ key, name: "chart-request-00000000", botId: MAIN, request: "r", userAsked: "", stamp: "", card });
+  const deskOver = (r: ReturnType<typeof cardRig>) => new MaintainerDesk({ root: r.root, maintainer: () => null, mainBot: () => r.bot, bots: () => [r.bot], library: r.library, plugins: () => null, log: () => {} });
+  const keyOf = (text: string) => /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(text)![1]!;
+
+  it("an answered card ask is out of card-asks.json at once (M5), the last one leaves an empty list, and with no asks and no file nothing is written (M27)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    r.desk.requestCardNeed("Another chart.", r.bot, "TASK-B");
+    const keys = handedTo.map(keyOf);
+    expect(keptKeys(r.root)).toEqual(keys);
+    r.desk.changeList(true, "todo", "Main bot", keys[0]!);
+    expect(keptKeys(r.root)).toEqual([keys[1]]);
+    r.desk.changeList(true, "todo", "Main bot", keys[1]!);
+    expect(keptKeys(r.root)).toEqual([]);
+    // No ask and no file: neither an unmatched id nor a save writes one.
+    const fresh = cardRig(["status"]);
+    (fresh.desk as unknown as { saveCardAsks(): void }).saveCardAsks();
+    fresh.desk.decline("deadbeef", "No.");
+    fresh.desk.changeList(true, "todo", "Main bot", "deadbeef");
+    expect(existsSync(asksFile(fresh.root))).toBe(false);
+  });
+
+  it("a described need with no words, or from no card, is no ask: nothing is handed to Maintainer, kept or written (M22)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestCardNeed("", r.bot, "T");
+    r.desk.requestCardNeed("  \n ", r.bot, "T");
+    r.desk.requestCardNeed("x", r.bot, "");
+    expect(handedTo).toEqual([]);
+    expect(waitingAsks(r.desk)).toEqual([]);
+    expect(existsSync(asksFile(r.root))).toBe(false);
+  });
+
+  it("a card-asks.json that is not a list, or holds entries that are not objects, starts with no asks and never throws (M21, M21b)", () => {
+    const r = cardRig(["status"]);
+    for (const text of ["{}", "null", '"x"', "5", "[]", '{"key":"a1b2c3d4"}', JSON.stringify([null, "x", 5, true, [], {}, [storedAsk("a1b2c3d4")]])]) {
+      writeFileSync(asksFile(r.root), text);
+      let desk!: MaintainerDesk;
+      expect(() => { desk = deskOver(r); }, text).not.toThrow();
+      expect(waitingAsks(desk), text).toEqual([]);
+    }
+  });
+
+  it("only an entry with a key of exactly 8 lower-case hex digits is read back (M4)", () => {
+    const r = cardRig(["status"]);
+    const bad = ["ZZZZZZZZ", "abc", "a1b2c3d", "a1b2c3d4e", "xa1b2c3d4", "a1b2c3d4x", "A1B2C3D4", "a1b2 3d4", ""];
+    writeFileSync(asksFile(r.root), JSON.stringify([...bad.map((key) => storedAsk(key)), storedAsk("0a1b2c3d")]));
+    expect(waitingAsks(deskOver(r)).map((ask) => ask.key)).toEqual(["0a1b2c3d"]);
+  });
+
+  it("two stored entries with one key are one ask, the first (M20)", () => {
+    const r = cardRig(["status"]);
+    writeFileSync(asksFile(r.root), JSON.stringify([storedAsk("a1b2c3d4", "T-FIRST"), storedAsk("a1b2c3d4", "T-SECOND"), storedAsk("b1b2c3d4")]));
+    const asks = waitingAsks(deskOver(r));
+    expect(asks.map((ask) => [ask.key, ask.card])).toEqual([["a1b2c3d4", "T-FIRST"], ["b1b2c3d4", "T-b1b2c3d4"]]);
+  });
+
+  it("at most 200 card asks are kept: the newest 200 are written (M19) and the newest 200 are read back (M19b)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    for (let i = 0; i < 205; i++) r.desk.requestCardNeed(`Chart ${i}.`, r.bot, `T-${i}`);
+    const keys = handedTo.map(keyOf);
+    expect(keys).toHaveLength(205);
+    expect(keptKeys(r.root)).toEqual(keys.slice(-200));
+    // Read: a file of 205 (written by hand, as an older or another build might) keeps the newest 200.
+    const all = Array.from({ length: 205 }, (_, i) => i.toString(16).padStart(8, "0"));
+    writeFileSync(asksFile(r.root), JSON.stringify(all.map((key) => storedAsk(key))));
+    expect(waitingAsks(deskOver(r)).map((ask) => ask.key)).toEqual(all.slice(-200));
+  });
+
+  it("a decline whose id names no waiting ask is logged and told to Maintainer, and reaches no card", () => {
+    const r = cardRig(["status"]);
+    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    const notes: string[] = [];
+    (r.desk as unknown as { deps: { maintainer: () => unknown } }).deps.maintainer = () => ({ queueNote: (note: string) => { notes.push(note); } });
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    r.desk.decline("deadbeef", "No.");
+    expect(r.told).toEqual([]);
+    expect(r.logs.some((line) => line.includes("deadbeef"))).toBe(true);
+    expect(notes.some((note) => note.includes("deadbeef"))).toBe(true);
   });
 
   it("a library that gains the name the worker picked does not answer it; Maintainer's <give-component id> does (its usage goes to the worker, on no list, even when the bot's list is full); a second description of the same card is one ask", () => {
@@ -279,8 +479,8 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     const r = cardRig(full, full);
     const handedTo: string[] = [];
     (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
-    r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK3");
-    r.desk.requestComponentChange("weather", "the weather again", "Main bot", r.bot, [], "TASK3");
+    r.desk.requestCardUsage("weather", "the weather", r.bot, "TASK3");
+    r.desk.requestCardUsage("weather", "the weather again", r.bot, "TASK3");
     r.make("weather", "A weather card.\nData: JSON {\"temp\": 1}\n");
     r.library.rescan();
     r.desk.deliverAsked();
