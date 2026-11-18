@@ -45,7 +45,7 @@ describe("a Claude worker's run", () => {
     expect(head.config.sessionId).not.toBe("coordinator");
     expect(head.config.systemPrompt).toBe(CLAUDE_WORKER_POLICY);
     expect(head.config.agentGuard).toContain("worker");
-    expect(head.config.disallowedTools).toEqual(expect.arrayContaining(["WebSearch", "SendMessage", "TaskStop"]));
+    expect(head.config.disallowedTools).toEqual(expect.arrayContaining(["WebSearch", "SendMessage", "TaskStop", "Monitor"]));
     expect(head.sent.map((m) => m.text)).toEqual(["Look up the API"]);
     expect(h.items.slice(0, 3)).toEqual([
       expect.objectContaining({ kind: "toolUse", id: r.task_id, tool: "Agent", parent: null }),
