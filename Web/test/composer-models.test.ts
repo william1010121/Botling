@@ -118,3 +118,14 @@ it('shows Claude\'s "default" alias once, as Default, and saves no model for it'
  button('Default').click(); await settle();
  expect(configure).toHaveBeenLastCalledWith('A',{model:null});
 });
+it('a bot with one engine still opens the model and effort menu, without the two-head hint',async()=>{
+ settings={...settings,engines:['claude']};
+ composer.update({...state(),answerWith:{chosen:'claude',options:[{id:'claude',label:'Claude'}]}} as ChatState);
+ expect(document.querySelectorAll('.answer-chip').length).toBe(1);
+ expect((document.querySelector('.answer-hint') as HTMLElement).hidden).toBe(true);
+ await open('Claude');
+ expect(document.querySelector('.model-popover')).not.toBeNull();
+ button('Runtime choice').click(); await settle();
+ expect(configure).toHaveBeenCalledWith('A',{model:'runtime'});
+ expect(sent.filter(a=>a.type==='setAnswerWith')).toEqual([]);
+});

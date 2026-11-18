@@ -92,9 +92,18 @@ const headName = (engine: string) => (engine === "agy" ? "Antigravity" : engine 
 /** `ChatPayload.markLetter`. */
 const markLetter = (engine: string) => (engine === "agy" ? "A" : engine === "claude" ? "C" : "X");
 
-/** The two-head parts of the page (`ChatPayload.AnswerWith`, `Rounds`, `Handoff`). */
-export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState, "answerWith" | "rounds" | "handoffs"> {
-  if (!heads || heads.engines.length < 2) return {};
+/**
+ * The head parts of the page (`ChatPayload.AnswerWith`, `Rounds`, `Handoff`). A bot with one head has no `HeadsView`
+ * (null), but still gets its `answerWith` with that one engine (`engines`: the bot's own list): the composer draws the
+ * engine's model/effort menu from it, so the model can be changed without a second engine. Rounds and hand-offs only
+ * exist with two heads.
+ */
+export function headsParts(heads: HeadsView | null | undefined, engines: readonly ("claude" | "codex" | "agy")[] = []): Pick<ChatState, "answerWith" | "rounds" | "handoffs"> {
+  if (!heads) {
+    const only = engines.length === 1 ? engines[0]! : null;
+    return only ? { answerWith: { options: [{ id: only, label: headName(only) }], chosen: only } } : {};
+  }
+  if (heads.engines.length < 2) return {};
   return {
     answerWith: { options: heads.engines.map((engine) => ({ id: engine, label: headName(engine) })), chosen: heads.engines.includes(heads.answerWith as "claude" | "codex" | "agy") ? heads.answerWith : heads.engines[0]! },
     rounds: heads.rounds ? { text: heads.rounds.text, stop: "Stop now", kind: heads.rounds.kind, round: heads.rounds.round, limit: heads.rounds.limit } : null,
@@ -296,7 +305,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     previewMenu: menuItems(plugins, "message/preview", lang),
     linkMenu: chatLinkMenu(plugins, lang),
     ...slashLists(bot, Object.keys(components).sort(), Object.keys(components).filter((name) => components[name]!.pinOnly)),
-    ...headsParts(chat.heads),
+    ...headsParts(chat.heads, bot.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
     seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,
     // What plugins keep for the page to draw from (botling.board's pins).

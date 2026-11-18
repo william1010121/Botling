@@ -214,7 +214,7 @@ export class ComposerSubmit {
   private drawAnswer(): void {
     const answer = this.answer;
     this.answerRow.hidden = !answer;
-    this.answerHint.hidden = !answer;
+    this.answerHint.hidden = !answer || answer.options.length < 2;
     this.answerRow.innerHTML = "";
     this.root.classList.toggle("answering", !!answer);
     if (!answer) return;
@@ -241,6 +241,7 @@ export class ComposerSubmit {
         segment.append(chip, menu); this.answerRow.append(segment);
       } else this.answerRow.append(chip);
     });
+    if (answer.options.length < 2) { this.answerHint.textContent = ""; return; }
     this.answerHint.textContent = t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
   }
 

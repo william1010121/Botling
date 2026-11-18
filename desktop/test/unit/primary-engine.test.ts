@@ -13,3 +13,9 @@ it('migrates legacy Both to saved engine, keeping explicit choices and settings'
  expect(readHeads({...raw,answerWith:'claude'},'codex').answerWith).toBe('claude');
  expect(headsFor(migrated,'both')).toEqual(['codex']);
 });
+it('a one-head bot (no HeadsView) still offers its engine, so the composer shows the model menu',()=>{
+ expect(headsParts(null,['codex']).answerWith).toEqual({options:[{id:'codex',label:'Codex'}],chosen:'codex'});
+ expect(headsParts(undefined,['claude'])).toEqual({answerWith:{options:[{id:'claude',label:'Claude'}],chosen:'claude'}});
+ expect(headsParts(null,[])).toEqual({});
+ expect(headsParts(null)).toEqual({});
+});
