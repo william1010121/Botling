@@ -401,7 +401,7 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(args).toMatchObject({ model: "opus", effort: "medium", group: "Prices" });
     expect(String(args.instructions)).toContain("Collect the prices.");
     expect(String(args.instructions)).toContain(JSON.stringify("Plans: A $5."));
-    expect(String(args.instructions)).toContain('"series":[5]');
+    expect(String(args.instructions)).toContain(JSON.stringify('{"series":[5]}'));
     expect(String(args.instructions)).toContain(JSON.stringify("a bar chart"));
     expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "running", run: 1, earlier: ["T1"], text: "Plans: A $5." });
     expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ taskId: "T2", model: "opus", status: "running" });

@@ -224,6 +224,7 @@ const rows: Row[] = [
   { type: "worker.cwd", cmd: () => ({ type: "worker.cwd", botId: PROJECT, subagentId: "nope" }), ok: { cwd: "<folder>" }, events: [] },
   { type: "agent.targets", cmd: () => ({ type: "agent.targets", botId: PROJECT, subagentId: "nope" }), err: GONE_AGENT, events: [] },
   { type: "agent.move", cmd: () => ({ type: "agent.move", botId: PROJECT, subagentId: "nope", to: { kind: "back" } }), err: GONE_AGENT, events: [] },
+  { type: "card.redo", cmd: () => ({ type: "card.redo", botId: MAIN, taskId: "nope" }), err: ["not_found", "There is no card for that worker."], events: [] },
   { type: "agent.message", cmd: () => ({ type: "agent.message", botId: PROJECT, subagentId: "nope", text: "hi" }), err: ["not_found", 'There is no agent "nope".'], events: [] },
   { type: "agent.stop", cmd: () => ({ type: "agent.stop", botId: PROJECT, subagentId: "nope" }), err: ["not_found", 'There is no agent "nope".'], events: [] },
   { type: "agent.group", cmd: () => ({ type: "agent.group", botId: PROJECT, subagentIds: ["nope"], name: "Group" }), err: GONE_AGENT, events: [] },
