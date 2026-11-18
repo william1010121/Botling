@@ -37,7 +37,7 @@ const ADDED_TEXT: { file: keyof typeof CUT; text: string; by: string }[] = [
 /** Sections added after the cut, in order after the cut's four, each pinned by the sha256 of its whole file. */
 const ADDED_SECTIONS: Record<string, { sha256: string; by: string }> = {
   "05-shell-fallback.css": { by: "M7-07c 9210abef", sha256: "d25895d8ac083d090d5f0b4e1b0ddd6e94082952891f7d3ba569ff325433849e" },
-  "06-dynamic-tabs.css": { by: "dynamic tabs", sha256: "90e6c5eacfb14ae45bc8e961f528d09b86ea657479502985c4dbc4db2287779d" },
+  "06-dynamic-tabs.css": { by: "dynamic tabs", sha256: "7c5df9954f9a09f6744d5f67d66e053784f669efcdaf254530a6f1c2400b9520" },
 };
 const sectionsDir = join(__dirname, "../../src/renderer/styles");
 const sections = () => readdirSync(sectionsDir).filter((name) => name.endsWith(".css")).sort();

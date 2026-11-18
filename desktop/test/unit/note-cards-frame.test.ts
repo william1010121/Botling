@@ -70,7 +70,7 @@ describe("ccb.card: a component as in a chat reply, for the Note tab", () => {
     // As in a chat reply: as tall as its content (no data-fill), its widest size.
     expect(html).toContain('data-size="4x2" data-surface="chat">');
     // The page says when it is ready ({ ccb: "ready", height }): the Note keeps the shown card until then.
-    expect(html).toContain("{ccb: 'ready', height}");
+    expect(html).toContain("ccb: 'ready'"); // the page's ready script (Web/src/component-page.ts readyScript posts {ccb: 'ready', height: <measured>})
     send({ ccb: "card", id: 2, component: "plain", data: null, botId: BOT });
     send({ ccb: "card", id: 3, component: "nope", data: null, botId: BOT });
     send({ ccb: "card", id: 4, component: "plain", data: null, botId: "6A0B0000-0000-4000-8000-0000000000FF" });

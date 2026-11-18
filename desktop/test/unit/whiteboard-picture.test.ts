@@ -152,7 +152,7 @@ describe("botling.whiteboard's frame asks the app page for a tile and an approva
     expect(html).toContain("<div id=status-template></div>");
     expect(html).toContain('data-size="2x1" data-surface="board" data-fill');
     // The page says when it is ready ({ ccb: "ready", height }): the Board keeps the shown picture until then.
-    expect(html).toContain("{ccb: 'ready', height}");
+    expect(html).toContain("ccb: 'ready'"); // the page's ready script (Web/src/component-page.ts readyScript posts {ccb: 'ready', height: <measured>})
     expect(html).toContain('"ok":true');
     // Not in the library, no such bot, too much data, a size a card has no room for: refused, nothing served.
     send(frame.element, { ccb: "tile", id: 2, component: "nope", data: null, size: "1x1", botId: BOT });

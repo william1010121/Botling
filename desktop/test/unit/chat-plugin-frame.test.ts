@@ -122,7 +122,7 @@ describe("chatAnswerCommand is what ChatFrame sent before the move", () => {
     const withImages = chatAnswerCommand({ type: "answer", messageID: MESSAGE, text: "", images: [...images, { name: 3, base64: "x" }, { name: "empty.png", base64: "" }] }, BOT)!;
     expect(withImages.images).toHaveLength(10);
     expect(withImages.images![0]).toEqual({ name: "picture.png", base64: "AAAA" });
-    const picks = chatAnswerCommand({ type: "answer", messageID: MESSAGE, text: "ignored", picks: [{ options: [0, 9, 1], other: " ok " }] }, BOT)!;
+    const picks = chatAnswerCommand({ type: "answer", messageID: MESSAGE, text: "ignored", picks: [{ options: [0, 12, 1], other: " ok " }] }, BOT)!; // a choices block carries up to 12 options (7bb8dc57), so 12 is the first index out of range
     expect(picks.picks).toEqual([{ options: [0, 1], other: " ok " }]);
     expect(Command.safeParse(picks).success).toBe(true);
   });

@@ -3,7 +3,7 @@
 .board-switch .main-tab-more { padding: 0 8px; }
 .board-switch .main-tab-more[aria-expanded="true"] { background: var(--selected); color: var(--text); }
 .main-tab-switch .tab-pinned { opacity: 0.55; margin-left: 2px; }
-.tab-more-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; min-width: 230px; max-width: calc(100vw - 32px); max-height: calc(100vh - 160px); overflow-y: auto; padding: 4px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); text-align: left; -webkit-app-region: no-drag; }
+.tab-more-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; min-width: 230px; max-width: calc(100vw - 32px); max-height: calc(100vh - 160px); overflow-y: auto; padding: 4px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgb(0 0 0 / calc(0.35 * var(--shade, 1))); text-align: left; -webkit-app-region: no-drag; }
 .tab-more-item { display: flex; align-items: center; gap: 2px; }
 .tab-more-menu .tab-more-row { flex: 1; min-width: 0; justify-content: flex-start; height: 28px; padding: 0 10px; border-radius: 8px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tab-more-menu .tab-more-row:hover, .tab-more-menu .tab-more-pin:hover { background: var(--selected); }
