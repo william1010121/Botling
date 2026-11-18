@@ -98,6 +98,7 @@ export function install(st, api) {
     cards: new Map(), // thread id -> { el, sig }
     draft: null, // the ask box: { rid, kind, scope, quote, line, cellKey, label, text, sending, error, el, id? }
     win: null, // the floating window: { id, x, y, min, draft, el }
+    open: "", float: null, // the opened comment (a popover over the page): the thread id, and { id, sig, el, chip } of its card
     outline: null, outlineText: null, outlineBusy: false,
     rail: null, links: null, pop: null, marks: new Map(), focus: "", timer: 0, raf: 0,
   };
@@ -393,11 +394,6 @@ export function install(st, api) {
   const threadOf = (id) => mg.threads.find((t) => t.id === id) ?? null;
   const lastTurn = (t) => t.turns[t.turns.length - 1];
   const answerOf = (t) => [...t.turns].reverse().find((x) => typeof x.a === "string")?.a ?? "";
-  function setFolded(t, folded) {
-    t.folded = folded;
-    call("marginFold", { id: t.id, folded }).catch(() => {});
-    layout();
-  }
   async function remove(t) {
     try {
       await call("marginDelete", { id: t.id });
@@ -406,6 +402,7 @@ export function install(st, api) {
     }
     mg.threads = mg.threads.filter((x) => x.id !== t.id);
     if (mg.win?.id === t.id) closeWin();
+    if (mg.open === t.id) mg.open = "";
     mg.cards.get(t.id)?.el.remove();
     mg.cards.delete(t.id);
     layout();
@@ -496,76 +493,37 @@ export function install(st, api) {
     return box;
   };
 
+  // The state chip of a thread (回答中 / 視窗追問中 / 已回答 / N 輪), as a class and the html inside it.
+  function chipOf(t, winOpen) {
+    if (t.answering) return { cls: "nm-chip nm-st nm-run", html: `<i class="nm-spin"></i>${winOpen ? "視窗追問中" : "回答中"}` };
+    if (winOpen) return { cls: "nm-chip nm-st nm-run", html: "視窗追問中" };
+    return { cls: "nm-chip nm-st nm-done", html: t.turns.length > 1 ? `${t.turns.length} 輪` : "已回答" };
+  }
+  const threadSig = (t, ...more) => JSON.stringify([t.turns.length, !!t.answering, t.turns[t.turns.length - 1]?.a?.length ?? -1, t.turns[0].q, ...more]);
+
+  // The margin card: always the one-line pill (what is in the rail never grows, so opening a comment never moves the note or the other pills).
+  // Pressing it opens the comment as a popover (floatFor / placeFloat), which floats over the page.
   function cardFor(t) {
     const winOpen = mg.win?.id === t.id;
-    const turn = lastTurn(t);
-    const sig = JSON.stringify([t.folded, t.turns.length, !!t.answering, turn?.a?.length ?? -1, winOpen]);
+    const sig = JSON.stringify([t.turns.length, !!t.answering, t.turns[0].q, winOpen]); // what the pill shows; an answer arriving does not redraw it
     const old = mg.cards.get(t.id);
     if (old && old.sig === sig) return old;
-    const card = h("div", `nm-card nm-ui${t.folded && !winOpen ? " nm-folded" : ""}${winOpen ? " nm-active" : ""}`);
+    const card = h("div", `nm-card nm-ui nm-folded${winOpen || mg.open === t.id ? " nm-active" : ""}`);
     card.dataset.thread = t.id;
     const head = h("div", "nm-head");
     head.insertAdjacentHTML("beforeend", icon("chat"));
     const chip = h("span", "nm-chip nm-st");
-    if (t.answering) {
-      chip.className = "nm-chip nm-st nm-run";
-      chip.innerHTML = `<i class="nm-spin"></i>${winOpen ? "視窗追問中" : "回答中"}`;
-    } else if (winOpen) {
-      chip.className = "nm-chip nm-st nm-run";
-      chip.textContent = "視窗追問中";
-    } else {
-      chip.className = "nm-chip nm-st nm-done";
-      chip.textContent = t.turns.length > 1 ? `${t.turns.length} 輪` : "已回答";
-    }
+    const c = chipOf(t, winOpen);
+    chip.className = c.cls;
+    chip.innerHTML = c.html;
     const sum = h("span", "nm-sum", `${t.turns[0].q.replace(/\s+/g, " ")} · ${t.turns.length} 則`);
     head.append(h("b", "nm-full", "旁註"), sum, chip, h("span", "nm-sp"));
-    if (winOpen) {
-      head.append(gb("nm-pri", "dock", "釘回側欄", () => closeWin()));
-    } else {
-      head.append(ib("up", t.folded ? "展開" : "收起", () => setFolded(t, !t.folded), "nm-fold"));
-    }
+    if (winOpen) head.append(gb("nm-pri", "dock", "釘回側欄", () => closeWin()));
+    else head.append(ib("up", "展開", () => toggleFloat(t.id), "nm-fold"));
     card.append(head);
     head.addEventListener("click", () => {
-      if (card.classList.contains("nm-folded")) setFolded(t, false);
+      if (!winOpen) toggleFloat(t.id);
     });
-    if (winOpen) {
-      const stub = h("div", "nm-stub");
-      stub.textContent = `${t.turns.length} 輪${turn?.aAt ? ` · 最後回答 ${clock(turn.aAt)}` : ""}　`;
-      const first = t.turns.find((x) => x.a)?.a;
-      if (first) stub.append(h("br"), document.createTextNode(`第一輪：${first.replace(/[`*#>]/g, "").replace(/\s+/g, " ").slice(0, 90)}`));
-      card.append(stub);
-    } else {
-      const body = h("div", "nm-body");
-      body.append(h("div", "nm-q", t.anchor.quote.replace(/\s+/g, " ").trim()));
-      const last = t.turns[t.turns.length - 1];
-      body.append(turnEl("you", textP(last.q)));
-      if (typeof last.a === "string") {
-        const msg = mdEl(last.a, ccb, st.botId);
-        body.append(turnEl("bot", msg));
-        const stamp = h("div", "nm-stamp", `${clock(last.aAt)} · 不會寫進 Note`);
-        msg.after(stamp);
-      } else {
-        const wait = h("div", "nm-wait");
-        wait.innerHTML = `<i class="nm-spin"></i><span>bot 還在回答…（回答也會出現在對話裡）</span>`;
-        body.append(turnEl("bot", wait));
-      }
-      if (t.turns.length > 1) body.append(h("div", "nm-more", `前面還有 ${t.turns.length - 1} 輪，在視窗裡看全部`));
-      card.append(body);
-      const foot = h("div", "nm-foot");
-      if (t.answering) {
-        foot.append(gb("", "x", "不等了", () => cancel(t), "取消這個問題；bot 如果之後才回，會留在對話裡"));
-      } else {
-        foot.append(gb("nm-pri", "reply", "在視窗追問", () => openWin(t.id)));
-        foot.append(gb("", "copy", "複製", () => copy(t)));
-        foot.append(gb("", "plus", "存成 cell", () => saveAsCell(t), "把這個回答存成原文後面的新 cell"));
-      }
-      foot.append(h("span", "nm-sp"));
-      const del = gb("", "trash", "刪除", null, "刪掉這則旁註（不影響 Note）");
-      twoStep(del, () => remove(t));
-      foot.append(del);
-      if (!t.answering) foot.append(gb("", "up", "收起", () => setFolded(t, true)));
-      card.append(foot);
-    }
     card.addEventListener("mouseenter", () => setFocus(t.id));
     card.addEventListener("mouseleave", () => setFocus(""));
     old?.el.remove();
@@ -574,9 +532,145 @@ export function install(st, api) {
     return rec;
   }
 
+  // ---- the opened comment: a popover over the page ----
+  // `position: fixed`, so it is outside the flow of the note: no column is taken, the cells and the other pills stay where they are. It sits
+  // over its own pill (same left edge and width), at most as tall as the visible part of the frame, and the long answer scrolls inside the
+  // card while the header and the action row stay put. The floating status bar of the app is outside this frame, so its height cannot be read:
+  // BOTTOM_SAFE is a margin that keeps the action row above it.
+  const FLOAT_EDGE = 8;
+  const FLOAT_BOTTOM_SAFE = 88;
+  const FLOAT_MIN_H = 140;
+  function floatFor(t) {
+    const turn = lastTurn(t);
+    const card = h("div", "nm-card nm-ui nm-float nm-active");
+    card.dataset.thread = t.id;
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", "旁註");
+    const head = h("div", "nm-head");
+    head.insertAdjacentHTML("beforeend", icon("chat"));
+    const chip = h("span", "nm-chip nm-st");
+    const c = chipOf(t, false);
+    chip.className = c.cls;
+    chip.innerHTML = c.html;
+    head.append(h("b", "nm-full", "旁註"), chip, h("span", "nm-sp"), ib("up", "收起", () => closeFloat()));
+    card.append(head);
+    const body = h("div", "nm-body");
+    body.append(h("div", "nm-q", t.anchor.quote.replace(/\s+/g, " ").trim()));
+    body.append(turnEl("you", textP(turn.q)));
+    if (typeof turn.a === "string") {
+      const msg = mdEl(turn.a, ccb, st.botId);
+      body.append(turnEl("bot", msg));
+      msg.after(h("div", "nm-stamp", `${clock(turn.aAt)} · 不會寫進 Note`));
+    } else {
+      const wait = h("div", "nm-wait");
+      wait.innerHTML = `<i class="nm-spin"></i><span>bot 還在回答…（回答也會出現在對話裡）</span>`;
+      body.append(turnEl("bot", wait));
+    }
+    if (t.turns.length > 1) body.append(h("div", "nm-more", `前面還有 ${t.turns.length - 1} 輪，在視窗裡看全部`));
+    card.append(body);
+    const foot = h("div", "nm-foot");
+    if (t.answering) {
+      foot.append(gb("", "x", "不等了", () => cancel(t), "取消這個問題；bot 如果之後才回，會留在對話裡"));
+    } else {
+      foot.append(gb("nm-pri", "reply", "在視窗追問", () => openWin(t.id)));
+      foot.append(gb("", "copy", "複製", () => copy(t)));
+      foot.append(gb("", "plus", "存成 cell", () => saveAsCell(t), "把這個回答存成原文後面的新 cell"));
+    }
+    foot.append(h("span", "nm-sp"));
+    const del = gb("", "trash", "刪除", null, "刪掉這則旁註（不影響 Note）");
+    twoStep(del, () => remove(t));
+    foot.append(del);
+    if (!t.answering) foot.append(gb("", "up", "收起", () => closeFloat()));
+    card.append(foot);
+    card.addEventListener("mouseenter", () => setFocus(t.id));
+    card.addEventListener("mouseleave", () => setFocus(""));
+    return { chip, el: card };
+  }
+  function toggleFloat(id) {
+    if (!threadOf(id)) return;
+    mg.open = mg.open === id ? "" : id;
+    layout();
+  }
+  function closeFloat() {
+    if (!mg.open) return;
+    mg.open = "";
+    layout();
+  }
+  function dropFloat() {
+    mg.float?.el.remove();
+    mg.float = null;
+  }
+  // The box for the popover, in viewport coordinates: over its pill, inside the visible part of the frame, above the bottom margin.
+  function placeFloat(el, anchor) {
+    const vw = window.innerWidth || 1000;
+    const vh = window.innerHeight || 700;
+    const wr = wrap.getBoundingClientRect();
+    const a = anchor.getBoundingClientRect();
+    const top0 = Math.max(FLOAT_EDGE, wr.height ? wr.top + FLOAT_EDGE : 0);
+    const bottom = Math.min(vh, wr.height ? wr.bottom : vh) - FLOAT_BOTTOM_SAFE;
+    const maxH = Math.max(FLOAT_MIN_H, bottom - top0);
+    const width = Math.min(a.width || 340, vw - 2 * FLOAT_EDGE);
+    const left = Math.min(Math.max(FLOAT_EDGE, a.left), Math.max(FLOAT_EDGE, vw - FLOAT_EDGE - width));
+    const s = el.style;
+    s.position = "fixed";
+    s.left = `${left}px`;
+    s.width = `${width}px`;
+    s.maxHeight = `${maxH}px`;
+    const height = Math.min(el.offsetHeight, maxH);
+    s.top = `${Math.min(Math.max(a.top, top0), Math.max(top0, bottom - height))}px`;
+  }
+  // Called at the end of layout(): make the popover (re)built when its thread changed, and put it where its pill is now.
+  function syncFloat(rows) {
+    const id = mg.open;
+    const row = id ? rows.find((r) => r.key === id) : null;
+    const t = id ? threadOf(id) : null;
+    if (!row || !t || mg.win?.id === id) {
+      if (id && (!t || mg.win?.id === id)) mg.open = "";
+      return dropFloat();
+    }
+    const sig = threadSig(t);
+    let f = mg.float;
+    if (!f || f.id !== id || f.sig !== sig) {
+      const built = floatFor(t);
+      const scroll = f && f.id === id ? f.el.querySelector(".nm-body")?.scrollTop ?? 0 : 0;
+      if (f?.el.isConnected) f.el.replaceWith(built.el);
+      else wrap.append(built.el);
+      mg.float = f = { id, sig, el: built.el, chip: built.chip, chipCls: built.chip.className, chipHtml: built.chip.innerHTML };
+      placeFloat(f.el, row.card);
+      const body = f.el.querySelector(".nm-body");
+      if (body) body.scrollTop = scroll;
+    }
+    if (row.place.state !== "ok" || row.place.stale) {
+      f.chip.className = "nm-chip nm-st nm-warn";
+      f.chip.textContent = row.place.state === "orphan" ? "原文找不到" : "原文已改";
+    } else {
+      f.chip.className = f.chipCls;
+      f.chip.innerHTML = f.chipHtml;
+    }
+    placeFloat(f.el, row.card);
+  }
+  const followFloat = () => {
+    const pill = mg.open ? mg.cards.get(mg.open)?.el : null;
+    if (mg.float && pill?.isConnected) placeFloat(mg.float.el, pill);
+  };
+  const onOutside = (e) => {
+    if (!mg.open) return;
+    const n = e.target;
+    if (n?.closest?.(".nm-float, .nm-win, .nm-pop") || mg.cards.get(mg.open)?.el.contains(n)) return;
+    closeFloat();
+  };
+  const onEsc = (e) => {
+    if (e.key === "Escape" && mg.open && !e.isComposing) closeFloat();
+  };
+  document.addEventListener("mousedown", onOutside, true);
+  document.addEventListener("keydown", onEsc);
+  st.body.addEventListener("scroll", followFloat, { passive: true });
+  window.addEventListener("resize", followFloat);
+
   // ---- the floating window ----
   function openWin(id) {
     if (!threadOf(id)) return;
+    mg.open = ""; // the popover gives way to the window
     mg.win = { id, x: null, y: null, min: false, draft: "", el: null, error: "", sending: false };
     drawWin();
     layout();
@@ -607,7 +701,7 @@ export function install(st, api) {
     bar.append(h("b", "", "旁註追問"), chip, h("span", "nm-sp"));
     bar.append(ib("dock", "釘回側欄", () => closeWin()));
     bar.append(ib("min", w.min ? "展開" : "縮小", () => { w.min = !w.min; drawWin(); }));
-    bar.append(ib("x", "收起旁註", () => { closeWin(); setFolded(t, true); }));
+    bar.append(ib("x", "收起旁註", () => closeWin()));
     el.append(bar);
     const body = h("div", "nm-wbody");
     body.append(h("div", "nm-q", t.anchor.quote.replace(/\s+/g, " ").trim()));
@@ -682,7 +776,7 @@ export function install(st, api) {
     const foot = h("div", "nm-wfoot");
     foot.append(gb("", "copy", "複製", () => copy(t)), gb("", "plus", "存成 cell", () => saveAsCell(t)), h("small", "", "不會寫進 Note"), h("span", "nm-sp"));
     if (t.answering) foot.append(gb("", "x", "不等了", () => { closeWin(); cancel(t); }));
-    foot.append(gb("", "up", "收起旁註", () => { closeWin(); setFolded(t, true); }));
+    foot.append(gb("", "up", "收起旁註", () => closeWin()));
     el.append(foot);
     const vw = window.innerWidth || 1000;
     const vh = window.innerHeight || 700;
@@ -792,7 +886,7 @@ export function install(st, api) {
       for (const el of next.els) el.classList.add("nm-focus");
       if (next.range) highlights?.focus.add(next.range);
     }
-    mg.cards.forEach((c, id) => c.el.classList.toggle("nm-active", id === key || mg.win?.id === id));
+    mg.cards.forEach((c, id) => c.el.classList.toggle("nm-active", id === key || mg.win?.id === id || mg.open === id));
   }
   function teardownRail() {
     mg.rail?.remove();
@@ -806,6 +900,7 @@ export function install(st, api) {
     if (st.gone || !on || !st.loaded) return;
     placeDraft();
     if (!mg.threads.length) {
+      dropFloat();
       if (mg.rail) teardownRail();
       else clearMarks();
       markDraft();
@@ -838,9 +933,10 @@ export function install(st, api) {
         rec.chip.innerHTML = rec.chipHtml;
       }
       rec.el.classList.toggle("nm-stale", place.state !== "ok" || place.stale);
-      rows.push({ key: t.id, card: rec.el, place, anchor: t.anchor, dashed: !!t.folded });
+      rows.push({ key: t.id, card: rec.el, place, anchor: t.anchor, dashed: mg.open !== t.id });
     }
     if (!rows.length) {
+      dropFloat();
       teardownRail();
       markDraft();
       if (mg.pop) showPop();
@@ -907,6 +1003,8 @@ export function install(st, api) {
     for (const r of rows) if (r.place.state === "ok" && r.place.el) mark(r.key, r.place, r.anchor);
     markDraft();
     setFocusKeep();
+    for (const r of rows) r.card.classList.toggle("nm-active", r.key === mg.focus || r.key === mg.open || r.key === mg.win?.id);
+    syncFloat(rows);
     if (mg.pop) showPop();
   }
   function setFocusKeep() {
@@ -939,6 +1037,11 @@ export function install(st, api) {
     clearTimeout(mg.timer);
     for (const off of offs) off();
     window.removeEventListener("resize", layoutSoon);
+    window.removeEventListener("resize", followFloat);
+    document.removeEventListener("mousedown", onOutside, true);
+    document.removeEventListener("keydown", onEsc);
+    st.body.removeEventListener("scroll", followFloat);
+    dropFloat();
     document.removeEventListener("mouseup", afterPointer);
     document.removeEventListener("keyup", afterPointer);
     watcher?.disconnect();

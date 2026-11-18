@@ -69,6 +69,13 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
   cell after the passage's cell, one undo step).
 * **Follow up**: 在視窗追問 opens the floating window (drag by the bar, minimise, 釘回側欄, collapse); the card shows a stub
   "視窗追問中". The window position is per mount, not stored.
+* **Opening a comment** (2026-11-18): the card in the margin is always a one-line pill (state chip, first question, chevron); pressing it opens
+  the comment as a popover (`.nm-float`, `position: fixed`, a child of the frame, not of the rail) over its own pill: same card, shadow and
+  header (旁註 + chip), body that scrolls, action row (在視窗追問 / 複製 / 存成 cell / 刪除 / 收起) that stays in view. It takes no room (the
+  rail, the note and the other pills do not move; no clear-and-redraw), is at most as tall as the visible frame minus a bottom margin
+  (`FLOAT_BOTTOM_SAFE`: the app's floating status bar lies over the frame and its height cannot be read from inside it), follows its pill on
+  scroll, and closes on 收起, Esc and a press outside. One popover at a time; open / closed is not stored (the old `folded` flag is no longer
+  used by the frame).
 * Cards sit in `.nm-rail` (a node of its own; `render()` never rebuilds it, so a typed question survives a redraw), tops
   are stacked so they never overlap, and elbow lines join each card to its passage. Colours are the note's `--n-*` tokens
   (light/dark follow the app).
