@@ -22,7 +22,7 @@ Three kinds of mistakes, one category per evidence line:
 ## L-NNN · <one-line rule>
 - Rule: what to do, concrete enough that a reviewer can check it.
 - Why: what broke (or would have) when it was not done.
-- Tags: fs, wire, ui, grant, import, test, merge, secret, build (the ones that apply)
+- Tags: fs, wire, ui, grant, import, test, merge, secret, build, web, components (the ones that apply)
 - Status: open · days 1 of 3 (2026-11-15)
 - Evidence:
   - <date> | <category> | <review file> <finding ids> (what happened) | fix <commit>, merge <commit>
@@ -283,6 +283,22 @@ Three kinds of mistakes, one category per evidence line:
 - Evidence:
   - 2026-11-16 | thin-check | `.bot/artifacts/v3-m7/duel-apis-review.md` Re-check (M13 judged without a rebuild) | log `.bot/remote-test-logs/20261116-200436-6786-7cea257e.log`
   - 2026-11-16 | thin-check | `.bot/artifacts/v3-m7/plugin-deps-review.md` (R6 and R7, `frame.test.ts` reads prebuilt `out/…/ui.js`)
+
+## L-018 · App code never hard-codes a fix for a component's inner look; ask Maintainer to change the component
+- Rule: when something inside a component frame looks wrong in the chat (padding, spacing, alignment, colors, sizes of
+  what the component draws), the app side (Web/src, `chat/*.css`, `message-body.ts`) does not add an offset, a negative
+  margin, an override or a magic number to compensate. Components belong to Maintainer: ask it (a `<component>` request,
+  with the context, for example "inside a worker card, no box around it") to change the component or the shared
+  component layout so it fits that context. The app may only pass a context signal that already exists (for example the
+  `componentTokens` hook); it does not invent a new one for this. A reviewer rejects a CSS rule or a test assertion that
+  encodes a component's inner measurement.
+- Why: a number copied from a component into the app (here "components draw up to ~12px padding") breaks without any
+  test failing when the component changes (compact 8px and narrow 10px components were already off by 2–4px), and it
+  puts a component's look in two places owned by different parties.
+- Tags: ui, web, components
+- Status: open · days 1 of 3 (2026-11-18)
+- Evidence:
+  - 2026-11-18 | rework | `bot/card-style-1b`: worker card with no box and no title showed the component's data about 12px in from the reply text; the review fix pulled the frame out by a hard-coded `--card-inset: 12px` (negative margins on `.worker-card-body > .component`) | the owner rejected it ("talk to Maintainer, do not hard-code"); added in `7b9ae771`, removed in the commit after `2b00e152`
 
 ## Watch list (seen once, not a lesson yet)
 

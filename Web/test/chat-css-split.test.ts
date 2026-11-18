@@ -8,12 +8,12 @@ import { chatCssPath, readChatCss } from "./helpers/chat-css";
 
 // Web/src/chat.css is cut into Web/src/chat/NN-*.css (M7-S80). The page's stylesheet must not change by accident: the
 // hashes are of the stylesheet's bytes (raw, and with tokens.css put in as the app builds do), last taken at the card-style-1b
-// change (card without a box or title, toolbar in the corner, data lined up with the reply text). They are a snapshot: an
+// change (card without a box or title, toolbar in the corner). They are a snapshot: an
 // edit to any chat CSS file changes them on purpose, and the same commit takes the new values from this test's failure
 // message. The cut itself (only imports in chat.css, one section per import, none over 800 lines) is the third test.
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
-const RAW_BEFORE = "0a7f7e4d7ca92b15f833ccbde33a0fa6d4d9408213e82074c23bf3b125b7ed30";
-const BUILT_BEFORE = "027ba33f3f880b008d29c26beda524ee93deb0ac8508360f8938094919ade7cd";
+const RAW_BEFORE = "f358de3351fd0596e194be07d657160592a2b376c65a9af4d7bec2e46dd4da41";
+const BUILT_BEFORE = "442bb12dffc5941fc7e1135203efc5885b635a94b129e7169ffa7523d9934e91";
 
 describe("chat.css cut into sections", () => {
   it("builds to the snapshot bytes (tokens.css put in, as the app builds do)", () => {

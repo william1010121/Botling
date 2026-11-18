@@ -199,10 +199,6 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .worker-card-body { min-width: 0; overflow-wrap: anywhere; }
 .worker-card-body > :first-child { margin-top: 0; }
 .worker-card-body > .component { margin-top: 0; }
-/* A component draws up to ~12px of padding of its own inside its frame (component-page.ts), so with no box around the card its content would sit that far
-   in from the reply's text. The frame is pulled out by that much on both sides (the bubble's own padding is wider), so the data starts exactly where the text does. */
-.worker-card { --card-inset: 12px; }
-.worker-card-body > .component { margin-left: calc(-1 * var(--card-inset)); margin-right: calc(-1 * var(--card-inset)); }
 .worker-card-line { display: flex; align-items: center; gap: 7px; min-height: 22px; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--faint); }
 .worker-card-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .worker-card.status-running .worker-card-dot, .worker-card.status-starting .worker-card-dot { background: var(--orange); animation: card-pulse 1.4s ease-in-out infinite; }

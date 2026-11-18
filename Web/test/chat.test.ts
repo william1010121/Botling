@@ -836,10 +836,8 @@ describe("messages", () => {
     expect(css).toMatch(/\.worker-card-tools > :not\(\.worker-card-model\)[^{]*\{ opacity: 0; pointer-events: none;/);
     expect(css).toMatch(/\.row \.worker-card-tools \.worker-card-new \{ opacity: 0;/);
     expect(css).toMatch(/@media \(hover: none\) \{\s*\.worker-card-tools \{[^}]*\}\s*\.worker-card-tools > \*[^{]*\{ opacity: 1;/);
-    // The notes chevron turns while the notes are open; the data lines up with the reply's text (the frame is pulled out by the component's own padding).
+    // The notes chevron turns while the notes are open.
     expect(css).toContain(".worker-card.notes-open > .worker-card-tools .steps-toggle svg { transform: rotate(90deg); }");
-    expect(css).toMatch(/\.worker-card \{ --card-inset: 12px; \}/);
-    expect(css).toMatch(/\.worker-card-body > \.component \{ margin-left: calc\(-1 \* var\(--card-inset\)\); margin-right: calc\(-1 \* var\(--card-inset\)\); \}/);
     // Put-away parts really go: `display: flex` on the reply box and the notes would otherwise beat the hidden attribute.
     expect(css).toMatch(/\.worker-card-reply\[hidden\] \{ display: none; \}/);
     expect(css).toMatch(/\.worker-card-notes > \.worker-card-body\[hidden\] \{ display: none; \}/);
