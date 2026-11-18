@@ -96,11 +96,13 @@ it("the shipped ui.js registers the view and draws the list, pausing and a refus
   await vi.waitFor(() => expect(root.querySelector("li")!.getAttribute("data-status")).toBe("paused"));
   expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
 
-  // Cancel asks once more; "Yes, cancel" sends it
-  (root.querySelectorAll("li")[1]!.querySelectorAll("button")[1] as HTMLButtonElement).click();
-  await vi.waitFor(() => expect(root.querySelector(".routine-confirm")).not.toBeNull());
+  // Cancel asks once more; "Yes, cancel" sends it. The question is looked for with getElementsByClassName: jsdom's selector engine
+  // kept answering "none" to a `.routine-confirm` query that was first run before the question was drawn, though it was in the DOM.
+  const jobB = () => [...root.querySelectorAll("li")].find((row) => row.querySelector(".routine-title")?.textContent === "Job B")!;
+  (jobB().querySelector('button[data-op="cancel"]') as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(root.getElementsByClassName("routine-confirm")).toHaveLength(1));
   expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
-  (root.querySelector(".routine-confirm .danger") as HTMLButtonElement).click();
+  (root.getElementsByClassName("routine-confirm")[0]!.querySelector(".danger") as HTMLButtonElement).click();
   await vi.waitFor(() => expect(root.querySelector(".routines-problem")?.textContent).toBe("Not now"));
   expect(root.querySelectorAll("li")).toHaveLength(3);
 

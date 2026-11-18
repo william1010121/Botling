@@ -22,7 +22,7 @@ const ICON = {
   watch: <><path d="M1.6 8S3.9 3.6 8 3.6 14.4 8 14.4 8 12.1 12.4 8 12.4 1.6 8 1.6 8Z" /><circle cx="8" cy="8" r="1.9" /></>,
 };
 function KindIcon({ kind }: { kind: keyof typeof ICON }) {
-  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICON[kind]}</svg>;
+  return <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{ICON[kind]}</svg>;
 }
 
 /** The "when" lines of a card: how often (or the one time), and when it runs next. */
