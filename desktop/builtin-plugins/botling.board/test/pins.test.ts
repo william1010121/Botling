@@ -160,8 +160,13 @@ describe("a worker card's component", () => {
   });
 
   it("the pin bar of a worker card's component does not sit over the card's own toolbar (the two share the top-right corner)", () => {
-    const css = pageCss();
-    expect(css).toMatch(/\.worker-card[^{}]*\.pin-holder[^{}]*>\s*\.pin-bar\s*\{[^}]*\bleft:\s*8px/);
+    const rule = /([^{}]*\.worker-card[^{}]*\.pin-holder[^{}]*>\s*\.pin-bar)\s*\{([^}]*)\}/.exec(pageCss());
+    expect(rule).not.toBeNull();
+    // `left` alone would stretch the bar from its `right` (8px, or the reply toolbar's per-count offset) to the left: `right: auto` lets it keep its own width.
+    expect(rule![2]).toMatch(/\bleft:\s*8px/);
+    expect(rule![2]).toMatch(/\bright:\s*auto/);
+    // The reply toolbar's `[data-actions="n"]` rules are more specific than a plain one: the card's rule must name the row too to win.
+    expect(rule![1]).toMatch(/\.row\.wide\[data-actions\]\s+\.worker-card/);
   });
 });
 
