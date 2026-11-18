@@ -116,6 +116,25 @@ describe("Botling 3 backups (Botling-3-<version>-<date>-<epoch>.app)", () => {
   });
 });
 
+describe("Botling 3 backups: only the exact name is touched", () => {
+  it("leaves names that nearly match, and a plain file with a matching name (each would outrank the real ones if it counted)", () => {
+    const dir = tempDir("prune-backups-v3-near");
+    const real = [1, 2, 3, 4].map((epoch) => `Botling-3-3.1.0-2026-11-01-${epoch}.app`);
+    for (const name of real) folder(join(dir, name));
+    const near = [
+      "xBotling-3-3.1.0-2026-11-01-90.app", // text before the name
+      "Botling-3-3.1.0-2026-11-01-91.app.bak", // text after the name
+      "Botling-3-3.1.0-91.app", // no date part
+      "Botling-3-bad version-2026-11-01-92.app", // a character swap.ts never writes into a version
+    ];
+    for (const name of near) folder(join(dir, name));
+    writeFileSync(join(dir, "Botling-3-3.1.0-2026-11-01-93.app"), "a file, not a folder");
+    const result = pruneBackups(dir);
+    expect(result.removed.sort()).toEqual([join(dir, real[0]!), join(dir, real[1]!)].sort());
+    expect(names(dir)).toEqual([...real.slice(2), ...near, "Botling-3-3.1.0-2026-11-01-93.app"].sort());
+  });
+});
+
 describe("~/Applications leftovers", () => {
   it("removes only .botling-update-*, update-after-* and .botling-hot-* direct children", () => {
     const apps = tempDir("prune-apps");
