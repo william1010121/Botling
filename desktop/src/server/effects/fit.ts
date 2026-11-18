@@ -10,7 +10,9 @@
 // the core keeps the whole line in its own store, and the 2.x exports (`chat.json`, src/server/exports) are written
 // from the core's own records (the bot store's `rows`, never these entries), so bots read the whole text. A later step can offer the whole text on demand through the content path (§9A).
 //
-// Steps (`turn.steps`, a line's `steps`) are cut from the oldest end: the newest steps are what a reader needs.
+// Steps (`turn.steps`, a line's `steps`, a sub-agent's `steps`) are cut from the oldest end: the newest steps are what a reader
+// needs. A `subagent.updated` is never dropped whole (a dropped one froze the rail row until a resync, 440 times in one run).
+// `components.updated` loses its biggest templates first when the record is over a frame.
 import { canonicalJson } from "../../protocol";
 import { ENTRY_BYTES_LIMIT } from "../log";
 
@@ -62,15 +64,47 @@ function cutText(whole: Record<string, unknown>, holder: Record<string, unknown>
   return text;
 }
 
-/** Drops the oldest steps until `whole` fits (keeps at least none). */
+/**
+ * Drops the oldest steps until `whole` fits (keeps at least none): the longest newest run that fits is kept. Each step is
+ * measured once and the kept run is found by one walk from the newest end, so a body with hundreds of steps is not
+ * serialised again for every try (the check at the end is the only whole-body measure, and it normally passes at once).
+ */
 function cutSteps(whole: Record<string, unknown>, holder: Record<string, unknown>, limit: number): void {
   const steps = holder.steps;
   if (!Array.isArray(steps) || !steps.length) return;
-  let kept = steps.slice();
-  while (kept.length && bytes(whole) > limit) {
-    kept = kept.slice(Math.max(1, Math.floor(kept.length / 4)));
-    holder.steps = kept;
+  const sizes = steps.map((step) => bytes(step));
+  // What the body costs with no step: the whole minus every step and the commas between them.
+  const rest = bytes(whole) - sizes.reduce((sum, size) => sum + size, 0) - (steps.length - 1);
+  let start = steps.length;
+  let used = rest;
+  while (start > 0) {
+    const next = used + sizes[start - 1] + (start < steps.length ? 1 : 0);
+    if (next > limit) break;
+    used = next;
+    start -= 1;
   }
+  holder.steps = steps.slice(start);
+  // The sum is exact for canonical JSON; should it ever be off, step the start forward until the real size fits.
+  while (start < steps.length && bytes(whole) > limit) {
+    start += 1;
+    holder.steps = steps.slice(start);
+  }
+}
+
+/** Components over the limit: the biggest templates leave the record first, so the rest still reach the page. */
+function cutComponents(whole: Record<string, unknown>, limit: number): void {
+  const components = whole.components;
+  if (typeof components !== "object" || components === null) return;
+  const sizes = Object.entries(components as Record<string, unknown>).map(([name, info]) => ({ name, size: bytes(info) + bytes(name) + 2 }));
+  sizes.sort((a, b) => b.size - a.size || (a.name < b.name ? -1 : 1));
+  let over = bytes(whole) - limit;
+  const left = { ...(components as Record<string, unknown>) };
+  for (const { name, size } of sizes) {
+    if (over <= 0) break;
+    delete left[name];
+    over -= size;
+  }
+  whole.components = left;
 }
 
 /**
@@ -97,6 +131,19 @@ export function fitBody(kind: string, body: Record<string, unknown>, limit = BOD
       break;
     case "turn.steps":
       cutSteps(copy, copy, limit);
+      break;
+    case "subagent.updated": {
+      // A sub-agent's view holds up to 500 steps of 10 KB output each: the oldest steps go, as in a turn's steps.
+      const subagent = copy.subagent as Record<string, unknown> | undefined;
+      if (subagent) {
+        cutSteps(copy, subagent, limit);
+        cutText(copy, subagent, "result", limit);
+        cutText(copy, subagent, "prompt", limit);
+      }
+      break;
+    }
+    case "components.updated":
+      cutComponents(copy, limit);
       break;
     default:
       break;

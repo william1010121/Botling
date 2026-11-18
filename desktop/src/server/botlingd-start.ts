@@ -211,7 +211,7 @@ export async function startRuntime(s: Ctx): Promise<Partial<Ctx>> {
   coreEngine.useUploads((id) => uploads.complete(id)?.path ?? null);
   marks.lap("engine, content, media, feeds, peer tables, uploads");
   const runtime = new IntentRuntime({
-    store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, content, uploads,
+    store, engine, hub, live, log: (line) => log(line), authorize: slotAuthorize(authorizeRoster(roster, { plainWaiting: (botId, text) => core.peerMayIgnoreWaiting(botId, text) })), serverEvents: "all", mirrorBotUpdates: true, coalesceMs: 200, content, uploads,
     callHostTimers: callInTimers(env),
     callInCrash: callInCrash(env),
     // M5-14d / M5-18a: a grant changed. Peers and front ends get the row; the core decides again which program parts
