@@ -474,6 +474,18 @@ export function retireOwnStreams(db: Db, reason: RetiredLog["reason"], now = Dat
 }
 
 /**
+ * D75: the store's `onLostTail` (store/index.ts) for botlingd. The last run did not close and the machine booted
+ * since, so its unflushed commits may be gone while front ends and peers saw them: every own stream gets a new logId
+ * (a rewind, §7.6), so they get `reset` + `snap` instead of following from a cursor into a log that went another way.
+ */
+export function lostTailRewind(log?: (line: string) => void): (db: Db) => void {
+  return (db) => {
+    const streams = retireOwnStreams(db, "rewind");
+    log?.(`server.db: the last run did not close before the machine restarted; ${streams.length} stream(s) get a new logId (D75)`);
+  };
+}
+
+/**
  * Deletes the stream's entries up to `upTo` (never above the head) and remembers the last one's hash as the tail, so
  * readers from the tail on are still served with a prevHash; a reader behind the tail gets a `snap`. Returns how many
  * entries went. Own logs are kept whole by default (§7.3); this is for caches and explicit trimming.

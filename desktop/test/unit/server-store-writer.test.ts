@@ -33,7 +33,7 @@ describe("group commit without a timer (D41)", () => {
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const result = await store.submit((db, ctx) => { insert(db); return ctx; });
-    expect(result).toEqual({ batch: 1, index: 0 });
+    expect(result).toEqual({ batch: 1, index: 0, durable: expect.any(Function) }); // D75: the writer's own flush mark
     expect(batches).toMatchObject([{ batch: 1, size: 1, committed: true }]);
     // A second lone command later also commits on its own, without waiting.
     await store.submit(insert);

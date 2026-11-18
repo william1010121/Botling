@@ -78,12 +78,12 @@ describe("node:sqlite wrapper (risk 7)", () => {
 });
 
 describe("settings (v1 §7.2)", () => {
-  it("opens the writer in WAL with synchronous FULL, fullfsync, foreign keys and the journal limit", () => {
+  it("opens the writer in WAL with synchronous NORMAL (D75: durable batches are flushed), fullfsync, foreign keys and the journal limit", () => {
     const dir = tempDir();
     const db = openWriterDb(join(dir, "server.db"));
     try {
       expect(db.pragma("journal_mode")).toBe("wal");
-      expect(Number(db.pragma("synchronous"))).toBe(2);
+      expect(Number(db.pragma("synchronous"))).toBe(1);
       expect(Number(db.pragma("fullfsync"))).toBe(1);
       expect(Number(db.pragma("checkpoint_fullfsync"))).toBe(1);
       expect(Number(db.pragma("foreign_keys"))).toBe(1);

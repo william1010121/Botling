@@ -26,7 +26,7 @@ import { FetchSource } from "./fetch/source";
 import { MediaJobs } from "./media";
 import { BotExports } from "./exports";
 import { CoreEngine, IntentRuntime } from "./intents";
-import { LogHub } from "./log";
+import { LogHub, lostTailRewind } from "./log";
 import { LiveChannel } from "./live";
 import { serverNotes } from "./notes";
 import { botlingdPaths, refuse2xData, RemoteSessions, SessionServer, writeToken, type BotlingdPaths } from "./session";
@@ -239,8 +239,12 @@ export class Botlingd {
       const began = Date.now();
       store = await clock.time("start", "open the store", () => openServerStore(paths.dataDir, {
         compaction: options.compaction === false ? false : { log, ...options.compaction },
-        // Startup timing: a write batch (BEGIN to the end of COMMIT, one fsync) that took 100 ms or more.
-        onBatch: (info) => { if (info.ms >= 100) log(`timing: server.db: batch of ${info.size} command(s) ${Math.round(info.ms)} ms`); },
+        // Timing: a write batch (BEGIN to the end of COMMIT, and its flush when it wrote a durable table, D75) that took
+        // 100 ms or more.
+        onBatch: (info) => { if (info.ms >= 100) log(`timing: server.db: batch of ${info.size} command(s) ${Math.round(info.ms)} ms${info.flushMs ? ` (flush ${Math.round(info.flushMs)} ms)` : ""}`); },
+        // D75: the last run did not close and the machine booted since: its unflushed commits may be gone while front
+        // ends and peers saw them. Every own stream gets a new logId (a rewind, §7.6), so they get reset + snap.
+        onLostTail: lostTailRewind(log),
       }));
       const s = { options, env, paths, port, timers, log, later, lock, store } as Ctx;
       Object.assign(s, await clock.time("start", "identity", () => openIdentity(s)));
