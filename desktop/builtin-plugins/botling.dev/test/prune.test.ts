@@ -68,6 +68,73 @@ describe("backups: keep the newest two", () => {
   });
 });
 
+describe("Botling 3 backups (Botling-3-<version>-<date>-<epoch>.app)", () => {
+  const v3Name = (version: string, epoch: number) => `Botling-3-${version}-2026-11-0${epoch % 9}-${epoch}.app`;
+
+  it("keeps the newest two by the stamp in the name and removes the older ones", () => {
+    const dir = tempDir("prune-backups-v3");
+    for (const epoch of [100, 300, 200, 500, 400]) folder(join(dir, v3Name("3.0.1", epoch)));
+    const result = pruneBackups(dir);
+    expect(names(dir)).toEqual([v3Name("3.0.1", 400), v3Name("3.0.1", 500)].sort());
+    expect(result.removed).toHaveLength(3);
+  });
+
+  it("prunes the name prepareInstall really gives a Botling 3 backup (the pattern and swap.ts agree)", () => {
+    const root = tempDir("prune-v3-real");
+    const build = (path: string, version: string): BuildInfo => ({ path, bundleID: "id", version, commit: "a".repeat(10), dirty: false });
+    const from = build(join(root, "Botling 3.app"), "3.1.0");
+    const to = build(join(root, "dist", "Botling 3.app"), "3.1.1");
+    mkdirSync(join(root, "srv"));
+    const backups = join(root, "core", "self-update", "backups");
+    const made: string[] = [];
+    for (const epoch of [1_700_000_000, 1_700_000_100, 1_700_000_200, 1_700_000_300]) {
+      const command = prepareInstall(join(root, "core"), from, to, "DEV", "", 1, "", new Date(epoch * 1000), from.path, join(root, "srv"));
+      made.push(command[6]!);
+      folder(command[6]!);
+    }
+    expect(made.every((path) => /\/Botling-3-3\.1\.0-\d{4}-\d{2}-\d{2}-\d+\.app$/.test(path))).toBe(true);
+    const result = pruneBackups(backups);
+    expect(result.removed.sort()).toEqual(made.slice(0, 2).sort());
+    expect(readdirSync(backups).sort()).toEqual(made.slice(2).map((path) => path.split("/").pop()!).sort());
+  });
+
+  it("ignores other files and odd names, never follows a symlink, and keeps a protected one", () => {
+    const dir = tempDir("prune-backups-v3");
+    const outside = tempDir("prune-outside");
+    folder(join(outside, "precious.app"));
+    for (const epoch of [1, 2, 3, 4]) folder(join(dir, v3Name("3.1.0", epoch)));
+    writeFileSync(join(dir, "notes.txt"), "keep");
+    folder(join(dir, "Botling-3-hand-made.app"));
+    folder(join(dir, "Botling-4-3.1.0-2026-11-01-5.app"));
+    folder(join(dir, "Other.app"));
+    symlinkSync(join(outside, "precious.app"), join(dir, v3Name("3.1.0", 0)));
+    const protectedOne = join(dir, v3Name("3.1.0", 1));
+    const result = pruneBackups(dir, { protect: [protectedOne] });
+    expect(result.removed).toEqual([join(dir, v3Name("3.1.0", 2))]);
+    expect(names(dir)).toEqual([v3Name("3.1.0", 0), v3Name("3.1.0", 1), v3Name("3.1.0", 3), v3Name("3.1.0", 4), "Botling-3-hand-made.app", "Botling-4-3.1.0-2026-11-01-5.app", "Other.app", "notes.txt"].sort());
+    expect(existsSync(join(outside, "precious.app", "Contents", "blob"))).toBe(true);
+  });
+});
+
+describe("Botling 3 backups: only the exact name is touched", () => {
+  it("leaves names that nearly match, and a plain file with a matching name (each would outrank the real ones if it counted)", () => {
+    const dir = tempDir("prune-backups-v3-near");
+    const real = [1, 2, 3, 4].map((epoch) => `Botling-3-3.1.0-2026-11-01-${epoch}.app`);
+    for (const name of real) folder(join(dir, name));
+    const near = [
+      "xBotling-3-3.1.0-2026-11-01-90.app", // text before the name
+      "Botling-3-3.1.0-2026-11-01-91.app.bak", // text after the name
+      "Botling-3-3.1.0-91.app", // no date part
+      "Botling-3-bad version-2026-11-01-92.app", // a character swap.ts never writes into a version
+    ];
+    for (const name of near) folder(join(dir, name));
+    writeFileSync(join(dir, "Botling-3-3.1.0-2026-11-01-93.app"), "a file, not a folder");
+    const result = pruneBackups(dir);
+    expect(result.removed.sort()).toEqual([join(dir, real[0]!), join(dir, real[1]!)].sort());
+    expect(names(dir)).toEqual([...real.slice(2), ...near, "Botling-3-3.1.0-2026-11-01-93.app"].sort());
+  });
+});
+
 describe("~/Applications leftovers", () => {
   it("removes only .botling-update-*, update-after-* and .botling-hot-* direct children", () => {
     const apps = tempDir("prune-apps");
