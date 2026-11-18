@@ -28,7 +28,10 @@ export function mainBotOf(dataDir: string): string {
 
 /** A folder for test data: on the external work disk when it is there (never a Botling data folder). */
 export function testRoot(name: string): string {
-  const base = process.env.BOTLING_TEST_TMP || (existsSync("/Volumes/My-SSD/botling-work") ? "/Volumes/My-SSD/botling-work/tmp" : tmpdir());
+  // On macOS the default tmpdir is long (/private/var/folders/xx/<28 chars>/T, 57 bytes real) and a data dir's botlingd.sock
+  // then passes the 103-byte socket limit (the macOS CI runner failed 12 tests that way): /tmp (real /private/tmp) is short.
+  const fallback = process.platform === "darwin" ? "/tmp/botling-test" : tmpdir();
+  const base = process.env.BOTLING_TEST_TMP || (existsSync("/Volumes/My-SSD/botling-work") ? "/Volumes/My-SSD/botling-work/tmp" : fallback);
   mkdirSync(base, { recursive: true });
   // The real path: a macOS tmpdir is under /var, a link to /private/var, and the server reports the folders it reads by their real path.
   return realpathSync(mkdtempSync(join(base, `${name}-`)));

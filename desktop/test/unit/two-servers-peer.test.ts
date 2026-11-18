@@ -46,6 +46,12 @@ async function bothLive(not: string | null = null, timeout = 20_000): Promise<st
   }, { timeout, every: 50, what: "both live on one session" });
 }
 
+/** The number of "session ended (order" lines in both logs. */
+const orderEnds = () => logLines(a, /session ended \(order/).length + logLines(b, /session ended \(order/).length;
+/** peers.json shows the new session before the log line has come through the server's output pipe, so wait for the line
+ *  (reading the count right after bothLive failed once on Ubuntu CI: "expected 1 to be greater than 1"). */
+const orderEndsOver = (count: number) => until(() => orderEnds() > count, { timeout: 10_000, every: 50, what: "a session ended (order) line" });
+
 /** The proxy the live session runs through (the dialler connects to the other side's proxy). */
 function liveProxy(): FaultProxy {
   return peerState(a)!.initiator === ka.memberId ? pb : pa;
@@ -102,16 +108,16 @@ describe("M3 step 3: peer sessions between two botlingd", () => {
     liveProxy().drop("up", 1);
     const after = await bothLive(before);
     expect(after).not.toBe(before);
-    expect(logLines(a, /session ended \(order/).length + logLines(b, /session ended \(order/).length).toBeGreaterThanOrEqual(1);
+    await orderEndsOver(0);
   }, 60_000);
 
   it("a duplicated frame ends the session (order) and both redial", async () => {
     const before = await bothLive();
-    const orders = logLines(a, /session ended \(order/).length + logLines(b, /session ended \(order/).length;
+    const orders = orderEnds();
     liveProxy().duplicate("down", 1);
     const after = await bothLive(before);
     expect(after).not.toBe(before);
-    expect(logLines(a, /session ended \(order/).length + logLines(b, /session ended \(order/).length).toBeGreaterThan(orders);
+    await orderEndsOver(orders);
   }, 60_000);
 
   it("a cut ends the session; both say stale since their last frame, then redial", async () => {

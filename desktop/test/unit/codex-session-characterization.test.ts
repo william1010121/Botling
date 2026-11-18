@@ -45,9 +45,12 @@ class Tape {
       if (typeof v === "string" && v.length > 700) return `<${v.length} chars sha1:${sha(v)}>`;
       return v;
     });
-    // The table was recorded on Linux, where `shell()` (agent/codex-types.ts) is /bin/sh; on macOS the same code says /bin/zsh.
-    // Only macOS folds it: on any other platform a /bin/zsh in the output is a change of behaviour and must fail against the table.
-    const folded = process.platform === "darwin" ? json.replace(/\["\/bin\/zsh","-c",/g, '["/bin/sh","-c",') : json;
+    // The table was recorded on Linux, where `shell()` (agent/codex-types.ts) is /bin/sh; on macOS the same code says /bin/zsh and on
+    // Windows cmd.exe /d /s /c. Each platform folds only its own shell: any other shell in the output is a change of behaviour and
+    // must fail against the table.
+    const folded = process.platform === "darwin" ? json.replace(/\["\/bin\/zsh","-c",/g, '["/bin/sh","-c",')
+      : process.platform === "win32" ? json.replace(/\["cmd\.exe","\/d","\/s","\/c",/g, '["/bin/sh","-c",')
+      : json;
     return folded.replace(UUID, (id) => {
       const key = id.toLowerCase();
       if (!this.uuids.has(key)) this.uuids.set(key, `<uuid${this.uuids.size + 1}>`);

@@ -49,7 +49,7 @@ Apple-silicon laptop, before and after paging (sizes are exact, times are the be
 
 Not changed by paging, and worth a look next: `bots50`'s snapshot is almost all `subagentRows` of the other bots (about 56 KB
 each); a chat file's first start cost includes the one-time monthly archive written for a chat older than the archive
-(`chat20k` startup); `appendSaveMs` is a full `chat.json` rewrite per message (59 to 94 ms on `chat500`).
+(`chat20k` startup); `appendSaveMs` (the median of 15 runs, so one slow disk flush on a shared runner does not fail the gate) is a full `chat.json` rewrite per message (59 to 94 ms on `chat500`).
 
 ## Budgets
 

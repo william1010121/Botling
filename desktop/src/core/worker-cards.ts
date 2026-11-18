@@ -282,7 +282,8 @@ export function cardScriptCommand(command: string, rules: Pick<CardRules, "scrip
   if (path.split("/").includes("..")) return null;
   const full = resolve(isAbsolute(path) ? path : resolve(rules.folder, path));
   const root = resolve(rules.scriptsDir);
-  if (!full.startsWith(`${root}/`) || parsed[3]!.split(" ").some((arg) => arg.split("/").includes(".."))) return null;
+  // `sep`, not "/": resolve() gives backslashes on Windows, where the CI run found every kept command refused.
+  if (!full.startsWith(`${root}${sep}`) || parsed[3]!.split(" ").some((arg) => arg.split("/").includes(".."))) return null;
   // By the real paths too (a symlinked folder or file under card-scripts that leads out, or `.bot` / card-scripts themselves a link, is no script of the card's). The folder
   // the scripts must be in is the project folder's real path plus the same steps, never a path read through a link inside it. Checked again where the command runs.
   const inside = relative(resolve(rules.folder), root);
@@ -304,8 +305,8 @@ export function cardPictures(text: string, folder: string): { words: string; fou
   try { root = realpathSync.native(folder); } catch { return { words: text, found }; }
   const words = text.replace(/!\[([^\]\n]{0,300})\]\((<[^>\n]+>|[^)\s]+)\)/g, (whole, alt: string, target: string) => {
     let path = target.replace(/^<|>$/g, "");
-    if (/^file:\/\//i.test(path)) { try { path = decodeURIComponent(path.replace(/^file:\/\//i, "")); } catch { return whole; } } else if (!path.startsWith("/")) return whole;
-    if (!CARD_PICTURE_TYPES.test(path) || path.split("/").includes("..")) return whole;
+    if (/^file:\/\//i.test(path)) { try { path = decodeURIComponent(path.replace(/^file:\/\//i, "")); } catch { return whole; } } else if (!isAbsolute(path)) return whole;
+    if (!CARD_PICTURE_TYPES.test(path) || path.split(/[\\/]/).includes("..")) return whole;
     let real: string;
     try { real = realpathSync.native(path); if (!statSync(real).isFile()) return whole; } catch { return whole; }
     // The real file is checked, not the name typed: a `.png` link to some other file inside the project is no picture.

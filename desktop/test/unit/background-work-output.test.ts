@@ -37,13 +37,16 @@ it("reads chip output by stored message/task identity, with 1.x tails, reports a
 });
 
 it("publishes the running chip and its completed report through real core events", async () => {
-  core = new CoreHarness(tempDir("background-agent-chip"), { FAKE_CLAUDE_BG_DELAY_MS: "600" });
+  // The fake subagent ends when the gate file exists, not after a delay a loaded runner (macOS CI) can overrun before the first read.
+  const dir = tempDir("background-agent-chip"), gate = join(dir, "bg-gate");
+  core = new CoreHarness(dir, { FAKE_CLAUDE_BG_GATE: gate });
   const { turnId } = await core.call({ type: "chat.send", botId: MAIN, text: "/bgagent" });
   await until(() => core!.of("turn.finished").find((entry) => entry.event.type === "turn.finished" && entry.event.turnId === turnId));
   const started = (await core.chat()).messages.find((message: any) => message.turnId === turnId);
   expect(started.backgroundTasks).toEqual([expect.objectContaining({ kind: "agent", status: "running", title: "Research the API" })]);
   const taskId = started.backgroundTasks[0].id;
   expect(await core.call({ type: "task.output", botId: MAIN, messageId: started.id, taskId })).toEqual({ text: "Working; nothing to show yet." });
+  writeFileSync(gate, "open");
   const ended = await until(() => core!.of("message.updated").find((entry) => entry.event.type === "message.updated"
     && entry.event.message.id === started.id && entry.event.message.backgroundTasks?.[0]?.status === "completed"));
   expect((ended.event as any).message.backgroundTasks[0].ended).toEqual(expect.any(Number));
