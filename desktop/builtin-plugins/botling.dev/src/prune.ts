@@ -1,6 +1,6 @@
 // Old app copies the self-update leaves behind, removed once an update has succeeded:
-//  - core/self-update/backups: the running build moved aside by each install (`Botling-2-<version>-<date>-<epoch>.app`,
-//    swap.ts); only the newest KEEP_BACKUPS stay;
+//  - core/self-update/backups: the running build moved aside by each install (`Botling-2-<version>-<date>-<epoch>.app`, or `Botling-3-…` for a
+//    Botling 3 install, swap.ts); only the newest KEEP_BACKUPS stay;
 //  - ~/Applications: `.botling-update-*`, `update-after-*` and `.botling-hot-*` leftovers.
 // Both take the folder as a parameter (tests use temp folders). Only direct children with those exact name patterns
 // are touched; symlinks are never followed or removed; anything named in `protect` (the build running, the one just
@@ -11,8 +11,8 @@ import { join, resolve, sep } from "node:path";
 /** Backups kept after an update. */
 export const KEEP_BACKUPS = 2;
 
-/** The name swap.ts gives a backup: `Botling-2-<version>-<yyyy-mm-dd>-<epoch seconds>.app`. */
-const BACKUP_NAME = /^Botling-2-[0-9A-Za-z._-]+-\d{4}-\d{2}-\d{2}-(\d+)\.app$/;
+/** The name swap.ts gives a backup: `Botling-<2 or 3>-<version>-<yyyy-mm-dd>-<epoch seconds>.app` (3 = a Botling 3 install). */
+const BACKUP_NAME = /^Botling-[23]-[0-9A-Za-z._-]+-\d{4}-\d{2}-\d{2}-(\d+)\.app$/;
 /** Leftovers in ~/Applications (the whole name must match). */
 export const LEFTOVER_NAME = /^(?:\.botling-update-.+|update-after-.+|\.botling-hot-.+)$/;
 
