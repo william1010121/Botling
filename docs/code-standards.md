@@ -15,23 +15,23 @@ Rules arrive here only by promotion: a lesson in `LESSONS.md` seen on 3 differen
 `CS-nn` rule, and a second worker checks every promotion before it lands. Only the owner (or the coordinator bot on
 the owner's word) removes a rule.
 
-## CS-01 · Look up a key that comes from data with `Object.hasOwn` (or a `Map`) before `obj[key]`   (from L-003, proposed 2026-11-18)
+## CS-01 · Look up a key that comes from data with `Object.hasOwn` (or a `Map`) before `obj[key]`   (from L-003, promoted 2026-11-18)
 Why: `constructor`, `__proto__` and `toString` pass id patterns and resolve to built-ins: a prototype-key `via.codeHash` wedged the queue (2026-11-15), `grants[codeHash]` from a stored row needed `Object.hasOwn` (2026-11-16), and `claudeHint` returned the `Object` function for a model id `constructor` (2026-11-17).
 Check: A reviewer greps the diff for `[` lookups on data-keyed objects; a test passes `constructor` and `__proto__` as the key.
 
-## CS-02 · A check that decides whether an action may go ahead (a grant, a code hash, membership, a switch, the target still existing) is made again where the action happens, after every `await` between the check and the action   (from L-008, proposed 2026-11-18)
+## CS-02 · A check that decides whether an action may go ahead (a grant, a code hash, membership, a switch, the target still existing) is made again where the action happens, after every `await` between the check and the action   (from L-008, promoted 2026-11-18)
 Why: A check only at the start let later changes through: a crash restart ran code edited after the grant, a revoked module kept running (2026-11-15); a plugin removed during a download was still installed, a revoked row was revived, a bundle id was not rechecked on the press, and a cancel/send race kept `stopped` in the file (2026-11-16); a switch read once at send still moved a line after it was turned off (2026-11-17).
 Check: The reviewer lists each `await` in the changed code that follows such a check and reads whether the check is repeated after it; a test changes the state during the `await` (a revoke, a switch off, a removal) and expects a refusal.
 
-## CS-03 · Every guard a change adds has a test that fails when the guard is removed; a surviving mutant is FIX FIRST   (from L-010, proposed 2026-11-18)
+## CS-03 · Every guard a change adds has a test that fails when the guard is removed; a surviving mutant is FIX FIRST   (from L-010, promoted 2026-11-18)
 Why: Mutation batches at review found unprotected guards on all four days: nine guards in M5-07b (2026-11-15), 1 of 16 in the install check (2026-11-16), 6 of 44, 6 of 35 and 7 unprotected guards on the Pin area cards (2026-11-17), and a dozen probes written for survivors on 2026-11-18.
 Check: The reviewer's one-connection batch (L-010); every survivor is either killed by a probe in the fix round or named an equivalent mutant in the review with the reason.
 
-## CS-04 · A change that moves or splits a source file, re-records a golden or shared fixture, or changes an id format or a count (and a fix for a test such a change broke) searches every test that reads that file, fixture or value and fixes them in the same commit   (from L-011, proposed 2026-11-18)
+## CS-04 · A change that moves or splits a source file, re-records a golden or shared fixture, or changes an id format or a count (and a fix for a test such a change broke) searches every test that reads that file, fixture or value and fixes them in the same commit   (from L-011, promoted 2026-11-18)
 Why: main went red after M7-S30b moved a line out of the file a test's allowlist named, and four more tests read the old file after the splits (2026-11-16); the re-recorded `plugins-list` golden broke `renderer-plugin-feed` and `m7-surfaces-2x` and the same fixture was fixed in three more commits (2026-11-17); the minted-id change of 2026-11-15 broke five tests after the first fix repaired two.
 Check: The reviewer runs `grep` for the moved path, the fixture name or the changed value across all test files (`desktop/test`, `desktop/builtin-plugins/*/test`, `Web`), and every hit is in the diff or named as unaffected.
 
-## CS-06 · Before hand-off, every import a change adds or renames is checked against the file that exports it, and every value written into a typed field is checked against that field's type (a union, a nullable); a test for an untyped module uses `// @ts-expect-error`   (from L-022, proposed 2026-11-18)
+## CS-06 · Before hand-off, every import a change adds or renames is checked against the file that exports it, and every value written into a typed field is checked against that field's type (a union, a nullable); a test for an untyped module uses `// @ts-expect-error`   (from L-022, promoted 2026-11-18)
 Why: `tsc` runs only in the final confirmation, so these errors surfaced after merges, one fix commit each: a nullable line id and a storage type (2026-11-16), a missing union value (`TraceData.by`) and missing imports (2026-11-17), an untyped `jsdom` fixed twice, a missing type import and an import name clash (2026-11-18).
 Check: The implementer's "Standards check" lists the added imports looked up with `node desktop/scripts/where.mjs --exports <file>` and the typed fields written; the reviewer re-reads the added imports and those writes.
 

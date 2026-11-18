@@ -90,7 +90,7 @@ Three kinds of mistakes, one category per evidence line:
 - Why: `constructor`, `__proto__` and `toString` pass the id patterns and resolve to built-ins; the check threw inside
   the decision and wedged the origin's queue.
 - Tags: wire, grant
-- Status: proposed → CS-01 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
+- Status: promoted → CS-01 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
 - Evidence:
   - 2026-11-15 | thin-check | `M5-15-review.md` F1 (a prototype-key `via.codeHash` throws and wedges the queue) | fix `912d34c5`, merge `fdb4223f`
   - 2026-11-16 | thin-check | (commit message of the plugin-trust review fix round) `grants[codeHash]` read with a hash from a stored row without `Object.hasOwn` in `plugin-admin.ts`; the admin list also needed an own-key check | fix `31b30cb4`
@@ -154,7 +154,7 @@ Three kinds of mistakes, one category per evidence line:
   revoked module kept running, a removed requester kept receiving chunks, the window showed a stale grant, and a
   reload put a removed secret back.
 - Tags: grant, wire
-- Status: proposed → CS-02 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
+- Status: promoted → CS-02 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
 - Evidence:
   - 2026-11-15 | thin-check | `M5-18a-review.md` F1 F2 (a crash restart loads code changed after the grant check; a revoke does not stop the module) | fix `1e4f4f30`, merge `be8be56b`
   - 2026-11-15 | thin-check | `M5-14d-review.md` F1 (the shown grant goes stale after a hot swap) | fix `6887f7cc`
@@ -199,7 +199,7 @@ Three kinds of mistakes, one category per evidence line:
   related test files only, records pass/fail, then restores with `git checkout -- <file>`. The review's whole budget is this one connection: related tests and the mutation batch together. No commit and no separate
   queue entry per mutant. A mutant whose tests still pass is a finding (a guard no test protects).
 - Tags: test
-- Status: proposed → CS-03 (days 4: 2026-11-15, 2026-11-16, 2026-11-17, 2026-11-18)
+- Status: promoted → CS-03 (days 4: 2026-11-15, 2026-11-16, 2026-11-17, 2026-11-18)
 - Evidence:
   - 2026-11-15 | thin-check | `M5-07b-review.md` F2 (nine guards survive mutation, the wrong-peer guard included) | tests in `3ed7e622`
   - 2026-11-15 | thin-check | `M5-15-review.md` F3 (mutants M1 and M9 survive; test 5's assertion is vacuous) | fix `912d34c5`
@@ -220,7 +220,7 @@ Three kinds of mistakes, one category per evidence line:
   Maintainer ids are made, tests on main failed; the first fix repaired two of them, five more with the same cause
   failed until a second fix, and a later merge (`be8be56b`) was blamed in the meantime.
 - Tags: merge, test
-- Status: proposed → CS-04 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
+- Status: promoted → CS-04 (days 3 of 3: 2026-11-15, 2026-11-16, 2026-11-17)
 - Evidence:
   - 2026-11-15 | bad-merge | `fix-main-tests-review.md` (tests failing on main since M5-04g `ff352ce8` and M5-13a) | fix `8f296801`, merge `5159a781`
   - 2026-11-15 | bad-merge | (no review file; commit message) five more botlingd tests failing on main since `ff352ce8`, first blamed on M5-18a `be8be56b` | fix `fad57516`, merge `4dbe4909`
@@ -367,7 +367,7 @@ Three kinds of mistakes, one category per evidence line:
   that lacked a value the code writes (`TraceData.by`), a nullable id, a storage type that asked for more than it
   needs, an untyped test dependency fixed twice, an import name that clashed with an export of the same file.
 - Tags: build, test
-- Status: proposed → CS-06 (days 3 of 3: 2026-11-16, 2026-11-17, 2026-11-18)
+- Status: promoted → CS-06 (days 3 of 3: 2026-11-16, 2026-11-17, 2026-11-18)
 - Evidence:
   - 2026-11-16 | bad-merge | (no review file; commit messages) a line id can be null in `shell-fallback.test.ts`; the layout store's storage type asked for more than get and set | fix `c42bd5c5`, `81625739`
   - 2026-11-17 | bad-merge | `board-empty-plus-review.md` F1 (`subagent: true` is a type error, found by reading); `TraceData.by` lacked "app" ("typecheck failed after the merge"); `phase3a.spec` missed an import and the prompt helper's profile types | fix `860007e0`, `7ae93822`
