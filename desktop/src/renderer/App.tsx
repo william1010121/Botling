@@ -27,7 +27,8 @@ import { chatMainTabs, useChatSlotsVersion } from "./chat-slot";
 import { sameHeldColors, setBotColors } from "./avatars";
 import { MainTabFrame, PanelFrame, SlotFrame } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { mainTabsFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { alwaysShown, mainTabsFor, pinnedFor, rightPanelSectionsFor, shownChat, shownTab, STORAGE_TAB, tabKey, visibleTabs, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { MoreTabs } from "./TabMore";
 import { StorageTab } from "./StorageTab";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { TaskDetails } from "./TaskDetails";
@@ -204,6 +205,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const storageOn = !!bot && !web && !watching && view.settings?.mainTabs?.[bot.id] === STORAGE_TAB;
   // The main bot opens on the whiteboard unless you last picked Chat (or Storage): the choice is kept for the next start.
   const tab = storageOn ? null : remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
+  // Dynamic tabs: the header draws Note and the Whiteboard, the tabs this bot pinned, the one on screen and the ones a plugin marked it for;
+  // the "More tabs" menu offers the rest (main-tabs.ts `visibleTabs`).
+  const pinnedKeys = pinnedFor(view.settings?.pinnedTabs, bot?.id ?? "");
+  const { shown: headerTabs } = useMemo(() => visibleTabs(tabs, { pinned: pinnedKeys, current: tab }), [tabs, pinnedKeys, tab]);
+  const menuTabs = useMemo(() => tabs.filter((candidate) => !alwaysShown(candidate)), [tabs]);
   // The header's left side (navigation v5): this bot's Sub bots button, or inside a sub bot the way back.
   const nav = useMemo(() => (bot && !web ? headerNav(bot, view.bots, view.waiting, now, subBotRoutines) : { kind: "none" as const }), [bot, web, view.bots, view.waiting, now, subBotRoutines]);
   const navIds = nav.kind === "none" ? "" : nav.rows.map((row) => row.id).join(",");
@@ -364,6 +370,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if ((store.getView().settings?.mainTabs?.[botId] ?? null) === key) return;
     void client.request({ type: "settings.set", change: { key: "mainTab", value: { botId, tab: key } } }).catch(fail);
   }, [client, store, fail]);
+  /** Pins a plugin tab for a bot (it then always shows in that bot's header) or unpins it. */
+  const pinTab = useCallback((botId: string, next: MainTab, pinned: boolean) => {
+    void client.request({ type: "settings.set", change: { key: "pinTab", value: { botId, tab: tabKey(next), pinned } } }).catch(fail);
+  }, [client, fail]);
   // Botling's own commands a plugin frame may run: a bot's chat (its Chat tab), one of a bot's results.
   const runBuiltin = useBuiltinRunner({ client, store, fail, setError, chooseTab, setWhiteboardOn, selectBot, dockNow: () => quoteNow.current });
   // A plugin's program part asked to show a bot with one of its tabs (`ui.showTab(…, { open: true })`): as its frame's openTab would.
@@ -527,14 +537,19 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </div>
       <div className="board-switch" role="group" aria-label="Chat views">
         <button type="button" aria-pressed={!tab && !storageOn} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); }}><Icon name="bubble" size={13} />Chat</button>
-        {tabs.map((candidate) => (
+        {headerTabs.map((candidate) => (
           <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
-            onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
+            onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}
+            // A right-click pins or unpins a plugin's tab (Note and the Whiteboard are always there).
+            onContextMenu={alwaysShown(candidate) ? undefined : (event) => { event.preventDefault(); pinTab(bot.id, candidate, !pinnedKeys.includes(tabKey(candidate))); }}>
             {candidate.icon && isIconName(candidate.icon) && <Icon name={candidate.icon} size={13} />}{candidate.title}
+            {!alwaysShown(candidate) && pinnedKeys.includes(tabKey(candidate)) && <Icon name="pin" size={11} className="tab-pinned" />}
           </button>
         ))}
         {!web && <button type="button" className="main-tab-switch storage-switch" data-tab={STORAGE_TAB} aria-pressed={storageOn}
           onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, STORAGE_TAB); }}><Icon name="tray" size={13} />{say(view.settings?.effectiveLanguage, "storage.tab")}</button>}
+        {menuTabs.length > 0 && <MoreTabs tabs={menuTabs} pinned={pinnedKeys} botId={bot.id} lang={view.settings?.effectiveLanguage}
+          onOpen={(next) => { setWhiteboardOn(false); chooseTab(bot.id, next); }} onPin={(next, pinned) => pinTab(bot.id, next, pinned)} />}
       </div>
     </div>
   ) : null;

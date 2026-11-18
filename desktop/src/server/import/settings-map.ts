@@ -44,6 +44,7 @@ export const LAYOUT_SETTINGS_KEYS = new Set<string>([
   "railCollapsed",
   "rightPanelCollapsed",
   "mainTabs",
+  "pinnedTabs",
   "botColors",
   "chatAvatarSizeChoice",
   "botLookChoice",

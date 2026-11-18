@@ -364,6 +364,12 @@ export const zhHant: Dictionary = {
   "shortcuts.pluginTaken": "未啟用：{key} 已用於「{action}」，請另選一個鍵。",
   "shortcuts.pluginNoKey": "沒有快捷鍵",
 
+  // The header's dynamic tabs (desktop TabMore.tsx): only Chat, Note and Storage are always there
+  "tabs.more": "更多分頁",
+  "tabs.pin": "釘選「{name}」",
+  "tabs.unpin": "取消釘選「{name}」",
+  "tabs.pinHint": "釘選的分頁會一直留在上方；沒釘選的只在使用時出現。",
+
   // The Storage tab (desktop StorageTab.tsx)
   "storage.tab": "檔案庫",
   "storage.search": "搜尋檔名…",

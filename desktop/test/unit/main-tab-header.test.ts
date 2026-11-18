@@ -41,26 +41,28 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
   await act(async () => root.render(createElement(App, { client, store })));
   cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
   const update = async (next: Partial<WorkspaceView>) => { await act(async () => { view = { ...view, ...next }; listeners.forEach((fn) => fn()); }); };
-  const buttons = () => [...host.querySelectorAll(".board-switch button")].map((button) => button.textContent);
+  const buttons = () => [...host.querySelectorAll(".board-switch button")].map((button) => button.textContent || button.getAttribute("aria-label"));
   return { host, requests, update, buttons };
 }
 
-it("the main bot's header gets the main tab, a project bot's the project tab; nothing else changes", async () => {
+it("the main bot's menu offers the main tab, a project bot's the project tab; the header shows neither until it is in use", async () => {
   const main = await render(MAIN);
-  expect(main.buttons()).toEqual(["Chat", "Wall", "Storage"]);
+  // A plugin's tab stays out of the header until it is in use (opened, pinned or marked); the "More tabs" button lists it.
+  expect(main.buttons()).toEqual(["Chat", "Storage", "More tabs"]);
   const project = await render(PROJECT);
-  expect(project.buttons()).toEqual(["Chat", "Git", "Storage"]);
+  expect(project.buttons()).toEqual(["Chat", "Storage", "More tabs"]);
   const none = await render(PROJECT, { plugins: { ...plugins, mainTabs: [] } });
   expect(none.buttons()).toEqual(["Chat", "Storage"]);
 });
 
 it("pressing a tab keeps it for that bot, and its frame takes the chat's place; Chat goes back", async () => {
   const { host, requests, update } = await render(MAIN);
-  const wall = host.querySelector<HTMLButtonElement>('.main-tab-switch[data-tab="board/board.wall"]')!;
-  await act(async () => wall.click());
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('.tab-more-row[data-tab="board/board.wall"]')!.click());
   expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: MAIN, tab: "board/board.wall" } } });
   // The core keeps it (settings.json); the next view says so.
   await update({ settings: { ...settingsView({}), mainTabs: { [MAIN]: "board/board.wall" } } });
+  const wall = host.querySelector<HTMLButtonElement>('.main-tab-switch[data-tab="board/board.wall"]')!;
   expect(host.querySelector(".chat-column")?.classList.contains("main-tab-on")).toBe(true);
   expect(wall.getAttribute("aria-pressed")).toBe("true");
   expect(host.querySelector(".main-tab")?.getAttribute("data-plugin")).toBe("board");
@@ -117,7 +119,7 @@ it("with the plugin off there is no Whiteboard button (the core has no whiteboar
 
 it("there is no Board button, with botling.board on, off or not known yet; the Storage tab is always there", async () => {
   const off = await render(MAIN, { plugins: { ...plugins, plugins: [boardPlugin(false)] } });
-  expect(off.buttons()).toEqual(["Chat", "Wall", "Storage"]);
+  expect(off.buttons()).toEqual(["Chat", "Storage", "More tabs"]);
   const unknown = await render(MAIN, { plugins: null });
   expect(unknown.buttons()).toEqual(["Chat", "Storage"]);
 });
@@ -133,4 +135,97 @@ it("the Storage tab is kept for the bot like a plugin tab, and its list takes th
   expect(host.querySelector(".storage-main .storage-tab")).not.toBeNull();
   expect(host.querySelector(".main-tab[data-plugin]")).toBeNull();
   expect(requests).toContainEqual({ type: "storage.list", botId: MAIN });
+});
+
+// Dynamic tabs: a tab is in the header while it is in use (on screen), pinned for the bot, or marked for it by its plugin.
+const coachTab = { plugin: "coach", id: "coach.page", title: "Reading", forRole: "marked" as const, bots: [PROJECT] };
+const noteTab = { plugin: "botling.note", id: "botling.note.tab", title: "Note", forRole: "any" as const };
+const dynamic: PluginsView = { ...plugins, mainTabs: [noteTab, plugins.mainTabs![1]!, coachTab] };
+const GIT = "git/git.log";
+const pinned = (botId: string, tabs: string[]) => ({ settings: { ...settingsView({}), pinnedTabs: { [botId]: tabs } } });
+
+it("Note and a marked tab are in the header from the start, a project tab is only in the \"More tabs\" menu", async () => {
+  const { host, buttons } = await render(PROJECT, { plugins: dynamic });
+  expect(buttons()).toEqual(["Chat", "Note", "Reading", "Storage", "More tabs"]);
+  expect(host.querySelector('.main-tab-switch[data-tab="git/git.log"]')).toBeNull();
+  const more = host.querySelector<HTMLButtonElement>(".main-tab-more")!;
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => more.click());
+  expect(more.getAttribute("aria-expanded")).toBe("true");
+  // The menu lists every plugin tab beyond Note and Storage in the plugins' order (the marked one is in the header already, but can be pinned too).
+  expect([...host.querySelectorAll(".tab-more-row")].map((row) => row.getAttribute("data-tab"))).toEqual([GIT, "coach/coach.page"]);
+});
+
+it("with only Note (and the Whiteboard) offered there is no \"More tabs\" button", async () => {
+  const { buttons } = await render(PROJECT, { plugins: { ...plugins, mainTabs: [noteTab] } });
+  expect(buttons()).toEqual(["Chat", "Note", "Storage"]);
+});
+
+it("a tab opened from the menu is in the header while it is shown, and goes again when the bot leaves it", async () => {
+  const { host, requests, update, buttons } = await render(PROJECT, { plugins: dynamic });
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>(`.tab-more-row[data-tab="${GIT}"]`)!.click());
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: PROJECT, tab: GIT } } });
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
+  await update({ settings: { ...settingsView({}), mainTabs: { [PROJECT]: GIT } } });
+  expect(buttons()).toEqual(["Chat", "Note", "Git", "Reading", "Storage", "More tabs"]);
+  expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"]`)?.getAttribute("aria-pressed")).toBe("true");
+  // Back to Chat: the tab leaves the header (it was not pinned).
+  await update({ settings: settingsView({}) });
+  expect(buttons()).toEqual(["Chat", "Note", "Reading", "Storage", "More tabs"]);
+});
+
+it("a plugin that opens its tab (botling.openTab) brings it into the header, as the menu does", async () => {
+  const { host, update, buttons } = await render(PROJECT, { plugins: dynamic });
+  // main answers openTab by remembering the tab for the bot.
+  await update({ settings: { ...settingsView({}), mainTabs: { [PROJECT]: GIT } } });
+  expect(buttons()).toContain("Git");
+  expect(host.querySelector(".main-tab")?.getAttribute("data-plugin")).toBe("git");
+});
+
+it("the pin in the menu keeps a tab in the header for that bot; pinning is asked of main, per bot", async () => {
+  const { host, requests, update, buttons } = await render(PROJECT, { plugins: dynamic });
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  const pin = host.querySelector<HTMLButtonElement>(`.tab-more-pin[data-tab="${GIT}"]`)!;
+  expect(pin.getAttribute("aria-pressed")).toBe("false");
+  expect(pin.getAttribute("aria-label")).toBe("Pin Git");
+  await act(async () => pin.click());
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "pinTab", value: { botId: PROJECT, tab: GIT, pinned: true } } });
+  // A pin does not open the tab.
+  expect(requests.filter((request) => request.change?.key === "mainTab")).toEqual([]);
+  await update(pinned(PROJECT, [GIT]));
+  expect(buttons()).toEqual(["Chat", "Note", "Git", "Reading", "Storage", "More tabs"]);
+  // Chat is the view and the tab stays: it is pinned.
+  expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"]`)?.getAttribute("aria-pressed")).toBe("false");
+  expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"] svg`)).not.toBeNull();
+  // The menu stays open after a pin, to pin another; the row now shows the pin on.
+  expect(host.querySelector(".tab-more-menu")).not.toBeNull();
+  const pinOn = host.querySelector<HTMLButtonElement>(`.tab-more-pin[data-tab="${GIT}"]`)!;
+  expect(pinOn.getAttribute("aria-pressed")).toBe("true");
+  expect(pinOn.getAttribute("aria-label")).toBe("Unpin Git");
+  await act(async () => pinOn.click());
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "pinTab", value: { botId: PROJECT, tab: GIT, pinned: false } } });
+});
+
+it("a right-click on a plugin's tab pins or unpins it; Note and Storage have nothing to pin", async () => {
+  const { host, requests, update } = await render(PROJECT, { plugins: dynamic, ...pinned(PROJECT, [GIT]) });
+  const git = host.querySelector<HTMLButtonElement>(`.main-tab-switch[data-tab="${GIT}"]`)!;
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => { git.dispatchEvent(event); });
+  expect(event.defaultPrevented).toBe(true);
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "pinTab", value: { botId: PROJECT, tab: GIT, pinned: false } } });
+  await update({ settings: settingsView({}) });
+  expect(host.querySelector(`.main-tab-switch[data-tab="${GIT}"]`)).toBeNull();
+  const before = requests.length;
+  for (const selector of ['.main-tab-switch[data-tab="botling.note/botling.note.tab"]', ".storage-switch"]) {
+    await act(async () => { host.querySelector(selector)!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
+  }
+  expect(requests.length).toBe(before);
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  expect(host.querySelector('.tab-more-pin[data-tab="botling.note/botling.note.tab"]')).toBeNull();
+});
+
+it("a pin belongs to one bot: another bot's pin does not show here", async () => {
+  const { buttons } = await render(PROJECT, { plugins: dynamic, ...pinned(MAIN, [GIT]) });
+  expect(buttons()).toEqual(["Chat", "Note", "Reading", "Storage", "More tabs"]);
 });

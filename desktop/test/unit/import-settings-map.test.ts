@@ -136,6 +136,7 @@ describe("M6-02b: mapSettings", () => {
         railCollapsed: true,
         rightPanelCollapsed: true,
         mainTabs: { [BOT_A]: "botling.git" },
+        pinnedTabs: { [BOT_A]: ["card-bench/bench.tab"] },
         botColors: { [BOT_A]: { avatar: "bot1", color: "#112233" } },
         chatAvatarSizeChoice: 64,
         botLookChoice: "original",
@@ -153,6 +154,7 @@ describe("M6-02b: mapSettings", () => {
       "idleBots",
       "mainTabs",
       "pinnedSubBots",
+      "pinnedTabs",
       "railCollapsed",
       "rightPanelCollapsed",
     ]);
