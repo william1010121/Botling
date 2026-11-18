@@ -95,7 +95,10 @@ describe("the real checkout", () => {
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("1 over 800 lines, 1 in the baseline");
-    expect(r.stdout).toContain(`1169  ${MAIN}`);
+    // The script prints main.ts's real size (the baseline is a ceiling, 12896c576 took the file under it), not the baseline.
+    const mainLines = readFileSync(resolve(repoRoot, MAIN), "utf8").split("\n").length - 1;
+    expect(r.stdout).toContain(`${mainLines}  ${MAIN}`);
+    expect(mainLines).toBeLessThanOrEqual(readBaseline().files[MAIN]);
   });
 });
 
