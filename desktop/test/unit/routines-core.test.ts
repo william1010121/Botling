@@ -57,6 +57,30 @@ describe("routines", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineLast["cron:* * * * * Ping: say hi to the user"]).toMatchObject({ result: "sent", at: expect.any(Number) });
   });
 
+  it("a last-run record in bot.json is shown as it is; one that is not a date a Date can hold, or whose routine is gone, never breaks the list", async () => {
+    const dir = tempDir("routines");
+    const c = core(dir);
+    await until(() => existsSync(join(dir, "main", "bot.json")) && existsSync(join(dir, "main", "routines.cron")));
+    await c.kill();
+    const fine = "0 3 * * * Nightly: tidy up";
+    const wild = "0 4 * * * Wild: tidy up";
+    const fresh = "0 5 * * * Fresh: tidy up";
+    writeFileSync(join(dir, "main", "routines.cron"), `${fine}\n${wild}\n${fresh}\n`);
+    const bot = JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"));
+    const at = Date.now() - 3_600_000;
+    bot.routineRuns = { [fine]: swiftNow(), [wild]: swiftNow(), [fresh]: swiftNow() };
+    bot.routineLast = { [`cron:${fine}`]: { at, result: "sent" }, [`cron:${wild}`]: { at: 1e20, result: "sent" }, "cron:0 6 * * * Gone: x": { at, result: "sent" } };
+    writeFileSync(join(dir, "main", "bot.json"), JSON.stringify(bot));
+    const again = core(dir);
+    const list = await until(async () => { const r = await again.call({ type: "routines.list", botId: MAIN }); return r.routines.length === 3 && r; });
+    expect(list.routines.find((r: any) => r.title === "Nightly")).toMatchObject({ lastRun: new Date(at).toISOString(), lastResult: "sent" });
+    expect(list.routines.find((r: any) => r.title === "Wild")).toMatchObject({ lastRun: null, lastResult: null });
+    expect(list.routines.find((r: any) => r.title === "Fresh")).toMatchObject({ lastRun: null, lastResult: null });
+    // The clock drops the record of a routine that is no longer in the file, and keeps the others.
+    await until(() => !("cron:0 6 * * * Gone: x" in (JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineLast ?? {})));
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineLast).sort()).toEqual([`cron:${fine}`, `cron:${wild}`]);
+  });
+
   it("an @once line a script appends to routines.cron reaches the bot's head once, and the core takes the line out", async () => {
     const dir = tempDir("routines");
     const c = core(dir);

@@ -11,7 +11,7 @@ import {
   appRoutinesCall, CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "../routines";
-import { fromRoutineLast, type LastRun } from "../routine-last";
+import { fromRoutineLast, lastTime, type LastRun } from "../routine-last";
 import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "../routine-watch";
 import { specTrace } from "../spec-trace";
 import { fromSwiftDate as fromSwiftDateMs, newId, toSwiftDate, type ChatRecord } from "../store/records";
@@ -148,12 +148,15 @@ export class BotRoutines {
 
   /** When a routine last ran and how that went, for its row: a watch's own last run, else when its prompt was last handed to the bot (`fallback`: a time the schedule file kept). */
   lastView(key: string, task: string, fallback: number | null): Pick<RoutineView, "lastRun" | "lastResult"> {
+    const none = { lastRun: null, lastResult: null };
     if (watchCommand(task)) {
       const state = this.routineWatches[key];
-      return state ? { lastRun: new Date(state.lastRun).toISOString(), lastResult: state.ok ? "ok" : "failed" } : { lastRun: null, lastResult: null };
+      const at = state ? lastTime(state.lastRun) : null;
+      return state && at ? { lastRun: at, lastResult: state.ok ? "ok" : "failed" } : none;
     }
     const last = Object.hasOwn(this.routineLast, key) ? this.routineLast[key]! : fallback === null ? null : { at: fallback, result: "sent" as const };
-    return last ? { lastRun: new Date(last.at).toISOString(), lastResult: last.result } : { lastRun: null, lastResult: null };
+    const at = last ? lastTime(last.at) : null;
+    return last && at ? { lastRun: at, lastResult: last.result } : none;
   }
 
   /** A watch routine's command and last run, for its row; nothing for a prompt routine. */
@@ -275,8 +278,11 @@ export class BotRoutines {
     if (command) this.startWatch(key, job, command);
     else {
       this.dispatchRoutine(job, now);
-      this.routineLast[key] = { at: now, result: "sent" };
-      if (!this.readOnly) this.store.saveSetting("routineLast", this.routineLast);
+      // A record that cannot be kept (a full disk) never disturbs the run itself: the routine was sent, the row only loses its time.
+      try {
+        this.routineLast[key] = { at: now, result: "sent" };
+        if (!this.readOnly) this.store.saveSetting("routineLast", this.routineLast);
+      } catch (error) { this.log(`routine last run not kept: ${(error as Error).message}`); }
     }
   }
 

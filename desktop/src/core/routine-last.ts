@@ -19,3 +19,8 @@ export function fromRoutineLast(value: unknown): Record<string, LastRun> {
   }
   return out;
 }
+
+/** A run time as ISO-8601 for a row, or null when it is not a date a Date can hold (a hand-edited bot.json or schedule file: `toISOString` would throw and take the whole routines view with it). */
+export function lastTime(at: number): string | null {
+  return Number.isFinite(at) && Math.abs(at) <= 8.64e15 ? new Date(at).toISOString() : null;
+}
