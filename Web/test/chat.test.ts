@@ -459,6 +459,23 @@ describe("messages", () => {
     expect(row.querySelector(".component-frame")).not.toBeNull();
   });
 
+  it("draw a small error card for a component the library does not have (name=\"progress\"), in English and in Traditional Chinese, never nothing", () => {
+    const components = { table: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const row = messageElement(message({ id: "u1", text: "Done.", displays: [{ name: "progress", data: '{"type":"progress"}', at: null }] }), components);
+    const alert = row.querySelector<HTMLElement>(".unknown-component[role=alert]")!;
+    expect(alert.textContent).toContain("Component not found: progress");
+    expect(row.querySelector(".component-frame")).toBeNull();
+    expect(row.querySelector(".pin-holder")).toBeNull();
+    try {
+      setLanguage("zh-Hant");
+      const zh = messageElement(message({ id: "u2", displays: [{ name: "progress", data: "{}", at: null }] }), components);
+      expect(zh.querySelector(".unknown-component")!.textContent).toContain("找不到組件 progress");
+    } finally { setLanguage("en"); }
+    // A prototype key is no component either (CS-01): it is not the Object function.
+    const proto = messageElement(message({ id: "u3", displays: [{ name: "constructor", data: "{}", at: null }] }), components);
+    expect(proto.querySelector(".unknown-component")!.textContent).toContain("Component not found: constructor");
+  });
+
   it("name who said a line in the group chat", () => {
     const row = messageElement(message({ text: "Garden is green.", speaker: "garden" }), {});
     expect(row.querySelector(".speaker")?.textContent).toBe("garden");
