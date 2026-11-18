@@ -170,9 +170,10 @@ export function refreshDueCards(now = Date.now()): number {
     liveSchedule.forget(key);
   }
   if (!here.length) {
+    // A card made but not put on the page yet (inside its grace) is still waited for: the timer and its run stay.
+    if (liveCards.size) return 0;
     if (liveTimer) clearInterval(liveTimer);
     liveTimer = null;
-    liveCards.clear();
     liveRuns.clear();
     liveSchedule.clear();
     return 0;

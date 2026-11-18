@@ -144,8 +144,8 @@ describe("a card that refreshes by itself", () => {
   let hidden = false;
   beforeEach(() => {
     hidden = false;
-    // No live card left from before: its timer (a real one) stops.
-    refreshDueCards();
+    // No live card left from before (copies made and never put on the page are past their grace): its timer (a real one) stops.
+    refreshDueCards(Date.now() + 60_000);
     vi.useFakeTimers();
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => (hidden ? "hidden" : "visible"));
   });
@@ -212,7 +212,7 @@ describe("a card that refreshes by itself", () => {
     expect(runs()).toEqual([]);
     // Due from 2 s on: one look a second (not one per 250 ms tick) over the 8 s after it.
     expect(measure.mock.calls.length).toBeLessThanOrEqual(10);
-    expect(measure.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(measure.mock.calls.length).toBeGreaterThanOrEqual(5);
     top = 10;
     vi.advanceTimersByTime(offscreenRecheck + 250);
     expect(runs()).toHaveLength(1);
@@ -253,9 +253,23 @@ describe("a card that refreshes by itself", () => {
     expect(liveCardCount()).toBe(1);
   });
 
+  it("waits for a card made a moment before it is put on the page, and runs it once it is there", () => {
+    const row = messageElement(message([card()]), components);
+    // Ticks pass while nothing is on the page yet: the card made is still waited for, within its grace.
+    vi.advanceTimersByTime(750);
+    expect(liveCardCount()).toBe(1);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    document.body.append(row);
+    row.querySelector<HTMLElement>(".command-card")!.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 300, width: 300, height: 100, x: 0, y: 10, toJSON() {} }) as DOMRect;
+    vi.advanceTimersByTime(2500);
+    expect(runs()).toHaveLength(1);
+  });
+
   it("stops its timer once no card is on the page, and starts it again for the next one", () => {
     const row = draw(card());
     expect(vi.getTimerCount()).toBeGreaterThan(0);
+    // One tick has seen it on the page; taken off, the next tick lets it go and the timer stops.
+    vi.advanceTimersByTime(300);
     row.remove();
     vi.advanceTimersByTime(500);
     expect(vi.getTimerCount()).toBe(0);
