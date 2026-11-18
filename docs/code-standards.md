@@ -23,6 +23,10 @@ Check: A reviewer greps the diff for `[` lookups on data-keyed objects; a test p
 Why: A check only at the start let later changes through: a crash restart ran code edited after the grant, a revoked module kept running (2026-11-15); a plugin removed during a download was still installed, a revoked row was revived, a bundle id was not rechecked on the press, and a cancel/send race kept `stopped` in the file (2026-11-16); a switch read once at send still moved a line after it was turned off (2026-11-17).
 Check: The reviewer lists each `await` in the changed code that follows a check and reads whether the check is repeated after it; a test changes the state during the `await` (a revoke, a switch off, a removal) and expects a refusal.
 
+## CS-03 · Every guard a change adds has a test that fails when the guard is removed; a surviving mutant is FIX FIRST   (from L-010, proposed 2026-11-18)
+Why: Mutation batches at review found unprotected guards on all four days: nine guards in M5-07b (2026-11-15), 1 of 16 in the install check (2026-11-16), 6 of 44, 6 of 35 and 7 unprotected guards on the Pin area cards (2026-11-17), and a dozen probes written for survivors on 2026-11-18.
+Check: The reviewer's one-connection batch (L-010); every survivor is either killed by a probe in the fix round or named an equivalent mutant in the review with the reason.
+
 Format of a rule:
 
 ```markdown
