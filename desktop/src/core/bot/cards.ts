@@ -234,7 +234,7 @@ export class BotCards {
   /** What a card's report is checked against: the folder its scripts may live in, the components that fill themselves from a Command:, and each component's JSON (`validateCardShow`, against the live template of the library, which Maintainer may have extended). */
   cardRules(): CardRules {
     const library = this.context?.library;
-    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name), validate: (name, data) => (library ? unknownComponentError(name, [...library.names, ...BUILT_INS], library.names.filter((each) => !library.pinOnly(each))) : null) ?? validateCardShow(name, data, library?.template?.(name)) };
+    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name), validate: (name, data) => (library ? unknownComponentError(name, [...library.names, ...APP_DRAWN], componentRoles(library).usable) : null) ?? validateCardShow(name, data, library?.template?.(name)) };
   }
 
   /** A component of a card as a `Display` (its command checked again: a chat.json that was edited gets no command it should not). */
