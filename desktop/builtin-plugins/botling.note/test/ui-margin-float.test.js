@@ -15,6 +15,7 @@ const VW = 1280;
 let VH = 800;
 let floatH = 2000; // what a long answer would measure
 let pillRect = { left: 900, top: 300, width: 340, height: 36 };
+let frame = null; // the frame's box when it is not the whole window
 const rect = (r) => ({ left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height, width: r.width, height: r.height, x: r.left, y: r.top, toJSON() {} });
 const realRect = Element.prototype.getBoundingClientRect;
 const realOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
@@ -25,11 +26,12 @@ beforeEach(() => {
   VH = 800;
   floatH = 2000;
   pillRect = { left: 900, top: 300, width: 340, height: 36 };
+  frame = null;
   Object.defineProperty(window, "innerHeight", { get: () => VH, configurable: true });
   Object.defineProperty(window, "innerWidth", { get: () => VW, configurable: true });
   Element.prototype.getBoundingClientRect = function () {
     if (this.classList.contains("nm-folded")) return rect(pillRect);
-    if (this.classList.contains("note")) return rect({ left: 0, top: 0, width: VW, height: VH }); // the frame
+    if (this.classList.contains("note")) return rect(frame ?? { left: 0, top: 0, width: VW, height: VH }); // the frame
     return rect({ left: 0, top: 0, width: 0, height: 0 });
   };
   Object.defineProperty(HTMLElement.prototype, "offsetHeight", { get() { return this.classList.contains("nm-float") ? floatH : this.classList.contains("nm-folded") ? 36 : 0; }, configurable: true });
@@ -64,7 +66,7 @@ const thread = (over = {}) => ({
 });
 const settle = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 async function open(threads) {
-  const env = { text: NOTE, mtime: 1, view_fn: null, stop: null, root: null, folded: [] };
+  const env = { text: NOTE, mtime: 1, view_fn: null, stop: null, root: null, folded: [], threads: structuredClone(threads), handlers: {} };
   env.ccb = {
     context: { botId: "B1" },
     panels: { register: (id, fn) => { env.view_fn = fn; } },
@@ -77,12 +79,12 @@ async function open(threads) {
         if (method === "assetUrls") return {};
         if (method === "cards") return [];
         if (method === "outline") return { mode: "db", cells: [], forks: [] };
-        if (method === "marginList") return { threads: structuredClone(threads) };
+        if (method === "marginList") return { threads: structuredClone(env.threads) };
         if (method === "marginFold") { env.folded.push(params); return { saved: true }; }
         return null;
       },
     },
-    on: () => () => {},
+    on: (name, fn) => { env.handlers[name] = fn; return () => {}; },
     notify() {},
     card: async ({ component }) => `https://card.invalid/${component}`,
   };
@@ -250,5 +252,186 @@ describe("an opened side note floats over the page", () => {
     env.stop();
     current = null;
     expect(document.querySelector(".nm-float")).toBeNull();
+  });
+});
+
+const two = () => thread({ id: "c-0002", anchor: { cell: "", label: "", kind: "text", scope: "selection", quote: "second cell" } });
+const press = (key, init = {}) => document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+const changedNow = async (env, threads) => { env.threads = threads; await env.handlers.marginChanged({ botId: "B1" }); await settle(); };
+const scrollNote = (env) => q(env, ".note-body").dispatchEvent(new Event("scroll"));
+const openIt = async (env, id = "c-0001") => { click(pill(env, id).querySelector(".nm-head")); await settle(); return pop(env); };
+
+describe("what the popover leaves behind when it goes", () => {
+  it("the listeners it keeps on the document and the window (a press outside, Esc, resize) are all taken off when the Note closes", async () => {
+    const added = [];
+    const removed = [];
+    const spied = [document, window].map((t) => ({ t, add: t.addEventListener, remove: t.removeEventListener }));
+    for (const { t, add, remove } of spied) {
+      t.addEventListener = function (type, fn, o) { added.push([t, type, fn, o === true || !!o?.capture]); return add.call(this, type, fn, o); };
+      t.removeEventListener = function (type, fn, o) { removed.push([t, type, fn, o === true || !!o?.capture]); return remove.call(this, type, fn, o); };
+    }
+    try {
+      const env = await open([thread()]);
+      const mine = (list) => list.filter(([, , fn]) => String(fn).includes("mg.open")); // onOutside, onEsc, followFloat: the ones that read the opened id
+      expect(mine(added).map((a) => a[1]).sort()).toEqual(["keydown", "mousedown", "resize"]); // the spy does see them
+      env.stop();
+      current = null;
+      const left = mine(added).filter(([t, type, fn, cap]) => !removed.some((r) => r[0] === t && r[1] === type && r[2] === fn && r[3] === cap));
+      expect(left.map((a) => a[1])).toEqual([]);
+    } finally {
+      for (const { t, add, remove } of spied) { t.addEventListener = add; t.removeEventListener = remove; }
+    }
+  });
+
+  it("a comment whose pill leaves the rail (its route is not shown, nothing is drawn for it) takes its popover with it, and it does not come back when the pill does", async () => {
+    const env = await open([thread()]);
+    await openIt(env);
+    expect(pop(env)).not.toBeNull();
+    // the ids of the note are still on their way: the passage is neither found nor hidden, there is no pill and no row
+    await changedNow(env, [thread({ anchor: { cell: "zz", label: "", kind: "text", scope: "selection", quote: "nowhere in the note" } })]);
+    expect(pill(env)).toBeNull();
+    expect(pop(env)).toBeNull();
+    await changedNow(env, [thread()]);
+    await settle(500);
+    expect(pill(env)).not.toBeNull();
+    expect(pop(env)).toBeNull(); // closed with its pill; not reopened by itself
+  });
+});
+
+describe("closing keys, presses and the pill's own state", () => {
+  it("Esc while an input method is composing is not Esc: it stays; a plain Esc closes it", async () => {
+    const env = await open([thread()]);
+    const p = await openIt(env);
+    press("Escape", { isComposing: true });
+    expect(pop(env)).toBe(p);
+    press("Escape");
+    await settle();
+    expect(pop(env)).toBeNull();
+  });
+
+  it("a press in the floating window of another comment is not a press outside", async () => {
+    const env = await open([thread(), two()]);
+    await openIt(env, "c-0001");
+    click(byText(pop(env), ".nm-foot button", "在視窗追問"));
+    await settle();
+    expect(q(env, ".nm-win")).not.toBeNull();
+    await openIt(env, "c-0002");
+    expect(pop(env).dataset.thread).toBe("c-0002");
+    mouse(q(env, ".nm-win"), "mousedown"); // typing the follow-up of c-0001
+    await settle();
+    expect(pop(env)?.dataset.thread).toBe("c-0002");
+  });
+
+  it("opening another pill without a press first (the chevron by keyboard) swaps the popover for that comment's own", async () => {
+    const env = await open([thread(), two()]); // the same question and the same answer: only the thread differs
+    await openIt(env, "c-0001");
+    click(pill(env, "c-0002").querySelector(".nm-fold"));
+    await settle();
+    expect(qa(env, ".nm-float")).toHaveLength(1);
+    expect(pop(env).dataset.thread).toBe("c-0002");
+    expect(pop(env).querySelector(".nm-q").textContent).toBe("second cell");
+  });
+
+  it("the line to the passage is solid for the open comment only, and dim again when it closes", async () => {
+    const env = await open([thread(), two()]);
+    const dim = () => qa(env, ".nm-links path").map((x) => x.classList.contains("nm-dim"));
+    expect(dim()).toEqual([true, true]);
+    await openIt(env, "c-0001");
+    expect(dim().filter((x) => !x)).toHaveLength(1);
+    press("Escape");
+    await settle();
+    expect(dim()).toEqual([true, true]);
+  });
+
+  it("an orphan comment says 原文找不到 in its popover, not 已回答", async () => {
+    const env = await open([thread({ anchor: { cell: "", label: "", kind: "text", scope: "selection", quote: "nowhere in the note" } })]);
+    expect(pill(env).querySelector(".nm-st").textContent).toBe("原文找不到");
+    const p = await openIt(env);
+    expect(p.querySelector(".nm-head .nm-st").textContent).toBe("原文找不到");
+    expect(p.querySelector(".nm-head .nm-st").classList.contains("nm-warn")).toBe(true);
+  });
+});
+
+describe("where it sits", () => {
+  it("stays inside the window sideways: a pill near the right edge or left of it, or wider than the window, still gives a popover inside it", async () => {
+    const env = await open([thread()]);
+    floatH = 200;
+    await openIt(env);
+    pillRect = { left: 1200, top: 300, width: 340, height: 36 };
+    scrollNote(env);
+    expect(px(pop(env).style.left)).toBe(VW - 8 - 340); // pushed back in from the right
+    pillRect = { left: -50, top: 300, width: 340, height: 36 };
+    scrollNote(env);
+    expect(px(pop(env).style.left)).toBe(8);
+    pillRect = { left: 0, top: 300, width: 2000, height: 36 };
+    scrollNote(env);
+    expect(px(pop(env).style.width)).toBe(VW - 16);
+    expect(px(pop(env).style.left)).toBe(8);
+  });
+
+  it("a frame shorter than the window: the popover stays inside the frame, above its bottom margin", async () => {
+    const env = await open([thread()]);
+    frame = { left: 0, top: 50, width: VW, height: 400 }; // the window is 800 high; the frame ends at 450
+    pillRect = { ...pillRect, top: 380 };
+    await openIt(env);
+    const top = px(pop(env).style.top);
+    const maxH = px(pop(env).style.maxHeight);
+    expect(top).toBeGreaterThanOrEqual(58); // 8 below the frame's top
+    expect(maxH).toBeLessThanOrEqual(450 - BAR - 58);
+    expect(top + Math.min(floatH, maxH)).toBeLessThanOrEqual(450 - BAR);
+  });
+});
+
+describe("keyboard focus, scroll position and the pointer", () => {
+  it("opening moves the focus into the popover; Esc closes it and hands the focus back to the pill's chevron", async () => {
+    const env = await open([thread()]);
+    click(pill(env).querySelector(".nm-fold")); // what Enter on the chevron does
+    await settle();
+    const p = pop(env);
+    expect(p.getAttribute("tabindex")).toBe("-1");
+    expect(document.activeElement).toBe(p);
+    press("Escape");
+    await settle();
+    expect(pop(env)).toBeNull();
+    expect(document.activeElement).toBe(pill(env).querySelector(".nm-fold"));
+    // a close by pressing elsewhere does not move the focus to the pill
+    const again = await openIt(env);
+    again.blur(); // the focus is elsewhere (the press is on something else)
+    mouse(document.body, "mousedown");
+    await settle();
+    expect(pop(env)).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("an answer arriving rebuilds the popover but keeps the scroll position and the focus", async () => {
+    const env = await open([thread()]);
+    const old = await openIt(env);
+    old.querySelector(".nm-body").scrollTop = 300;
+    const t = thread();
+    t.turns[0].a = `${LONG}\n\n補充一行`;
+    await changedNow(env, [t]);
+    const now = pop(env);
+    expect(now).not.toBe(old);
+    expect(qa(env, ".nm-float")).toHaveLength(1);
+    expect(now.textContent).toContain("補充一行");
+    expect(now.querySelector(".nm-body").scrollTop).toBe(300);
+    expect(document.activeElement).toBe(now);
+    // the focus was asked for once, when it opened: a later rebuild does not pull it back from where the user put it
+    now.blur();
+    t.turns[0].a += "\n\n又一行";
+    await changedNow(env, [t]);
+    expect(pop(env).textContent).toContain("又一行");
+    expect(document.activeElement).not.toBe(pop(env));
+  });
+
+  it("closing it takes the passage's highlight off when the pointer was over it (no mouseleave comes for a removed card)", async () => {
+    const env = await open([thread()]);
+    const p = await openIt(env);
+    p.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(qa(env, ".nm-focus").length).toBeGreaterThan(0);
+    click(byText(p, ".nm-foot button", "收起"));
+    await settle();
+    expect(pop(env)).toBeNull();
+    expect(qa(env, ".nm-focus")).toHaveLength(0);
   });
 });

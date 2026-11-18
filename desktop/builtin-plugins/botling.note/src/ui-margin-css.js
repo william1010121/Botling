@@ -21,7 +21,7 @@ export const MARGIN_CSS = `
 .nm-rail.nm-narrow .nm-card { position: static; border-left: 3px solid var(--n-accent); }
 /* The opened comment: a popover over the page (ui-margin.js placeFloat sets left / top / width / max-height in the viewport). It takes no room in the note:
    the pill in the rail keeps its place, and the long answer scrolls inside the card while the header and the action row stay in view. */
-.nm-card.nm-float { position: fixed; left: 0; top: 0; right: auto; z-index: 38; display: flex; flex-direction: column; box-sizing: border-box; max-height: calc(100vh - 96px); }
+.nm-card.nm-float { position: fixed; left: 0; top: 0; right: auto; z-index: 38; display: flex; flex-direction: column; box-sizing: border-box; max-height: calc(100vh - 96px); outline: 0; }
 .nm-float > .nm-head, .nm-float > .nm-foot { flex: none; }
 .nm-float > .nm-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .nm-card.nm-active { border-color: color-mix(in srgb, var(--n-accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent) 12%, transparent), var(--n-shadow); }

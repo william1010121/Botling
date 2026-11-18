@@ -1,7 +1,7 @@
 // botling.note, web part, margin comments (旁註): select a passage (or press a cell's 問 button), ask the bot in a small box that opens in
 // the margin beside the passage, read the answer as a comment card in the right-hand margin tied to the passage by a thin line, follow
 // up in a floating window. Nothing here writes into the note: the threads live in the program part (src/margin.ts, plugin storage),
-// the frame asks for them with ccb.host.call("marginList" | "marginAsk" | "marginFold" | "marginDelete" | "marginCancel").
+// the frame asks for them with ccb.host.call("marginList" | "marginAsk" | "marginDelete" | "marginCancel").
 // The margin has a node of its own (page > .nm-rail, .nm-links) that render() never rebuilds, so a typed question survives a redraw;
 // `layout` (called after every render, on resize and when threads change) only moves the cards so each lines up with its passage.
 // Where a passage is now: by the id of its cell in note.db (notes.outline), then by its text; a passage that is gone leaves its card at
@@ -98,7 +98,7 @@ export function install(st, api) {
     cards: new Map(), // thread id -> { el, sig }
     draft: null, // the ask box: { rid, kind, scope, quote, line, cellKey, label, text, sending, error, el, id? }
     win: null, // the floating window: { id, x, y, min, draft, el }
-    open: "", float: null, // the opened comment (a popover over the page): the thread id, and { id, sig, el, chip } of its card
+    open: "", float: null, floatFocus: false, // the opened comment (a popover over the page): the thread id, its { id, sig, el, chip } card, and whether it takes the keyboard focus when it appears
     outline: null, outlineText: null, outlineBusy: false,
     rail: null, links: null, pop: null, marks: new Map(), focus: "", timer: 0, raf: 0,
   };
@@ -546,6 +546,7 @@ export function install(st, api) {
     card.dataset.thread = t.id;
     card.setAttribute("role", "dialog");
     card.setAttribute("aria-label", "旁註");
+    card.tabIndex = -1; // focusable by script only: the popover takes the focus when it opens
     const head = h("div", "nm-head");
     head.insertAdjacentHTML("beforeend", icon("chat"));
     const chip = h("span", "nm-chip nm-st");
@@ -588,15 +589,25 @@ export function install(st, api) {
   }
   function toggleFloat(id) {
     if (!threadOf(id)) return;
-    mg.open = mg.open === id ? "" : id;
+    if (mg.open === id) return closeFloat();
+    mg.open = id;
+    mg.floatFocus = true; // a keyboard user pressed the pill's chevron: the popover covers it, so the focus moves into the popover
     layout();
   }
   function closeFloat() {
-    if (!mg.open) return;
+    const id = mg.open;
+    if (!id) return;
+    const hadFocus = !!mg.float?.el.contains(document.activeElement);
     mg.open = "";
     layout();
+    if (mg.focus === id) setFocus(""); // the popover went away under the pointer: no mouseleave comes
+    if (hadFocus) mg.cards.get(id)?.el.querySelector(".nm-fold")?.focus({ preventScroll: true }); // back on the pill's chevron
   }
+  // Takes the popover down and forgets that it was open: a comment whose pill is not in the rail (its route is not shown, no thread left) does not
+  // come back by itself when the pill does.
   function dropFloat() {
+    mg.open = "";
+    mg.floatFocus = false;
     mg.float?.el.remove();
     mg.float = null;
   }
@@ -624,21 +635,21 @@ export function install(st, api) {
     const id = mg.open;
     const row = id ? rows.find((r) => r.key === id) : null;
     const t = id ? threadOf(id) : null;
-    if (!row || !t || mg.win?.id === id) {
-      if (id && (!t || mg.win?.id === id)) mg.open = "";
-      return dropFloat();
-    }
+    if (!row || !t || mg.win?.id === id) return dropFloat();
     const sig = threadSig(t);
     let f = mg.float;
     if (!f || f.id !== id || f.sig !== sig) {
       const built = floatFor(t);
       const scroll = f && f.id === id ? f.el.querySelector(".nm-body")?.scrollTop ?? 0 : 0;
+      const hadFocus = !!f?.el.contains(document.activeElement); // an answer arriving rebuilds the card: the focus stays in the popover
       if (f?.el.isConnected) f.el.replaceWith(built.el);
       else wrap.append(built.el);
       mg.float = f = { id, sig, el: built.el, chip: built.chip, chipCls: built.chip.className, chipHtml: built.chip.innerHTML };
       placeFloat(f.el, row.card);
       const body = f.el.querySelector(".nm-body");
       if (body) body.scrollTop = scroll;
+      if (hadFocus || mg.floatFocus) f.el.focus({ preventScroll: true });
+      mg.floatFocus = false;
     }
     if (row.place.state !== "ok" || row.place.stale) {
       f.chip.className = "nm-chip nm-st nm-warn";

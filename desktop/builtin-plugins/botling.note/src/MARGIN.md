@@ -65,7 +65,7 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
   (`nm-enter`) is a one-off class, removed after it ends, so a re-insert never replays it (the screen must not flicker). Tests: test/ui-margin-askbox.test.js.
 * **Answering…**: the card shows a spinner and "bot 還在回答…", with 不等了 (drops the question; a late reply stays in the chat).
 * **Read**: question, answer as small Markdown (paragraphs, lists, code, links through the note's link opener), time,
-  "不會寫進 Note"; fold/unfold (kept), 複製, 刪除 (two presses), 存成 cell (the only way an answer enters the note: a new
+  "不會寫進 Note"; open as a popover (see below), 複製, 刪除 (two presses), 存成 cell (the only way an answer enters the note: a new
   cell after the passage's cell, one undo step).
 * **Follow up**: 在視窗追問 opens the floating window (drag by the bar, minimise, 釘回側欄, collapse); the card shows a stub
   "視窗追問中". The window position is per mount, not stored.
@@ -75,7 +75,9 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
   rail, the note and the other pills do not move; no clear-and-redraw), is at most as tall as the visible frame minus a bottom margin
   (`FLOAT_BOTTOM_SAFE`: the app's floating status bar lies over the frame and its height cannot be read from inside it), follows its pill on
   scroll, and closes on 收起, Esc and a press outside. One popover at a time; open / closed is not stored (the old `folded` flag is no longer
-  used by the frame).
+  used by the frame; the host still keeps it and `marginFold` still answers). Keyboard: opening it moves the focus into the card
+  (`tabindex=-1`); closing it from inside hands the focus back to the pill's chevron; an answer arriving rebuilds the card but keeps the focus
+  and the scroll position. A comment whose pill leaves the rail (its route is not shown) closes with it and does not come back by itself.
 * Cards sit in `.nm-rail` (a node of its own; `render()` never rebuilds it, so a typed question survives a redraw), tops
   are stacked so they never overlap, and elbow lines join each card to its passage. Colours are the note's `--n-*` tokens
   (light/dark follow the app).
@@ -83,7 +85,7 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
 ## Not done / limits
 
 * Answers render a small Markdown subset (no tables or images inside an answer).
-* The window position and open state are not remembered across a reload; folded state and all threads are.
+* The window position and open / closed state are not remembered across a reload; all threads are.
 * A reply is matched to a question while the Note's plugin host is running; the bots with a question waiting are kept
   across a restart, but a reply that came while the app was off is not recovered.
 * The highlight is the exact quote only when it is one run of plain text in a drawn line; otherwise the whole line.
