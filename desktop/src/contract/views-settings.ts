@@ -225,6 +225,8 @@ export const SettingsView = z.strictObject({
   shortcuts: z.record(z.string().max(200), z.string().max(40)).default({}),
   /** The plugin tab each bot's main area last showed ("<plugin>/<view id>", PluginsView `mainTabs`); a bot left out shows Chat. */
   mainTabs: z.record(BotId, z.string().max(320)).optional(),
+  /** The plugin tabs the user pinned for each bot ("<plugin>/<view id>", at most 30): they stay in that bot's header; an unpinned tab shows only while in use. */
+  pinnedTabs: z.record(BotId, z.array(z.string().max(320)).max(30)).optional(),
   /** Each bot's settled face colour and the shape it was settled on (avatars.ts heldBotColors); absent: none yet. */
   botColors: z.record(BotId, HeldBotColor).optional(),
 });
@@ -265,6 +267,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
   /** The plugin tab a bot's main area shows (null: none, Chat). */
   z.strictObject({ key: z.literal("mainTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320).nullable() }) }),
+  /** Pins (true) or unpins (false) a plugin tab for a bot: a pinned tab always shows in that bot's header. */
+  z.strictObject({ key: z.literal("pinTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320), pinned: z.boolean() }) }),
   /** All rebound shortcuts at once (an empty object: every default). */
   z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(200), z.string().max(40)) }),
   /** All settled bot colours at once (the renderer holds them, see avatars.ts heldBotColors). */

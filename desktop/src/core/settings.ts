@@ -87,6 +87,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     updateCheck: bool(raw.updateCheckEnabled, true),
     shortcuts: normalizeOverrides(raw.shortcutBindings),
     mainTabs: mainTabs(raw.mainTabs),
+    pinnedTabs: pinnedTabs(raw.pinnedTabs),
     botColors: botColors(raw.botColors),
   };
 }
@@ -153,6 +154,20 @@ function mainTabs(value: unknown): Record<string, string> {
   return Object.fromEntries(entries.slice(-500).map(([id, tab]) => [id.toUpperCase(), tab]));
 }
 
+/** The most tabs one bot keeps pinned. */
+const PINNED_TABS_MAX = 30;
+/** settings.json's `pinnedTabs`: each bot's pinned plugin tabs (bot ids upper case), what cannot be used left out. */
+function pinnedTabs(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [id, list] of Object.entries(value as Record<string, unknown>).slice(-500)) {
+    if (!/^[0-9A-Fa-f-]{36}$/.test(id) || !Array.isArray(list)) continue;
+    const tabs = [...new Set(list.filter((tab): tab is string => typeof tab === "string" && tab.length > 0 && tab.length <= 320))].slice(0, PINNED_TABS_MAX);
+    if (tabs.length) out[id.toUpperCase()] = tabs;
+  }
+  return out;
+}
+
 /** settings.json `botColors`: each bot's settled face colour; a bad entry is dropped. */
 function botColors(value: unknown): Record<string, { avatar: string; color: string }> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -207,6 +222,15 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
       if (change.value.tab) tabs[change.value.botId.toUpperCase()] = change.value.tab;
       else delete tabs[change.value.botId.toUpperCase()];
       set("mainTabs", Object.keys(tabs).length ? tabs : null);
+      break;
+    }
+    case "pinTab": {
+      const pins = pinnedTabs(raw.pinnedTabs);
+      const id = change.value.botId.toUpperCase();
+      const now = Object.hasOwn(pins, id) ? pins[id]! : [];
+      const list = change.value.pinned ? (now.includes(change.value.tab) ? now : [...now, change.value.tab]).slice(0, PINNED_TABS_MAX) : now.filter((tab) => tab !== change.value.tab);
+      if (list.length) pins[id] = list; else delete pins[id];
+      set("pinnedTabs", Object.keys(pins).length ? pins : null);
       break;
     }
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;

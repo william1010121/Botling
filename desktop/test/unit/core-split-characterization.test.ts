@@ -120,7 +120,7 @@ const keys = (value: object) => Object.keys(value).sort();
 const SETTINGS_KEYS = [
   "agyAcpPath", "agyBypassPermissions", "agyPermissionSessions", "agyWorkerEffort", "agyWorkerModel", "appTheme", "botColors", "botLook", "chatAvatarSize", "claudeAutoCompactWindow", "claudeBypassPermissions",
   "claudeWorkerLimit", "codexBypassPermissions", "codexConfigFile", "codexWorkers", "codexWorkersFollow", "componentEditorModel", "developerMode", "developerProject", "effectiveLanguage", "engineDefaults", "idleBots",
-  "language", "mainTabs", "pinnedBots", "pinnedSubBots", "railCollapsed", "reportTheme", "resultPublishing", "rightPanelCollapsed", "shortcuts", "specWriters", "stallReminderMinutes", "subagentEffort",
+  "language", "mainTabs", "pinnedBots", "pinnedSubBots", "pinnedTabs", "railCollapsed", "reportTheme", "resultPublishing", "rightPanelCollapsed", "shortcuts", "specWriters", "stallReminderMinutes", "subagentEffort",
   "subagentHourCache", "subagentModel", "updateCheck",
 ];
 const settingsPick = (result: any) => ({ keys: keys(result), botLook: result.botLook, language: result.language, effectiveLanguage: result.effectiveLanguage, appTheme: result.appTheme, claudeWorkerLimit: result.claudeWorkerLimit });

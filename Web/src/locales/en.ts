@@ -365,6 +365,12 @@ export const en = {
   "shortcuts.pluginTaken": "Off: {key} is used for “{action}”. Pick another key.",
   "shortcuts.pluginNoKey": "No key",
 
+  // The header's dynamic tabs (desktop TabMore.tsx): only Chat, Note and Storage are always there
+  "tabs.more": "More tabs",
+  "tabs.pin": "Pin {name}",
+  "tabs.unpin": "Unpin {name}",
+  "tabs.pinHint": "A pinned tab always stays in the header; others show only while in use.",
+
   // The Storage tab (desktop StorageTab.tsx)
   "storage.tab": "Storage",
   "storage.search": "Search file names…",
