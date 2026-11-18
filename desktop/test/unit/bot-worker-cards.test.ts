@@ -805,7 +805,7 @@ describe("a worker card's components are what a pin can be made from", () => {
     const r = rig("claude", undefined, undefined, { library });
     const record = await answer(r, 'Look:\n<show name="inline-chart">{"kind":"bars","items":[{"label":"A","value":5}]}</show>\n<card title="Rooms">Rooms by hour.</card>');
     await waitFor("bound", () => record.workerCards![0]!.taskId);
-    record.sourceID = "ab12";
+    Object.assign(record, { sourceID: "ab12" }); // the bubble's author (the record type here lists only what the test reads)
     r.peek.projectWorker(ledger({ status: "done", run: 1, text: `Done.\n<show name="slot-heatmap" command="${script}"></show>\n<show name="inline-chart">{"kind":"bars","items":[{"label":"B","value":9}]}</show>` }));
     expect(record.workerCards![0]!.shows).toHaveLength(2);
     const shown = r.peek.cards.cardsShown();

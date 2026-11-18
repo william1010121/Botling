@@ -70,7 +70,7 @@ describe("pinning a tab (settings.json pinnedTabs)", () => {
     raw = applySetting(raw, pin(PROJECT.toLowerCase(), "card-bench/bench.tab", true));
     expect(settingsView(raw).pinnedTabs).toEqual({ [MAIN]: ["card-bench/bench.tab", "design-duel/duel.arena"], [PROJECT]: ["card-bench/bench.tab"] });
     raw = applySetting(raw, pin(MAIN, "card-bench/bench.tab", false));
-    expect(settingsView(raw).pinnedTabs[MAIN]).toEqual(["design-duel/duel.arena"]);
+    expect(settingsView(raw).pinnedTabs![MAIN]).toEqual(["design-duel/duel.arena"]);
     raw = applySetting(raw, pin(MAIN, "design-duel/duel.arena", false));
     raw = applySetting(raw, pin(PROJECT, "card-bench/bench.tab", false));
     expect(raw).not.toHaveProperty("pinnedTabs");
@@ -106,14 +106,14 @@ describe("pinning a tab (settings.json pinnedTabs)", () => {
     expect(settingsView({ pinnedTabs: { [MAIN]: [null, { a: 1 }, "a/b"], [PROJECT]: [] } }).pinnedTabs).toEqual({ [MAIN]: ["a/b"] });
     // A file with more than 30 pins for a bot reads back as the first 30.
     const many = Array.from({ length: 45 }, (_, i) => `p/v${i}`);
-    expect(settingsView({ pinnedTabs: { [MAIN]: many } }).pinnedTabs[MAIN]).toEqual(many.slice(0, 30));
+    expect(settingsView({ pinnedTabs: { [MAIN]: many } }).pinnedTabs![MAIN]).toEqual(many.slice(0, 30));
     expect(settingsView({}).pinnedTabs).toEqual({});
   });
 
   it("a bot keeps at most 30 pins", () => {
     let raw: Record<string, unknown> = {};
     for (let i = 0; i < 40; i++) raw = applySetting(raw, pin(MAIN, `p/v${i}`, true));
-    expect(settingsView(raw).pinnedTabs[MAIN]).toHaveLength(30);
+    expect(settingsView(raw).pinnedTabs![MAIN]).toHaveLength(30);
   });
 
   it("only a bot, a short tab and a yes or no cross the command boundary", () => {
