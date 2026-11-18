@@ -45,7 +45,9 @@ describe("headArguments", () => {
   });
   it("a harmless (test) session is never lean", () => {
     const args = headArguments({ ...base, ...app, harmless: true, lean: true, systemPrompt: "RULES", pluginDirs: ["/plug"] });
-    for (const gone of ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources"]) expect(args).not.toContain(gone);
+    // (--strict-mcp-config is harmless mode's own flag; the lean ones are not added on top.)
+    for (const gone of ["--disable-slash-commands", "--setting-sources", "--plugin-dir", "--append-system-prompt"]) expect(args).not.toContain(gone);
+    expect(args.filter((arg) => arg === "--strict-mcp-config")).toHaveLength(1);
   });
   it("gives a harmless (test) session neither", () => {
     const args = headArguments({ ...base, ...app, harmless: true });
