@@ -137,8 +137,9 @@ export function fitBody(kind: string, body: Record<string, unknown>, limit = BOD
       const subagent = copy.subagent as Record<string, unknown> | undefined;
       if (subagent) {
         cutSteps(copy, subagent, limit);
-        cutText(copy, subagent, "result", limit);
-        cutText(copy, subagent, "prompt", limit);
+        // The longer text is cut first: a short result must not be cut because the prompt is the one that is too long.
+        const size = (key: string) => (typeof subagent[key] === "string" ? Buffer.byteLength(subagent[key] as string) : 0);
+        for (const key of size("result") >= size("prompt") ? ["result", "prompt"] : ["prompt", "result"]) cutText(copy, subagent, key, limit);
       }
       break;
     }

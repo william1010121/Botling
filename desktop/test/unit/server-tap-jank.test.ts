@@ -304,7 +304,7 @@ describe("the event tap writes a burst of snapshots of one object once", () => {
       const engine = new FakeTurnEngine();
       const runtime = new IntentRuntime({ store: writer, engine, live, log: () => undefined, coalesceMs: 60_000 });
       try {
-        await runtime.start();
+        // no start(): its worker would run commands of its own, and a command writes what waits
         runtime.tap.event(botUpdated("alpha", { unread: 1 }));
         for (let i = 0; i < 20; i += 1) await settleOnce();
         expect(runtime.tap.waiting).toBe(1); // still inside its window

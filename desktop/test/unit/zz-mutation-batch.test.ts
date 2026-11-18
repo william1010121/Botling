@@ -1,6 +1,6 @@
 // TEMPORARY (L-010 batch mutation check for bot/jank-core-events; removed in the next commit).
 // Copies the worktree, then for each mutant patches one src file in the copy and runs vitest on that mutant's killer files there.
-// No rebuild (L-017): none of the selected tests reads out/.
+// out/ is built once for the baseline (some baseline files read it); no killer file reads out/, so mutants are not rebuilt (L-017).
 import { it } from "vitest";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -38,8 +38,8 @@ const M: [string, string, string, string, string[]][] = [
   ["T15 botlingd does not set coalesceMs", START, "mirrorBotUpdates: true, coalesceMs: 200, content", "mirrorBotUpdates: true, content", KILL],
   ["F1 kept steps are the oldest, not the newest", FIT, "  holder.steps = steps.slice(start);\n  // The sum", "  holder.steps = steps.slice(0, steps.length - start);\n  // The sum", KILL],
   ["F2 sub-agent steps not cut", FIT, "cutSteps(copy, subagent, limit);", "", KILL],
-  ["F3 sub-agent result not cut", FIT, 'cutText(copy, subagent, "result", limit);', "", KILL],
-  ["F4 sub-agent prompt not cut", FIT, 'cutText(copy, subagent, "prompt", limit);', "", KILL],
+  ["F3 sub-agent texts not cut", FIT, "for (const key of size(", "for (const key of [] || size(", KILL],
+  ["F4 sub-agent texts cut in fixed order (result first)", FIT, 'size("result") >= size("prompt") ? ["result", "prompt"] : ["prompt", "result"]', '["result", "prompt"]', KILL],
   ["F5 components not cut", FIT, "      cutComponents(copy, limit);", "      break;", KILL],
   ["F6 components cut smallest first", FIT, "b.size - a.size || (a.name < b.name ? -1 : 1)", "a.size - b.size || (a.name < b.name ? -1 : 1)", KILL],
   ["F7 components cut walks the record's own order", FIT, "  sizes.sort((a, b) => b.size - a.size || (a.name < b.name ? -1 : 1));\n", "", KILL],
@@ -48,6 +48,11 @@ const M: [string, string, string, string, string[]][] = [
 ];
 
 const env = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("VITEST"))) as NodeJS.ProcessEnv;
+
+function build(cwd: string) {
+  const r = spawnSync(process.execPath, ["build.mjs"], { cwd, env: env(), encoding: "utf8", timeout: 300_000 });
+  return r.status === 0 ? "built" : `BUILD FAILED ${r.status}: ${`${r.stdout}\n${r.stderr}`.slice(-800)}`;
+}
 
 function runVitest(cwd: string, filters: string[]) {
   const out = join(cwd, "mutant-report.json");
@@ -65,8 +70,9 @@ it("batch mutation check", () => {
     cpSync(root, tmp, { recursive: true, filter: (src) => ![".git", "node_modules", "out", "dist", ".bot", "release"].includes(basename(src)) });
     for (const dir of ["desktop", "Web", ""]) if (existsSync(join(root, dir, "node_modules"))) symlinkSync(join(root, dir, "node_modules"), join(tmp, dir, "node_modules"));
     const cwd = join(tmp, "desktop");
+    const built = build(cwd); // the baseline files botlingd-remote-worker and fe-link-two-servers read out/; the killer files do not (L-017)
     const base = runVitest(cwd, ALL);
-    console.log(`MUTANT baseline(copy): exit ${base.code}, ${base.files} files, ${base.total} tests, failed ${base.failed.length} ${base.failed.join(" | ")}${base.tail}`);
+    console.log(`MUTANT baseline(copy): ${built}, exit ${base.code}, ${base.files} files, ${base.total} tests, failed ${base.failed.length} ${base.failed.join(" | ")}${base.tail}`);
     if (base.code !== 0 || base.failed.length || base.files < ALL.length) throw new Error("baseline in the copy does not pass: mutation results void");
     const originals = new Map<string, string>();
     for (const [name, file, find, replace, filters] of M) {
