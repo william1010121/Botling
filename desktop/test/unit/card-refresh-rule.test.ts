@@ -34,8 +34,11 @@ function rig() {
 describe("re-running a command belongs to the app, not to a component", () => {
   it("the card worker is told the app re-runs a command card, and that it never asks for a refresh / re-run button", () => {
     const rules = cardSystemRules("/p/.bot/card-scripts");
+    const step2 = rules.split("\n").find((line) => line.startsWith("2. "))!;
     const step4 = rules.split("\n").find((line) => line.startsWith("4. "))!;
-    expect(rules).toMatch(APP_RERUNS);
+    // Step 2 is where the worker writes command="…": it says there, in its own words, that the app refreshes and no button is built.
+    expect(step2).toMatch(APP_RERUNS);
+    expect(step2).toContain("its own refresh button");
     expect(step4).toContain("never ask for a refresh, reload or re-run button");
   });
 
@@ -76,5 +79,13 @@ describe("re-running a command belongs to the app, not to a component", () => {
       expect(r.handed[index], String(index)).toMatch(APP_RERUNS);
     }
     for (const index of [2, 3]) expect(r.handed[index], String(index)).not.toContain("refresh button");
+  });
+
+  it("every word that asks for a refresh gets the note on its own (reload, rerun, re-run, any case, and the Chinese words)", () => {
+    const r = rig();
+    const asks = ["reload the data", "rerun it", "re-run it", "REFRESH it", "刷新一下", "重新載入", "重新執行", "重新执行", "重新整理", "重跑"];
+    for (const ask of asks) r.desk.requestComponentChange("status", ask, "The user", null, []);
+    expect(r.handed).toHaveLength(asks.length);
+    r.handed.forEach((text, index) => expect(text, asks[index]).toContain("Do not build a refresh button"));
   });
 });
