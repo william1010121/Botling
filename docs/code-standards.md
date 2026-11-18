@@ -11,9 +11,13 @@ Where these come from: [`LESSONS.md`](LESSONS.md), the nightly mistake book ([`l
 
 ## Hard rules
 
-_None yet._ Rules arrive here only by promotion: a lesson in `LESSONS.md` seen on 3 different days becomes a
+Rules arrive here only by promotion: a lesson in `LESSONS.md` seen on 3 different days becomes a
 `CS-nn` rule, and a second worker checks every promotion before it lands. Only the owner (or the coordinator bot on
 the owner's word) removes a rule.
+
+## CS-01 · Look up a key that comes from data with `Object.hasOwn` (or a `Map`) before `obj[key]`   (from L-003, proposed 2026-11-18)
+Why: `constructor`, `__proto__` and `toString` pass id patterns and resolve to built-ins: a prototype-key `via.codeHash` wedged the queue (2026-11-15), `grants[codeHash]` from a stored row needed `Object.hasOwn` (2026-11-16), and `claudeHint` returned the `Object` function for a model id `constructor` (2026-11-17).
+Check: A reviewer greps the diff for `[` lookups on data-keyed objects; a test passes `constructor` and `__proto__` as the key.
 
 Format of a rule:
 
