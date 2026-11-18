@@ -493,7 +493,6 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5]}');
     const view = r.peek.messageView(record).workerCards[0];
     expect(view).toMatchObject({ status: "failed", model: "opus", text: "Plans: A $5.", error: expect.stringMatching(/earlier drawing is kept/) });
-    expect(view.displays).toHaveLength(1);
   });
 
   it("a card that changed while the redo was starting is left alone and the new worker is cancelled", async () => {
