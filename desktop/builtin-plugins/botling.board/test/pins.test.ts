@@ -131,6 +131,45 @@ describe("pinning from the chat", () => {
   });
 });
 
+describe("a worker card's component", () => {
+  const workerRow = (displays: DisplayView[]) => messageElement({
+    ...message([]), displays: null,
+    workerCards: [{ id: "c1", title: "Rooms", status: "done", run: 1, taskId: "T1", at: null, text: "", displays }],
+  }, components);
+
+  it("a component a worker card draws from a command has the same pin button as one in a reply, and pinning it names the card's component by `<line>:card-<n>` and its place in the card", () => {
+    setUp().update(state());
+    const row = workerRow([{ name: "提交紀錄", data: "null", command: "python3 .bot/card-scripts/rooms/fetch.py", folder: "/p", status: "done" }]);
+    document.body.append(row);
+    const bar = row.querySelector(".worker-card .pin-holder > .pin-bar");
+    expect(bar).not.toBeNull();
+    expect(bar!.querySelector("[aria-label='Pin to this bot']")).not.toBeNull();
+    // Its ↻ and the pin run the card's own key, which the core finds again.
+    click(bar!.querySelector("[aria-label='Run the command again']"));
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "m1:card-0", index: 0, command: "python3 .bot/card-scripts/rooms/fetch.py", folder: "/p", force: true }]);
+    sent.length = 0;
+    click(bar!.querySelector("[aria-label='Pin to this bot']"));
+    click(document.querySelector(".pin-dialog .primary"));
+    expect(sent[0]).toMatchObject({ type: "pin", messageID: "m1:card-0", index: 0, refresh: "shown" });
+  });
+
+  it("a worker card's component with no command has no pin button, as in a reply", () => {
+    setUp().update(state());
+    const row = workerRow([{ name: "天氣卡片", data: "{}" }]);
+    expect(row.querySelector(".worker-card .pin-bar [aria-label='Pin to this bot']")).toBeNull();
+  });
+
+  it("the pin bar of a worker card's component does not sit over the card's own toolbar (the two share the top-right corner)", () => {
+    const rule = /([^{}]*\.worker-card[^{}]*\.pin-holder[^{}]*>\s*\.pin-bar)\s*\{([^}]*)\}/.exec(pageCss());
+    expect(rule).not.toBeNull();
+    // `left` alone would stretch the bar from its `right` (8px, or the reply toolbar's per-count offset) to the left: `right: auto` lets it keep its own width.
+    expect(rule![2]).toMatch(/\bleft:\s*8px/);
+    expect(rule![2]).toMatch(/\bright:\s*auto/);
+    // The reply toolbar's `[data-actions="n"]` rules are more specific than a plain one: the card's rule must name the row too to win.
+    expect(rule![1]).toMatch(/\.row\.wide\[data-actions\]\s+\.worker-card/);
+  });
+});
+
 describe("making an inline block pinnable", () => {
   const chart = '{"kind":"bars","title":"Haiku 比 Opus 快 3.1 倍","items":[{"label":"Haiku","value":182},{"label":"Opus","value":58}]}';
   const inline = (overrides: Partial<DisplayView> = {}): DisplayView => ({ name: "inline-chart", data: chart, ...overrides });

@@ -796,3 +796,54 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1", model: "opus" }).success).toBe(false);
   });
 });
+
+describe("a worker card's components are what a pin can be made from", () => {
+  const library = { "slot-heatmap": "Slot heatmap: rooms by hour.\nData: {}", "inline-chart": "Inline chart: a chart.\nBuilt-in: yes\nData: {}" };
+  const script = "python3 .bot/card-scripts/lounge-rooms/fetch.py";
+
+  it("`cardsShown` lists them under the card's key `<line>:card-<n>` and their place in the card, after the line's own, with the command the card runs them by", async () => {
+    const r = rig("claude", undefined, undefined, { library });
+    const record = await answer(r, 'Look:\n<show name="inline-chart">{"kind":"bars","items":[{"label":"A","value":5}]}</show>\n<card title="Rooms">Rooms by hour.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    record.sourceID = "ab12";
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: `Done.\n<show name="slot-heatmap" command="${script}"></show>\n<show name="inline-chart">{"kind":"bars","items":[{"label":"B","value":9}]}</show>` }));
+    expect(record.workerCards![0]!.shows).toHaveLength(2);
+    const shown = r.peek.cards.cardsShown();
+    // The line's own component first (as before), then the card's, the last of the card first (the newest-first order of the list).
+    expect(shown.map((card: any) => [card.messageId, card.index, card.name])).toEqual([
+      [record.id, 0, "inline-chart"], [`${record.id}:card-0`, 1, "inline-chart"], [`${record.id}:card-0`, 0, "slot-heatmap"],
+    ]);
+    expect(shown[2]).toMatchObject({ command: script, shownCommand: script, data: "null" });
+    // A pin made from a card's component names the same author as one made from the line itself (`linkAuthor`).
+    expect(shown.map((card: any) => card.author)).toEqual(["AB12", "AB12", "AB12"]);
+    // The key the page's pin and ↻ name is the one the core resolves to this component's command (`shownAt`).
+    expect(r.peek.cards.shownAt(`${record.id}:card-0`, 0)).toMatchObject({ display: { name: "slot-heatmap", command: script } });
+  });
+
+  it("a card whose command was not kept (outside card-scripts) is listed with no command, so it cannot be pinned from it", async () => {
+    const r = rig("claude", undefined, undefined, { library });
+    const record = await answer(r, '<card title="Rooms">Rooms.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    // Written into the record as a chat.json edited by hand could hold it (the report check would have refused it).
+    record.workerCards![0]!.shows = [{ name: "slot-heatmap", data: "null", command: "python3 /elsewhere/fetch.py" }];
+    const shown = r.peek.cards.cardsShown();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({ messageId: `${record.id}:card-0`, name: "slot-heatmap", command: null, shownCommand: null });
+  });
+
+  it("a line with two cards keys each card's components by its own place (`:card-0`, `:card-1`), and the core finds each by it", async () => {
+    const r = rig("claude", { claudeWorkerLimit: 3 }, undefined, { library });
+    let n = 0;
+    r.handoff.mockImplementation(async () => ({ task_id: `T${++n}`, run: 1 }));
+    const record = await answer(r, '<card title="A">job a</card>\n<card title="B">job b</card>');
+    await waitFor("both bound", () => record.workerCards!.length === 2 && record.workerCards!.every((card) => card.taskId));
+    record.workerCards![0]!.shows = [{ name: "inline-chart", data: '{"kind":"bars","items":[{"label":"A","value":5}]}' }];
+    record.workerCards![1]!.shows = [{ name: "slot-heatmap", data: "null", command: script }];
+    const shown = r.peek.cards.cardsShown();
+    expect(shown.map((card: any) => [card.messageId, card.index, card.name, card.command])).toEqual([
+      [`${record.id}:card-0`, 0, "inline-chart", null], [`${record.id}:card-1`, 0, "slot-heatmap", script],
+    ]);
+    expect(r.peek.cards.shownAt(`${record.id}:card-1`, 0)).toMatchObject({ display: { name: "slot-heatmap", command: script }, key: `${record.id}:card-1/0` });
+    expect(r.peek.cards.shownAt(`${record.id}:card-0`, 0)).toMatchObject({ display: { name: "inline-chart" } });
+  });
+});

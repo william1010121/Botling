@@ -222,6 +222,9 @@ body.pin-resizing { cursor: grabbing; user-select: none; }
 .row.wide[data-actions="3"] .pin-holder.wide-part > .pin-bar { right: 92px; }
 .row.wide[data-actions="4"] .pin-holder.wide-part > .pin-bar { right: 122px; }
 .row.wide[data-actions="5"] .pin-holder.wide-part > .pin-bar { right: 152px; }
+/* In a worker card the card's own toolbar (redo, new component, notes) takes the top-right corner: the pin bar goes to the top-left, whatever the reply's toolbar
+   (data-actions) has moved it by. */
+.worker-card .pin-holder.wide-part > .pin-bar, .row.wide[data-actions] .worker-card .pin-holder.wide-part > .pin-bar { right: auto; left: 8px; }
 /* A card that can be pinned has Report in its ⋯ menu: no flag of its own over its bottom-right
    corner (it covered the content, and was a second flag beside the reply's own). */
 .pin-holder.wide-part .component-side > .flag { display: none; }
