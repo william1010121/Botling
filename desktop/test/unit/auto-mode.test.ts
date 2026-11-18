@@ -126,6 +126,32 @@ describe("auto mode: the blocked-call card", () => {
     expect(again.text).toContain("Allowing it again would not help.");
   });
 
+  // Prompt audit 2026-11-18 (#7): the owner of an allowed call re-runs it, and a second refusal ends the retries.
+  it("an allowed call made by a subagent goes back to that subagent, and a second refusal is not retried", () => {
+    const h = harness();
+    const record = { id: "d1", role: "bot", text: "", date: 0, choices: [{ label: "Allow once", recommended: true, action: "allowOnce" }, { label: "Don't allow", recommended: false, action: "deny" }] };
+    (h.bot as any).questions.add(record);
+    (h.bot as any).questions.denialAsks.set("d1", { tool: "Bash", summary: "rm -rf build", rule: "Bash(rm -rf build)", subagent: "builder", allowedBefore: false });
+    (h.bot as any).questions.decideDenial(record, 0);
+    const told = h.sent.mock.calls.at(-1)![1] as string;
+    expect(told).toContain("It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.");
+    expect(told).toContain("If it is refused again, do not retry: tell the user.");
+  });
+
+  it("Codex's reviewer: an allowed call goes back to its owner, and a second refusal is not retried", () => {
+    const h = harness();
+    const q = (h.bot as any).questions;
+    const approval = (input: Record<string, unknown>) => ({ requestId: "codex-review:1", tool: "Bash", input: { summary: "rm -rf build", ...input } });
+    q.tellReviewOutcome(approval({}), true);
+    const own = h.sent.mock.calls.at(-1)![1] as string;
+    expect(own).toContain("It is allowed now: run it again as it was, then carry on.");
+    expect(own).toContain("If it is refused again, do not retry: tell the user.");
+    q.tellReviewOutcome(approval({ worker: "builder" }), true);
+    const theirs = h.sent.mock.calls.at(-1)![1] as string;
+    expect(theirs).toContain("It was the worker's call, not yours: tell that worker (app_send_message) to run it again as it was and carry on.");
+    expect(theirs).toContain("If it is refused again, do not retry: tell the user.");
+  });
+
   it("Always allow keeps the rule; Don't allow tells claude not to try again", () => {
     const h = harness();
     h.block("t1", "rm -rf build");

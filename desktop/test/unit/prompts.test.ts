@@ -11,7 +11,7 @@ import { CARD_TAG_RULE } from "../../src/core/card-rule";
 import { CLAUDE_WORKER_POLICY } from "../../src/core/agent/claude-workers";
 import { AGY_WORKER_POLICY } from "../../src/core/prompts-agy";
 import { codexWorkerInstructions, desktopPrompts } from "../../src/core/prompts";
-import { MAINTAINER_EDITOR_NATIVE_TEXT, maintainerInstructions } from "../../src/core/maintainer-text";
+import { MAINTAINER_CODEX_NO_TOOLS_LINE, MAINTAINER_EDITOR_NATIVE_TEXT, maintainerInstructions } from "../../src/core/maintainer-text";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -323,6 +323,11 @@ describe("prompts say what each engine can really do", () => {
     const claude = system("claude", true);
     expect(claude).toContain('call app_handoff with subagent_type "ccb-core:component-editor"');
     expect(claude).toContain("app_send_message with its task_id");
+    // Only the Codex Maintainer has no file or shell tools: its edits, version bumps, check, shot and git go to an ordinary worker.
+    expect(codex).toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
+    expect(codex.indexOf(MAINTAINER_CODEX_NO_TOOLS_LINE)).toBeLessThan(codex.indexOf("- Every time you change a plugin:"));
+    expect(claude).not.toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
+    expect(system("claude", false)).not.toContain(MAINTAINER_CODEX_NO_TOOLS_LINE);
     for (const text of [codex, claude]) for (const native of MAINTAINER_EDITOR_NATIVE_TEXT) expect(text).not.toContain(native);
     // Native Claude keeps the Agent tool; another bot's text is never rewritten.
     const native = system("claude", false);

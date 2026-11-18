@@ -38,9 +38,13 @@ const EDITOR_ROUTES = {
     busy: "send it to that running editor with app_send_message (its task_id)",
   },
 } as const;
+/** Codex's coordinator thread has no file or shell tools (environments: []): Maintainer's own steps (read, edit, bump, check, shot, git) go to an ordinary worker. */
+const PLUGIN_STEPS = "- Every time you change a plugin:\n";
+export const MAINTAINER_CODEX_NO_TOOLS_LINE = "- You have no file or shell tools. Wherever these instructions say to read a file, edit, bump a version, run the check or the component shot, or run git add, commit and tag, have an app_handoff worker do it (an ordinary one, without role: the component editor only edits component files). Give it the folder, the exact steps and the exact commands, and tell the user it is done only after its report arrives. Your own part is to send the request, review the report, decide the next step and answer the user.\n";
 export function maintainerEditorRoute(instructions: string, transport: keyof typeof EDITOR_ROUTES): string {
   const route = EDITOR_ROUTES[transport];
-  return instructions.replace(EDITOR_START, () => route.start).replace(EDITOR_FIX, () => route.fix).replace(EDITOR_BUSY, () => route.busy);
+  const routed = instructions.replace(EDITOR_START, () => route.start).replace(EDITOR_FIX, () => route.fix).replace(EDITOR_BUSY, () => route.busy);
+  return transport === "codex" ? routed.replace(PLUGIN_STEPS, () => MAINTAINER_CODEX_NO_TOOLS_LINE + PLUGIN_STEPS) : routed;
 }
 export const MAINTAINER_EDITOR_NATIVE_TEXT = [EDITOR_START, EDITOR_FIX, EDITOR_BUSY] as const;
 
