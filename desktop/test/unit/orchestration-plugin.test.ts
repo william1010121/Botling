@@ -502,6 +502,55 @@ describe("a stuck event loop is not the plugin's silence (switching a bot to Ant
   });
 });
 
+/** Fake clock probes: `jump` is a stuck loop (the clock is a second ahead when the timer comes round); nothing waits in real time. */
+describe("the late-timer allowance has its edges (fake clock)", () => {
+  const LIMIT = 53;
+  const jump = async () => { vi.setSystemTime(Date.now() + 1000); await vi.advanceTimersByTimeAsync(LIMIT); };
+  const rig = () => {
+    const said: string[] = [];
+    let answer: (slots: Slots | null) => void = () => {};
+    const book = new OrchestrationRulesBook(() => new Promise<Slots | null>((resolve) => { answer = resolve; }), LIMIT);
+    const asked = book.refresh((text) => said.push(text));
+    return { said, book, asked, answer: (slots: Slots | null) => answer(slots) };
+  };
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a plugin that is silent on a loop that is not stuck gets the notice at the limit, with no second window", async () => {
+    vi.useFakeTimers();
+    const armed = vi.spyOn(globalThis, "setTimeout");
+    const r = rig();
+    await vi.advanceTimersByTimeAsync(LIMIT);
+    await r.asked;
+    expect(r.said).toEqual([RULES_NOTICE]);
+    expect(armed.mock.calls.filter((call) => call[1] === LIMIT)).toHaveLength(1);
+    armed.mockRestore();
+  });
+
+  it("a late timer gives the plugin its time again, and an answer in that window is used with no notice and no timer left over", async () => {
+    vi.useFakeTimers();
+    const r = rig();
+    await jump();
+    expect(r.said).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1); // the second window is armed
+    r.answer(null);
+    await r.asked;
+    expect(r.said).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0); // the window that is still pending was cleared, not only the first timer
+  });
+
+  it("a plugin that stays silent through two stalls is let go on the third: the notice is said, and no timer is left", async () => {
+    vi.useFakeTimers();
+    const r = rig();
+    await jump(); await jump();
+    expect(r.said).toEqual([]);
+    await jump();
+    await r.asked;
+    expect(r.said).toEqual([RULES_NOTICE]);
+    expect(r.book.current()).toBe(DEFAULT);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 const PROFILE: BotProfile = { id: "p", name: "P", role: "manager", avatar: "x", folder: "/p/repo", memoryPath: ".bot/memory.md", storeDir: "/p/store", tools: [], job: null, problem: null, instructions: "X" };
 

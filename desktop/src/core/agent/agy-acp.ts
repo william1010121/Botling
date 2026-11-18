@@ -384,9 +384,14 @@ export interface AcpVerifyDeps {
   codesign(path: string): void;
   memo: Map<string, string>;
 }
+/** Exact (bigint) so a 64-bit inode or a timestamp to the nanosecond is not rounded to a double; the file is followed through a link, as the read and the spawn are. */
+export function fileIdentity(path: string): string {
+  const info = statSync(path, { bigint: true });
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+}
 const realAcpDeps: AcpVerifyDeps = {
   platform: process.platform, arch: process.arch, memo: new Map(),
-  identity: (path) => { const info = statSync(path); return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`; },
+  identity: fileIdentity,
   hash: (path) => createHash("sha256").update(readFileSync(path)).digest("hex"),
   codesign: (path) => { execFileSync("/usr/bin/codesign", ["--verify", "--strict", path], { stdio: "ignore", timeout: 10_000 }); },
 };
@@ -398,7 +403,9 @@ const realAcpDeps: AcpVerifyDeps = {
  * two `codesign` runs stuck core's event loop for about 0.75 s a call and three to five calls a message, longer than the 3 s the
  * orchestration rules ask has (switching a bot to Antigravity said "the rules plugin did not answer in time"). A file that passed is
  * checked again in full only when its identity (device, inode, size, mtime, ctime) is not the one that passed: a write, a replacement or a
- * touch changes ctime, which a process cannot set back, so the pin still holds at each use. A refusal is never remembered.
+ * touch changes ctime, which a process cannot set back, so the pin still holds at each use. A refusal is never remembered. The identity is taken
+ * before the bytes are read, so a file replaced while it is hashed is not the one remembered. What passed is keyed by path and by the digest it
+ * had to match (a file that passed as the harness does not pass as the server).
  */
 export function verifyAcpRuntime(command: string, deps: AcpVerifyDeps = realAcpDeps) {
   if (deps.platform !== "darwin" || deps.arch !== "arm64" || !isAbsolute(command)) throw new Error("Verified ACP 1.4.3 runtime required (macOS arm64). Legacy agy CLI remains disabled.");

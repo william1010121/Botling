@@ -15,7 +15,7 @@ export const BUILTIN_RULES_PLUGIN = "botling.orchestration";
 export const RULES_TIME_LIMIT_MS = 3_000;
 /** A limit timer that fires more than this after its due time was stuck behind core's own synchronous work; it is armed again at most this many times. */
 const STALL_SLACK_MS = 250, STALL_EXTENSIONS = 2;
-export const RULES_NOTICE ="The orchestration rules plugin did not answer in time or failed; Botling is using its own rules.";
+export const RULES_NOTICE = "The orchestration rules plugin did not answer in time or failed; Botling is using its own rules.";
 const FILE_MAX = 64 * 1024, SLOT_MAX = 2_000, SLOTS_MAX = 12_000;
 /** Said twice, once to the coordinator and once to its workers: an answer gives both or neither (plan §4.6), so the two sides cannot disagree. */
 const PAIR = ["followUp.5", "worker.reportBlock"] as const;

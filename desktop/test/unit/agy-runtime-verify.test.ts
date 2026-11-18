@@ -2,8 +2,11 @@
 // start and delivery, all synchronous: about 0.75 s each on a warm cache, three to five times per message, so the event loop was stuck
 // for 3 s or more and the orchestration rules ask (limit 3 s) was reported as "did not answer in time". A file that passed is checked
 // by its identity (device, inode, size, mtime, ctime) afterwards; a changed file, a wrong hash or a bad signature is checked in full.
+import { renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ACP_HARNESS_SHA, ACP_SERVER_SHA, verifyAcpRuntime, type AcpVerifyDeps } from "../../src/core/agent/agy-acp";
+import { ACP_HARNESS_SHA, ACP_SERVER_SHA, fileIdentity, verifyAcpRuntime, type AcpVerifyDeps } from "../../src/core/agent/agy-acp";
+import { tempDir } from "../helpers";
 
 const SERVER = "/rt/agy_acp_server.par", HARNESS = "/rt/localharness_external";
 
@@ -91,5 +94,68 @@ describe("verifyAcpRuntime does the heavy check once per file, not once per call
     expect(() => verifyAcpRuntime(SERVER, { ...r.deps, arch: "x64" })).toThrow("macOS arm64");
     expect(() => verifyAcpRuntime("agy", r.deps)).toThrow("Verified ACP");
     expect(r.calls.hash).toEqual([]);
+  });
+});
+
+describe("what a pass vouches for", () => {
+  it("a pass for a file as the harness never vouches for the same file as the server (the pinned hash is part of what passed)", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps); // HARNESS passed as the harness
+    expect(() => verifyAcpRuntime(HARNESS, r.deps)).toThrow("ACP runtime hash mismatch"); // its bytes are not the server's
+    expect(() => verifyAcpRuntime(HARNESS, r.deps)).toThrow("ACP runtime hash mismatch");
+  });
+
+  it("an identity taken before the bytes are read is the one remembered: a file replaced while it was hashed is hashed again", () => {
+    const r = rig();
+    const hash = r.deps.hash;
+    r.deps.hash = (path) => { const out = hash(path); if (path === SERVER) r.identity.set(SERVER, "dev1:ino9:size:mtime:ctime-during"); return out; }; // swapped after the read began
+    verifyAcpRuntime(SERVER, r.deps);
+    r.deps.hash = hash;
+    verifyAcpRuntime(SERVER, r.deps);
+    expect(r.calls.hash.filter((path) => path === SERVER)).toHaveLength(2);
+  });
+
+  it("a refusal forgets the earlier pass: the old identity coming back is hashed again, not trusted", () => {
+    const r = rig();
+    verifyAcpRuntime(SERVER, r.deps);
+    r.identity.set(SERVER, "dev1:ino9:size:mtime:ctime");
+    r.digest.set(SERVER, "0".repeat(64));
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("ACP runtime hash mismatch");
+    r.identity.set(SERVER, "dev1:ino1:size:mtime:ctime"); // the first identity again
+    expect(() => verifyAcpRuntime(SERVER, r.deps)).toThrow("ACP runtime hash mismatch");
+  });
+});
+
+describe("fileIdentity of a real file", () => {
+  const folder = tempDir("agy-identity-");
+  const file = join(folder, "runtime");
+  const put = (text: string) => writeFileSync(file, text);
+
+  it("is stable while the file is untouched", () => {
+    put("aaaa");
+    expect(fileIdentity(file)).toBe(fileIdentity(file));
+  });
+
+  it("changes when the bytes change with the same size and the old mtime put back (the ctime cannot be put back)", () => {
+    put("aaaa");
+    const before = fileIdentity(file), at = statSync(file);
+    const wait = Date.now() + 15; while (Date.now() < wait) { /* let the ctime tick */ }
+    put("bbbb");
+    utimesSync(file, at.atime, at.mtime);
+    expect(statSync(file).size).toBe(4);
+    expect(fileIdentity(file)).not.toBe(before);
+  });
+
+  it("changes when another file is renamed over it", () => {
+    put("aaaa");
+    const before = fileIdentity(file);
+    const other = join(folder, "other");
+    writeFileSync(other, "aaaa");
+    renameSync(other, file);
+    expect(fileIdentity(file)).not.toBe(before);
+  });
+
+  it("throws for a file that is not there", () => {
+    expect(() => fileIdentity(join(folder, "missing"))).toThrow("ENOENT");
   });
 });
