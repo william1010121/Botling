@@ -165,6 +165,7 @@ export const zhHant: Dictionary = {
   "card.waiting": "worker 正在收集資料…",
   "card.reply": "回覆這個 worker…",
   "card.send": "送出",
+  "card.replyOpen": "回覆",
   "card.new.label": "為這張卡片做新組件",
   "card.new.title": "做新組件：worker 向 Maintainer 要一個適合這張卡片資料的組件，做好後重畫這張卡片",
   "card.new.question": "新組件想要怎麼呈現？",

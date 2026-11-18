@@ -166,6 +166,7 @@ export const en = {
   "card.waiting": "The worker is collecting the data…",
   "card.reply": "Reply to this worker…",
   "card.send": "Send",
+  "card.replyOpen": "Reply",
   "card.new.label": "Make a new component for this card",
   "card.new.title": "Make a new component: the worker asks Maintainer for one that fits this card's data and redraws the card with it",
   "card.new.question": "Anything you would like the new component to show?",

@@ -410,8 +410,16 @@ function regatherButton(message: MessageView): HTMLElement {
   return button;
 }
 
-/** The small box beside a reply's button where you type a few words (and, if `pictures`, paste or drop pictures), then send. */
-export function openReportBox(anchor: HTMLElement, spec: { question: string; placeholder: string; pictures: boolean; send: (text: string, images: Picture[]) => void }): void {
+/** The one small box that is open now; opening another puts this one away first (so its `onClose` runs). */
+let shutReportBox: (() => void) | null = null;
+
+/**
+ * The small box beside a reply's button where you type a few words (and, if `pictures`, paste or drop pictures), then send.
+ * `onClose` runs once when the box goes away (sent, a press outside it, or another box opening), so a caller can keep what it
+ * hangs on (a card's hover tools) in place for as long as the box is open.
+ */
+export function openReportBox(anchor: HTMLElement, spec: { question: string; placeholder: string; pictures: boolean; send: (text: string, images: Picture[]) => void; onClose?: () => void }): void {
+  shutReportBox?.();
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";
@@ -421,11 +429,22 @@ export function openReportBox(anchor: HTMLElement, spec: { question: string; pla
 <div class="report-actions"><span></span><button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const images = spec.pictures ? acceptPictures(box, textarea, box.querySelector<HTMLElement>(".report-images")!, () => place()) : [];
-  box.querySelector(".send")!.addEventListener("click", () => {
+  let shut = false;
+  const close = () => {
+    if (shut) return;
+    shut = true;
     box.remove();
+    document.removeEventListener("mousedown", away);
+    if (shutReportBox === close) shutReportBox = null;
+    spec.onClose?.();
+  };
+  const away = (event: MouseEvent) => { if (!box.contains(event.target as Node)) close(); };
+  box.querySelector(".send")!.addEventListener("click", () => {
+    close();
     spec.send(textarea.value.trim(), images);
   });
   document.body.append(box);
+  shutReportBox = close;
   const rect = anchor.getBoundingClientRect();
   const place = () => {
     box.style.top = `${Math.max(12, Math.min(rect.top - 8, window.innerHeight - box.offsetHeight - 12))}px`;
@@ -433,13 +452,7 @@ export function openReportBox(anchor: HTMLElement, spec: { question: string; pla
   place();
   box.style.left = `${Math.max(12, Math.min(rect.left - 316, window.innerWidth - 316))}px`;
   textarea.focus();
-  const close = (event: MouseEvent) => {
-    if (!box.contains(event.target as Node)) {
-      box.remove();
-      document.removeEventListener("mousedown", close);
-    }
-  };
-  setTimeout(() => document.addEventListener("mousedown", close), 0);
+  setTimeout(() => { if (!shut) document.addEventListener("mousedown", away); }, 0);
 }
 
 function replyButton(message: MessageView): HTMLElement {
