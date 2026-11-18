@@ -1,7 +1,7 @@
 // BotWorkers (M7-S49): app-managed workers, worker ledger projection, call-in work routes, and subagent item bookkeeping.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { SubagentRowView, Event } from "../../contract";
+import { ContractError, type ResultOf, type SubagentRowView, type Event } from "../../contract";
 import { ClaudeHead } from "../agent/head";
 import type { CodexItem } from "../agent/codex";
 import type { StreamItem } from "../agent/stream";
@@ -30,7 +30,7 @@ import type { RequestEvent } from "../token-speed";
 import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
-import { CARD_WAIT_MAX_MS, cardInstructions, followWorker, projectCard, takeRejection } from "../worker-cards";
+import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, followWorker, projectCard, rebindCard, takeRejection } from "../worker-cards";
 import { CARD_WORKER_MODEL } from "../settings";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
@@ -342,7 +342,7 @@ export class BotWorkers {
   private isCardWorker(id: string): boolean {
     if (this.cardWorkerIds.has(id)) return true;
     for (let i = this.records.length - 1; i >= 0; i--) {
-      if (!this.records[i]!.workerCards?.some((card) => card.taskId === id)) continue;
+      if (!this.records[i]!.workerCards?.some((card) => cardHasWorker(card, id))) continue;
       // A worker that is a card's stays so (its id is never given to another): found once, then a lookup, however long the chat.
       this.cardWorkerIds.add(id);
       return true;
@@ -552,6 +552,44 @@ export class BotWorkers {
       this.log(`card "${card.title}" did not start a worker: ${card.error}`);
     }
     this.changed(record);
+  }
+
+  /** The cards whose redo is being started (`redoCard`): a double tap starts one worker. */
+  private readonly redoingCards = new Set<string>();
+
+  /**
+   * "Redo with Opus" on a card whose worker (`taskId`) has finished: a new worker on `CARD_REDO_MODEL` at `CARD_REDO_EFFORT` is started through the same `app_handoff`,
+   * given the card's request and what the first worker left (`cardRedoInstructions`), and the card is bound to it (`rebindCard`): its report replaces the card's
+   * drawing in place, it stays off the head like any card worker's, and the user's words on the card go to it from now on. A refusal changes nothing.
+   */
+  async redoCard(taskId: string, note?: string): Promise<ResultOf<"card.redo">> {
+    if (this.shuttingDown) throw new ContractError("conflict", "The app is stopping; nothing was started.");
+    const found = cardOfWorker(this.records, taskId);
+    if (!found) throw new ContractError("not_found", "There is no card for that worker.");
+    const { record, card } = found;
+    if (card.model === CARD_REDO_MODEL) throw new ContractError("conflict", "This card is already redone by Opus; reply on it to go on.");
+    if (card.status === "starting" || card.status === "running") throw new ContractError("conflict", "The card's worker is still at work; redo it when it has finished.");
+    if (this.redoingCards.has(card.id)) throw new ContractError("conflict", "The redo of this card is already being started.");
+    if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new ContractError("conflict", "A card needs a Claude bot with app-managed Claude workers; nothing was started.");
+    this.redoingCards.add(card.id);
+    try {
+      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: `${card.title} (Opus)`, instructions: cardRedoInstructions(card, this.host.cards.cardBrief() ?? undefined, note), group: card.title, model: CARD_REDO_MODEL, effort: CARD_REDO_EFFORT }) as { task_id: string; run: number };
+      // The state is checked again after the await: the card may have been bound elsewhere meanwhile.
+      if (card.taskId !== taskId || this.shuttingDown) {
+        void this.ensureClaudeWorkers().tool("app_cancel_task", { task_id: started.task_id }).catch((error: Error) => this.log(`card redo ${started.task_id}: ${error.message}`));
+        throw new ContractError("conflict", "The card changed while the redo was starting; nothing was changed.");
+      }
+      rebindCard(card, started.task_id, started.run, CARD_REDO_MODEL);
+      this.cardWorkerIds.add(started.task_id);
+      // Its ledger may have moved on while the tool call was answered.
+      const worker = this.workerViews.get(started.task_id);
+      if (worker) followWorker(card, worker, this.host.cards.cardRules());
+      this.changed(record);
+      return { taskId: started.task_id, run: started.run };
+    } catch (error) {
+      if (error instanceof ContractError) throw error;
+      throw new ContractError("conflict", `The redo did not start: ${(error as Error).message.slice(0, 1_000)}`);
+    } finally { this.redoingCards.delete(card.id); }
   }
 
   /**

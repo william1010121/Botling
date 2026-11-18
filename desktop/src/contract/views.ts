@@ -327,6 +327,8 @@ export const WorkerCardView = z.strictObject({
   warning: z.string().max(4_000).optional(),
   /** A component it asked Maintainer for is not here yet ("late": after 30 minutes). */
   waiting: z.enum(["component", "late"]).optional(),
+  /** The model of the worker the card is on, when it is not the card worker's own ("opus" after "Redo with Opus"). */
+  model: z.string().max(40).optional(),
   /** Its components, each at `at` in `text`. */
   displays: z.array(DisplayView).max(10).optional(),
   error: z.string().max(2_000).optional(),

@@ -160,6 +160,7 @@ export const COMMAND_ROUTES: Record<CommandType, CommandRoute> = {
   "agent.move": legacy(ASYNC, "low", "refused: the agent already moved"),
   "agent.message": legacy(ASYNC, "high", "the agent gets the message twice"),
   "agent.stop": legacy(ASYNC, "none", "already stopped"),
+  "card.redo": legacy(ASYNC, "high", "refused: the card is already redone (or its redo is being started)"),
   "agent.group": legacy(ASYNC, "medium", "a second sub bot may be made for agents that already moved, or it is refused"),
   "subbot.close": legacy(ASYNC, "low", "refused or nothing: already closed"),
   "chat.shown": legacy("what the window shows (core memory, unread counts)", "none", SAME),

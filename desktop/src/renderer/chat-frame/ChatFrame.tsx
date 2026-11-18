@@ -430,6 +430,12 @@ export function ChatFrame({ client, store, onError, onSent, onAsk, onOpenChat, a
           void client.request({ type: "agent.message", botId: chat.botId, subagentId: action.taskID, text: action.text.slice(0, 64_000) }).catch(onError);
           return;
         }
+        case "cardRedo": {
+          // "Redo with Opus" on a worker card: the core starts the Opus worker and binds the card to it (it checks the card, its state and the owner again).
+          if (!chat || typeof action.taskID !== "string" || !action.taskID || (action.note !== undefined && typeof action.note !== "string")) return;
+          void client.request({ type: "card.redo", botId: chat.botId, taskId: action.taskID, ...(typeof action.note === "string" && action.note.trim() ? { note: action.note.trim().slice(0, 4_000) } : {}) }).catch(onError);
+          return;
+        }
         case "openSubagent": {
           if (!chat || typeof action.id !== "string") return;
           const botId = chat.botId;

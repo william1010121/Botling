@@ -221,7 +221,7 @@ export class BotCards {
       return {
         id: card.id, title: card.title.slice(0, 200), status: card.status, run: card.run,
         ...(card.taskId ? { taskId: card.taskId.slice(0, 200) } : {}), ...(card.at !== undefined ? { at: card.at } : {}),
-        ...(words ? { text: words.slice(0, 200_000) } : {}), ...(warning ? { warning: warning.slice(0, 4_000) } : {}), ...(cardWaiting(card, Date.now()) ? { waiting: cardWaiting(card, Date.now())! } : {}), ...(shown.length ? { displays: shown } : {}),
+        ...(words ? { text: words.slice(0, 200_000) } : {}), ...(warning ? { warning: warning.slice(0, 4_000) } : {}), ...(cardWaiting(card, Date.now()) ? { waiting: cardWaiting(card, Date.now())! } : {}), ...(card.model ? { model: card.model.slice(0, 40) } : {}), ...(shown.length ? { displays: shown } : {}),
         ...(card.error ? { error: card.error.slice(0, 2_000) } : {}),
       };
     });
