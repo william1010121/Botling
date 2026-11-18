@@ -1,9 +1,9 @@
 // The Antigravity file helper has no pinned hash: a build compiles it (scripts/package-agy-helper.mjs), ships the bytes as data, and the runtime
 // accepts an installed helper only when it is byte for byte the shipped one (src/core/agent/agy-helper-trust.ts).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { shippedHelperBytes, shippedHelperSha, useShippedHelperDir } from "../../src/core/agent/agy-helper-trust";
 import { verifyAgyFileHelper } from "../../src/core/agent/agy-mcp";
 import { AgyRuntimeInstaller } from "../../src/core/agy-runtime-install";
@@ -73,6 +73,71 @@ describe("the helper loads at runtime when it is the shipped one", () => {
     const workspace = realpathSync(tempDir("agy-ws"));
     await done.install(workspace);
     expect(readFileSync(join(dest, "botling-agy-file-helper"), "utf8")).toBe("shipped bytes");
+  });
+});
+
+describe("after an app update the installed helper is replaced by the shipped one, not the runtime downloaded again", () => {
+  /** An installer over `dest` that verifies the helper like the app does and counts what it fetches; the runtime's own files must read "server" / "harness". */
+  function installerOver(dest: string, serverText = "server") {
+    const download = vi.fn(async (file: string) => writeFileSync(file, "zip"));
+    const extract = vi.fn(async (_a: string, folder: string) => { writeFileSync(join(folder, "agy_acp_server.par"), serverText); writeFileSync(join(folder, "localharness_external"), "harness"); });
+    const validate = (command: string, workspace: string) => {
+      if (readFileSync(command, "utf8") !== "server") throw Error("runtime bytes differ");
+      verifyAgyFileHelper(join(dirname(command), "botling-agy-file-helper"), workspace);
+    };
+    return { download, extract, installer: new AgyRuntimeInstaller({ destination: dest, platform: "darwin", arch: "arm64", assertLocal: () => {}, download, extract, validate }) };
+  }
+  const place = () => { const root = realpathSync(tempDir("agy-update")); return { dest: join(root, "runtime"), workspace: (() => { const w = join(root, "ws"); mkdirSync(w); return w; })() }; };
+
+  it("replaces only the helper: no download, no extract, the other runtime files untouched, no temp file left", async () => {
+    const { dest, workspace } = place();
+    useShippedHelperDir(build("helper of version 1"));
+    const first = installerOver(dest);
+    await first.installer.install(workspace);
+    expect(first.download).toHaveBeenCalledTimes(1);
+    useShippedHelperDir(build("helper of version 2, another Xcode"));
+    const update = installerOver(dest);
+    const command = await update.installer.install(workspace);
+    expect(update.download).not.toHaveBeenCalled();
+    expect(update.extract).not.toHaveBeenCalled();
+    expect(readFileSync(join(dest, "botling-agy-file-helper"), "utf8")).toBe("helper of version 2, another Xcode");
+    expect(readFileSync(command, "utf8")).toBe("server");
+    expect(readFileSync(join(dest, "localharness_external"), "utf8")).toBe("harness");
+    expect(readdirSync(dest).sort()).toEqual(["agy_acp_server.par", "botling-agy-file-helper", "localharness_external"]);
+  });
+  it("still downloads again when the helper is not all that is wrong (the runtime's own bytes differ)", async () => {
+    const { dest, workspace } = place();
+    useShippedHelperDir(build("helper of version 1"));
+    await installerOver(dest).installer.install(workspace);
+    writeFileSync(join(dest, "agy_acp_server.par"), "damaged");
+    useShippedHelperDir(build("helper of version 2"));
+    const again = installerOver(dest);
+    await again.installer.install(workspace);
+    expect(again.download).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(dest, "agy_acp_server.par"), "utf8")).toBe("server");
+    expect(readFileSync(join(dest, "botling-agy-file-helper"), "utf8")).toBe("helper of version 2");
+  });
+  it("without a shipped helper nothing is touched and nothing is downloaded (fail closed)", async () => {
+    const { dest, workspace } = place();
+    useShippedHelperDir(build("helper of version 1"));
+    await installerOver(dest).installer.install(workspace);
+    useShippedHelperDir(realpathSync(tempDir("agy-no-shipped")));
+    const update = installerOver(dest);
+    await expect(update.installer.install(workspace)).rejects.toThrow("Bundled Botling helper is missing");
+    expect(update.download).not.toHaveBeenCalled();
+    expect(readFileSync(join(dest, "botling-agy-file-helper"), "utf8")).toBe("helper of version 1");
+  });
+  it("a helper that is a symlink is not written through: the runtime is installed afresh", async () => {
+    const { dest, workspace } = place();
+    useShippedHelperDir(build("helper of version 1"));
+    await installerOver(dest).installer.install(workspace);
+    const elsewhere = join(dirname(dest), "elsewhere"); writeFileSync(elsewhere, "keep");
+    rmSync(join(dest, "botling-agy-file-helper")); symlinkSync(elsewhere, join(dest, "botling-agy-file-helper"));
+    useShippedHelperDir(build("helper of version 2"));
+    const again = installerOver(dest);
+    await again.installer.install(workspace);
+    expect(readFileSync(elsewhere, "utf8")).toBe("keep");
+    expect(again.download).toHaveBeenCalledTimes(1);
   });
 });
 

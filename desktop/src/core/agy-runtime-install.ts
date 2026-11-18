@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmodSync, existsSync, mkdirSync, lstatSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { validateAgyRuntimePath } from './agy-runtime-settings';
@@ -78,11 +78,25 @@ export class AgyRuntimeInstaller {
     const local = o.assertLocal ?? assertLocalDestination;
     local(destination);
     const validate = o.validate ?? validateAgyRuntimePath;
+    let helper: Buffer | undefined;
     if (existsSync(destination)) {
-      try { requireRegularFiles(destination); validate(command(destination), workspace); return command(destination); } catch { /* stage repair before touching old bytes */ }
+      try { requireRegularFiles(destination); validate(command(destination), workspace); return command(destination); } catch { /* repair below */ }
+      // After an app update the helper this build compiled differs from the installed one: the app's own copy is the truth, so only the helper
+      // is replaced (the rest of the runtime is checked as before). A build without a shipped helper stops here, nothing touched.
+      helper = (o.helper ?? packagedHelper)();
+      try {
+        requireRegularFiles(destination);
+        const target = join(destination, 'botling-agy-file-helper');
+        if (!readFileSync(target).equals(helper)) {
+          const next = `${target}.new-${randomUUID()}`;
+          try { writeFileSync(next, helper, { mode: 0o700, flag: 'wx' }); renameSync(next, target); } finally { rmSync(next, { force: true }); }
+        }
+        validate(command(destination), workspace);
+        return command(destination);
+      } catch { /* stage repair before touching old bytes */ }
     }
     // Fail missing/untrusted packaging before downloading anything.
-    const helper = (o.helper ?? packagedHelper)();
+    helper ??= (o.helper ?? packagedHelper)();
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     local(dirname(destination));
     const lock = destination + '.install-lock';
