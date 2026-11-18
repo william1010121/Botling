@@ -555,9 +555,7 @@ export class HeadEvents {
     // The reply was finished before (a second finish of the same line): its cards are drawn and bound already, and are not drawn again.
     if (record.workerCards?.length) return;
     const refusal = turn.plugin ? "This turn began with a plugin's message, and a plugin's worker needs the checks of its own. Nothing was started." : undefined;
-    const { cards, dropped } = newCards(requests, () => randomUUID().toLowerCase(), refusal);
-    record.workerCards = cards;
-    if (dropped) this.owner.queueNote(`(App: Only ${cards.length} of the ${requests.length} cards in your last reply started a worker; the other ${dropped} were not started.)`);
+    record.workerCards = newCards(requests, () => randomUUID().toLowerCase(), refusal);
   }
 
   /** claude waits on nothing once its turn ended: no approval stays open. */

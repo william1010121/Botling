@@ -174,9 +174,9 @@ export class BotViews {
     };
   }
 
-  /** Settings' Claude worker limit changed: the next worker starts under it (it is read each time); waiting ones may start now. */
+  /** Settings' Claude worker limit changed: the next worker starts under it (it is read each time); waiting ones (and cards waiting in line) may start now. */
   claudeWorkerLimitChanged(): void {
-    for (const bot of this.members) bot.claudeWorkerHost?.slotsChanged();
+    for (const bot of this.members) { bot.claudeWorkerHost?.slotsChanged(); bot.workers.pumpCards(); }
   }
 
   /** The app's default primary changed: a bot that follows it tells the composer. */

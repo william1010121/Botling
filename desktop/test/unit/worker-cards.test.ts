@@ -7,7 +7,7 @@ import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_CATALOG_MAX, CARD_SHOWS_MAX, cardPictures, writeCardUsage, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardSystemPrompt, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, takeInvalid, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS, isUnnamedCardAsk, unnamedCardAsk,
+  CARD_BRIEF_MAX, CARD_CATALOG_MAX, CARD_SHOWS_MAX, cardPictures, writeCardUsage, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardSystemPrompt, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, takeInvalid, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS, isUnnamedCardAsk, unnamedCardAsk,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
 import { CARD_CHART_RULE, INLINE_EXAMPLES } from "../../src/core/inline-blocks";
@@ -29,22 +29,24 @@ const chat = (cards: WorkerCardRecord[], id = "m1"): ChatRecord => ({ id, role: 
 
 describe("newCards", () => {
   it("a card starts as `starting`, keeps its place, and gets its own id", () => {
-    const { cards, dropped } = newCards([{ title: "a", prompt: "pa", at: 3 }, { title: "b", prompt: "pb" }], newId);
-    expect(dropped).toBe(0);
+    const cards = newCards([{ title: "a", prompt: "pa", at: 3 }, { title: "b", prompt: "pb" }], newId);
     expect(cards).toMatchObject([{ title: "a", prompt: "pa", at: 3, status: "starting", run: 0 }, { title: "b", prompt: "pb", status: "starting", run: 0 }]);
     expect(cards[1]).not.toHaveProperty("at");
     expect(cards[0]!.id).not.toBe(cards[1]!.id);
   });
 
-  it(`only ${CARDS_PER_REPLY} cards start a worker; the rest are counted as dropped`, () => {
-    const requests = Array.from({ length: CARDS_PER_REPLY + 2 }, (_, i) => ({ title: `t${i}`, prompt: `p${i}` }));
-    const { cards, dropped } = newCards(requests, newId);
-    expect(cards).toHaveLength(CARDS_PER_REPLY);
-    expect(dropped).toBe(2);
+  it("every card of a reply gets a record (no cap per reply), each starting, in the order written", () => {
+    const requests = Array.from({ length: 25 }, (_, i) => ({ title: `t${i}`, prompt: `p${i}` }));
+    const cards = newCards(requests, newId);
+    expect(cards).toHaveLength(25);
+    expect(cards.map((card) => card.title)).toEqual(requests.map((request) => request.title));
+    expect(cards.every((card) => card.status === "starting")).toBe(true);
+    // They are read back from chat.json as they were stored: none is cut off at a reload.
+    expect(readCards(JSON.parse(JSON.stringify(cards)))).toHaveLength(25);
   });
 
   it("a refusal makes every card failed with the reason, so nothing starts", () => {
-    const { cards } = newCards([{ title: "a", prompt: "p" }], newId, "no plugin workers");
+    const cards = newCards([{ title: "a", prompt: "p" }], newId, "no plugin workers");
     expect(cards[0]).toMatchObject({ status: "failed", error: "no plugin workers" });
   });
 });

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { readChatCss } from "./helpers/chat-css";
 import { Composer } from "../src/composer";
-import { setLanguage } from "../src/i18n";
+import { setLanguage, t } from "../src/i18n";
 import { regatherText } from "../src/regather";
 import { feedback, messageElement, messageMenu, openReportBox, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
@@ -670,6 +670,14 @@ describe("messages", () => {
     toggle.click();
     expect(notes.querySelector<HTMLElement>(".worker-card-body")!.hidden).toBe(true);
     expect(row.querySelector(".worker-card")!.classList.contains("notes-open")).toBe(false);
+  });
+
+  it("a card waiting in line (starting, no worker yet) says it is waiting, not that the worker is collecting data, and has no redo or reply box", () => {
+    const row = messageElement(message({ id: "m53", workerCards: [{ id: "c4", title: "Prices", status: "starting", run: 0, at: null }] }), {});
+    expect(row.querySelector(".worker-card")!.classList.contains("status-starting")).toBe(true);
+    expect(row.querySelector(".worker-card-detail")!.textContent).toBe(t("card.queued"));
+    expect(row.querySelector(".worker-card-detail")!.textContent).not.toBe(t("card.waiting"));
+    expect(row.querySelector(".worker-card-new")).toBeNull();
   });
 
   it("a worker card has a 'make a new component' button: its suggestion box sends a follow-up to the card's worker, asking Maintainer for a new component", () => {

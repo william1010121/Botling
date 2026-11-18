@@ -193,7 +193,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const DEFAULT_CLAUDE_WORKER_LIMIT = 4;
 export const CLAUDE_WORKER_LIMIT_MAX = 16;
 
-const workerLimit = (wanted = DEFAULT_CLAUDE_WORKER_LIMIT) =>
+/** How many workers may be at work at once, from settings.json's `claudeWorkerLimit` (unset or invalid: the default; never above `CLAUDE_WORKER_LIMIT_MAX`). */
+export const workerLimit = (wanted = DEFAULT_CLAUDE_WORKER_LIMIT) =>
   (Number.isSafeInteger(wanted) && wanted >= 1 ? Math.min(wanted, CLAUDE_WORKER_LIMIT_MAX) : DEFAULT_CLAUDE_WORKER_LIMIT);
 const nonEmpty = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 

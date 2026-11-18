@@ -17,8 +17,8 @@ import { parseReply, type CardRequest } from "./reply";
 import type { ChatRecord } from "./store/records";
 import { chipStatus, type WorkerLedgerRecord } from "./worker-core";
 
-/** The most cards one reply starts workers for; the rest are not started (the bot is told). */
-export const CARDS_PER_REPLY = 3;
+/** The most cards of one chat line read back from chat.json (a sanity bound, not a limit on replies: every `<card>` of a reply is kept and runs, in line). */
+const CARDS_READ_MAX = 1_000;
 /** The words of a report kept on a card (the worker's ledger keeps the whole report). */
 export const CARD_TEXT_MAX = 100_000;
 /** Components of one report kept on a card. */
@@ -113,21 +113,22 @@ const EARLIER_MAX = 20;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
-/** The cards of a reply, as records at the start of their workers: `refusal` says why none starts (the card then shows it). */
-export function newCards(requests: readonly CardRequest[], newId: () => string, refusal?: string): { cards: WorkerCardRecord[]; dropped: number } {
-  const kept = requests.slice(0, CARDS_PER_REPLY);
-  const cards = kept.map((request): WorkerCardRecord => ({
+/**
+ * The cards of a reply, one record for every `<card>` (there is no cap per reply), as records at the start of their workers: `refusal` says why none starts
+ * (the card then shows it). A `starting` card has no worker until a slot is free (`BotWorkers.startCards` keeps them in line): it shows as waiting.
+ */
+export function newCards(requests: readonly CardRequest[], newId: () => string, refusal?: string): WorkerCardRecord[] {
+  return requests.map((request): WorkerCardRecord => ({
     id: newId(), title: request.title, prompt: request.prompt, ...(request.at !== undefined ? { at: request.at } : {}),
     status: refusal ? "failed" : "starting", run: 0, ...(refusal ? { error: refusal } : {}),
   }));
-  return { cards, dropped: requests.length - kept.length };
 }
 
 /** The cards of a stored record, the valid ones only (a record from another build keeps its message). */
 export function readCards(value: unknown): WorkerCardRecord[] {
   if (!Array.isArray(value)) return [];
   const cards: WorkerCardRecord[] = [];
-  for (const each of value.slice(0, 20)) {
+  for (const each of value.slice(0, CARDS_READ_MAX)) {
     if (!isObject(each) || typeof each.id !== "string" || !ID.test(each.id) || typeof each.title !== "string" || typeof each.prompt !== "string") continue;
     if (typeof each.status !== "string" || !STATUSES.has(each.status) || typeof each.run !== "number" || !Number.isInteger(each.run) || each.run < 0) continue;
     const shows = Array.isArray(each.shows) ? each.shows.flatMap((show): CardShow[] => (isObject(show) && typeof show.name === "string" && typeof show.data === "string"
