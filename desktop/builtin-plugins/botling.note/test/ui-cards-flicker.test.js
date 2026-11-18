@@ -387,6 +387,7 @@ describe("a card whose data keeps changing", () => {
   it("a page that does not get ready in 10 s is given up: the old one stays, and the page is asked for again", async () => {
     const { env, frame } = await drawn();
     env.data = B;
+    env.status = "done"; // no more syncs on their own: only the give-up asks again
     await settle(2100);
     const [, first] = frames(env);
     expect(env.cardCalls).toHaveLength(2);
