@@ -118,7 +118,7 @@ describe("projects and the main bot's world through the core", () => {
     const c = core(dir);
     await reply(c, MAIN, "how are things");
     const wake: string = logged(join(dir, "claude-input.log")).find((line) => line.text.includes("how are things")).text;
-    expect(wake).toContain(`(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n- Shop (folder ${folder}): memory file ${join(folder, ".bot", "memory.md")}; inbox file ${join(folder, ".bot", "inbox.md")}`);
+    expect(wake).toContain(`(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file. If you have no file or shell tools (Codex), have an app_handoff worker do either, and say it is done only after its report arrives.)\n- Shop (folder ${folder}): memory file ${join(folder, ".bot", "memory.md")}; inbox file ${join(folder, ".bot", "inbox.md")}`);
     expect(wake).toContain(`- Maintainer (plugin-library extensions and in-chat components only): memory file ${join(dir, "plugins", ".bot", "memory.md")}; inbox file ${join(dir, "plugins", ".bot", "inbox.md")}`);
     // The main bot hands off work by writing the inbox; its next reply delivers it.
     writeFileSync(join(folder, ".bot", "inbox.md"), "Please add a checkout page.\n");

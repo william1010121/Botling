@@ -23,6 +23,10 @@ describe("app tools, byte for byte", () => {
   });
   it("agy's worker tools, and what a bridge with workers lists (handoff to agy only)", () => {
     expect(pretty(AGY_APP_TOOLS)).toBe(golden("agy"));
+    // Antigravity's ACP accepts only agy workers: nothing may promise a Codex one.
+    const handoff = AGY_APP_TOOLS.find((tool) => tool.name === "app_handoff")!;
+    expect(handoff.description).not.toMatch(/codex/i);
+    expect((handoff.inputSchema as any).properties.engine.enum).toEqual(["agy"]);
     const cwd = mkdtempSync(join(tmpdir(), "botling-app-tools-"));
     dirs.push(cwd);
     mkdirSync(join(cwd, "private-profile"));
