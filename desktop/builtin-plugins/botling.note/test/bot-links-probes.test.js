@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // Probes for the guards of the @Name chips that bot-links.test.js leaves open (review mutants of bot/note-bot-links).
 // Run through bot-links-probes-run.test.ts (vitest.config.mts only collects *.test.ts here).
-import { afterEach, describe, expect, it } from "vitest";
-import { inline, setBots } from "../src/ui-text.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { inline, setBots, openAnchor } from "../src/ui-text.js";
 
 afterEach(() => setBots([]));
 const chips = (html) => [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a.n-bot")].map((a) => [a.dataset.bot, a.textContent]);
@@ -50,5 +50,15 @@ describe("@Name guards", () => {
     setBots([{ id: "b1", name: "\u00000\u0000" }]);
     expect(chips(inline("@`c`"))).toEqual([]);
     expect(inline("@`c`")).toBe("@<code>c</code>");
+  });
+
+  it("a chip that somehow has no bot id opens nothing (no chat for an empty id, and not as a link either)", () => {
+    const a = document.createElement("a");
+    a.className = "n-bot";
+    a.setAttribute("href", "#");
+    const ccb = { commands: { execute: vi.fn() }, openLink: vi.fn(), notify: vi.fn() };
+    openAnchor(ccb, "B0", a);
+    expect(ccb.commands.execute).not.toHaveBeenCalled();
+    expect(ccb.openLink).not.toHaveBeenCalled();
   });
 });
