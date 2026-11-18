@@ -154,7 +154,8 @@ describe("the event tap writes a burst of snapshots of one object once", () => {
       const view = entry.body.subagent as { id: string; status: string };
       return `${view.id}:${view.status}`;
     });
-    expect(alpha).toEqual(["sa2:running", "sa1:completed"]);
+    // the newer state of sa1 takes the older one's place in the queue; sa2 keeps its own
+    expect(alpha).toEqual(["sa1:completed", "sa2:running"]);
     expect(stored(store, "bot:beta", "subagent.updated")).toHaveLength(1);
   });
 
