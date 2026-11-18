@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
-import { componentElement, componentPage, keepFrames, refreshDueCards } from "../src/components";
+import { componentElement, componentPage, keepFrames, liveCardCount, offscreenRecheck, refreshDueCards } from "../src/components";
 import { messageElement } from "../src/messages";
 import type { ChatState, ComponentInfo, DisplayView, MessageView } from "../src/types";
 
@@ -192,6 +192,77 @@ describe("a card that refreshes by itself", () => {
     draw(card(), 5000);
     vi.advanceTimersByTime(5000);
     expect(runs()).toEqual([]);
+  });
+
+  it("is ticked from the cards it made, without looking through the page each time", () => {
+    draw(card());
+    const query = vi.spyOn(document, "querySelectorAll");
+    vi.advanceTimersByTime(3000);
+    expect(runs()).toHaveLength(1);
+    expect(query.mock.calls.filter(([selector]) => String(selector).includes("command-card"))).toEqual([]);
+  });
+
+  it("measures a card that is due but out of view only now and then, and runs it soon after it comes into view", () => {
+    const row = draw(card(), 5000);
+    const element = row.querySelector<HTMLElement>(".command-card")!;
+    let top = 5000;
+    const measure = vi.fn(() => ({ top, bottom: top + 100, left: 0, right: 300, width: 300, height: 100, x: 0, y: top, toJSON() {} }) as DOMRect);
+    element.getBoundingClientRect = measure;
+    vi.advanceTimersByTime(10_000);
+    expect(runs()).toEqual([]);
+    // Due from 2 s on: one look a second (not one per 250 ms tick) over the 8 s after it.
+    expect(measure.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(measure.mock.calls.length).toBeGreaterThanOrEqual(1);
+    top = 10;
+    vi.advanceTimersByTime(offscreenRecheck + 250);
+    expect(runs()).toHaveLength(1);
+  });
+
+  it("still runs a card a redraw kept, once per interval, and not for the redraw's copy that never reached the page", () => {
+    const row = draw(card());
+    const fresh = messageElement(message([card({ data: `{"cpu":80}` })]), components);
+    expect(keepFrames(row, fresh)).toBe(row);
+    vi.advanceTimersByTime(2250);
+    expect(runs()).toHaveLength(1);
+    vi.advanceTimersByTime(2000);
+    expect(runs()).toHaveLength(2);
+  });
+
+  it("follows a card drawn again as a new element of the same message", () => {
+    const first = draw(card());
+    vi.advanceTimersByTime(1000);
+    first.remove();
+    draw(card());
+    vi.advanceTimersByTime(2500);
+    expect(runs()).toHaveLength(1);
+    expect(runs()[0]).toMatchObject({ messageID: "m1", index: 0, live: true });
+  });
+
+  it("lets go of a copy that never reached the page, and of a card taken off it", () => {
+    const row = draw(card());
+    // A redraw's copy of a card it does not keep: made, never put on the page.
+    messageElement(message([card({ data: `{"cpu":80}` })]), components);
+    expect(liveCardCount()).toBe(2);
+    vi.advanceTimersByTime(3000);
+    expect(liveCardCount()).toBe(1);
+    // Taken off the page while another card still holds the timer.
+    const other = draw(card({ every: 5 }));
+    other.querySelector<HTMLElement>(".command-card")!.dataset.liveKey = "other/0";
+    row.remove();
+    vi.advanceTimersByTime(500);
+    expect(liveCardCount()).toBe(1);
+  });
+
+  it("stops its timer once no card is on the page, and starts it again for the next one", () => {
+    const row = draw(card());
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    row.remove();
+    vi.advanceTimersByTime(500);
+    expect(vi.getTimerCount()).toBe(0);
+    draw(card());
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    vi.advanceTimersByTime(2500);
+    expect(runs()).toHaveLength(1);
   });
 
   it("only cards that have an interval and have run", () => {
