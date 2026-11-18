@@ -35,6 +35,10 @@ Check: The reviewer runs `grep` for the moved path, the fixture name or the chan
 Why: Fixes introduced new findings or were half done: the F3 fix, the F2 fix and the tier fix (2026-11-15); the lost-copy queue freeze needed a second fix and the origin fix made a second hole (2026-11-16); the 3.5 s limit was shorter than the real call (2026-11-17); the Monitor report needed three rounds (2026-11-18).
 Check: The re-reviewer reads the fix diff for a test that fails before the fix (log of the fix round's one run, or the reviewer's probe); a fix commit with no test is sent back.
 
+## CS-06 · Before hand-off, look up every import, type name, union, nullable and optional field a change touches; a test for an untyped module uses `// @ts-expect-error`   (from L-022, proposed 2026-11-18)
+Why: `tsc` runs only in the final confirmation, so these errors surfaced after merges, one fix commit each: nullable ids and storage types (2026-11-16), a missing union value and missing imports (2026-11-17), an untyped `jsdom` fixed twice, a missing type import and an import name clash (2026-11-18).
+Check: The implementer's "Standards check" lists the imports and types looked up with `node desktop/scripts/where.mjs --exports <file>`; the reviewer samples that list and re-reads the added imports.
+
 Format of a rule:
 
 ```markdown
