@@ -131,7 +131,11 @@ export class EventTap {
     this.schedule();
   }
 
-  /** Puts `event` in `pending`; a snapshot of an object that already has one waiting takes its place (latest wins). */
+  /**
+   * Puts `event` in `pending`; a snapshot of an object that already has one waiting takes its place (latest wins), but only
+   * when nothing but snapshots came after that one: with another kind of event in between, the newer state would be written
+   * before it, so it queues behind it instead and both snapshots are written.
+   */
   private enqueue(event: ContractEvent): void {
     const key = snapshotKey(event);
     if (key === null) {
@@ -140,7 +144,9 @@ export class EventTap {
       return;
     }
     for (let i = this.pending.length - 1; i >= 0; i -= 1) {
-      if (snapshotKey(this.pending[i]) === key) {
+      const other = snapshotKey(this.pending[i]);
+      if (other === null) break;
+      if (other === key) {
         this.pending[i] = event;
         return;
       }

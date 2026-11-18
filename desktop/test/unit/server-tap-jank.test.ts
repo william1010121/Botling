@@ -8,7 +8,12 @@ import { BODY_BYTES_LIMIT, fitBody } from "../../src/server/effects/fit";
 import { TxScope } from "../../src/server/effects/scope";
 import { EventTap, type EventTapOptions } from "../../src/server/effects/tap";
 import { readEntries, verifyStream } from "../../src/server/log";
+import { effectCheckpointSink } from "../../src/server/effects";
+import { IntentRuntime } from "../../src/server/intents";
+import { LiveChannel } from "../../src/server/live";
+import { FakeTurnEngine } from "../fixtures/fake-turn-engine";
 import { quickStore, type QuickStore } from "./server-log-helpers";
+import { memoryStore } from "./server-slots-harness";
 
 const TIME = "2026-11-18T00:00:00.000Z";
 const bytes = (value: unknown) => Buffer.byteLength(canonicalJson(value));
@@ -59,6 +64,21 @@ describe("fitBody: a sub-agent view over one frame loses its oldest steps, never
     expect(fitBody("subagent.updated", small).body).toBe(small);
   });
 
+  it("a result or a prompt that is over a frame by itself is cut with a note, and the update still fits", () => {
+    const huge = { botId: "alpha", subagent: subagent([step(1), step(2)], { result: "R".repeat(300_000), prompt: "go" }) };
+    const fittedResult = fitBody("subagent.updated", huge);
+    expect(fittedResult.dropped).toBe(false);
+    expect(bytes(fittedResult.body)).toBeLessThanOrEqual(BODY_BYTES_LIMIT);
+    expect((fittedResult.body.subagent as { result: string }).result).toContain("more characters are not shown");
+    expect((fittedResult.body.subagent as { prompt: string }).prompt).toBe("go");
+    const hugePrompt = { botId: "alpha", subagent: subagent([step(1)], { result: "done", prompt: "P".repeat(300_000) }) };
+    const fittedPrompt = fitBody("subagent.updated", hugePrompt);
+    expect(fittedPrompt.dropped).toBe(false);
+    expect(bytes(fittedPrompt.body)).toBeLessThanOrEqual(BODY_BYTES_LIMIT);
+    expect((fittedPrompt.body.subagent as { prompt: string }).prompt).toContain("more characters are not shown");
+    expect((fittedPrompt.body.subagent as { result: string }).result).toBe("done");
+  });
+
   it("steps with big pictures and a result near its limit still fit", () => {
     const images = Array.from({ length: 20 }, (_, i) => ({ url: "u".repeat(20_000), name: `n${i}` }));
     const heavy = Array.from({ length: 40 }, (_, i) => step(i, { images }));
@@ -70,12 +90,13 @@ describe("fitBody: a sub-agent view over one frame loses its oldest steps, never
 });
 
 describe("fitBody: components over one frame lose the biggest templates first", () => {
+  // smallest first: a cut that walks the record in its own order would lose these before the big ones
   const components = {
-    huge: info("h".repeat(200_000)),
-    large: info("l".repeat(120_000)),
-    mid: info("m".repeat(60_000)),
-    small: info("<b>s</b>"),
     tiny: info("t"),
+    small: info("<b>s</b>"),
+    mid: info("m".repeat(60_000)),
+    large: info("l".repeat(120_000)),
+    huge: info("h".repeat(200_000)),
   };
 
   it("is not dropped, fits, and the small components are still there", () => {
@@ -89,6 +110,17 @@ describe("fitBody: components over one frame lose the biggest templates first", 
     expect(left).not.toHaveProperty("huge");
     expect(left.small).toEqual(components.small);
     expect(Object.keys(components)).toHaveLength(5); // the caller's record is untouched
+  });
+
+  it("a record with many mid-size templates loses just enough of them, never more", () => {
+    const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`c${String(i).padStart(2, "0")}`, info("x".repeat(30_000))]));
+    const fitted = fitBody("components.updated", { components: many });
+    expect(fitted.dropped).toBe(false);
+    const left = Object.keys(fitted.body.components as object);
+    expect(left.length).toBeGreaterThan(0);
+    expect(left.length).toBeLessThan(12);
+    const withOneMore = { components: Object.fromEntries(Object.entries(many).slice(0, left.length + 1)) };
+    expect(bytes(withOneMore)).toBeGreaterThan(BODY_BYTES_LIMIT); // one fewer removed would not have fitted
   });
 
   it("removes only what it must: when dropping the biggest is enough, the next ones stay", () => {
@@ -159,18 +191,29 @@ describe("the event tap writes a burst of snapshots of one object once", () => {
     expect(stored(store, "bot:beta", "subagent.updated")).toHaveLength(1);
   });
 
-  it("events that are not snapshots are never replaced, and keep their order around a snapshot", async () => {
+  it("events that are not snapshots are never replaced, and a snapshot is never written before an event that came earlier", async () => {
     const { store, scope, tap } = setup();
     const added = (id: string) => ({ type: "message.added", botId: "alpha", message: { id, role: "user", text: id, time: TIME } }) as unknown as ContractEvent;
     tap.event(added("m1"));
     tap.event(botUpdated("alpha", { unread: 1 }));
     tap.event(added("m2"));
     tap.event(botUpdated("alpha", { unread: 2 }));
+    tap.event(botUpdated("alpha", { unread: 3 })); // only a snapshot of the same bot lies after the unread 2 one: it takes its place
     await scope.submit(() => undefined);
-    const kinds = readEntries(store.db, "bot:alpha", 1, { maxEntries: 100, maxBytes: 1e12 }).entries.map((entry) => entry.kind);
-    expect(kinds.filter((kind) => kind === "message.added")).toHaveLength(2);
-    expect(kinds.filter((kind) => kind === "bot.updated")).toHaveLength(1);
-    expect(kinds.indexOf("message.added")).toBeLessThan(kinds.indexOf("bot.updated"));
+    const rows = readEntries(store.db, "bot:alpha", 1, { maxEntries: 100, maxBytes: 1e12 }).entries;
+    const order = rows.map((entry) => entry.kind === "message.added" ? (entry.body.message as { id: string }).id : `bot${(entry.body.bot as { unread: number }).unread}`);
+    expect(order).toEqual(["m1", "bot1", "m2", "bot3"]);
+  });
+
+  it("a snapshot that follows an event of another kind queues behind it, not into the older snapshot's place", async () => {
+    const { store, scope, tap } = setup();
+    tap.event(botUpdated("alpha", { unread: 1 }));
+    tap.event({ type: "turn.started", botId: "alpha", turnId: "t1", messageId: "r1" } as unknown as ContractEvent);
+    tap.event(botUpdated("alpha", { unread: 2, working: true }));
+    expect(tap.waiting).toBe(3);
+    await scope.submit(() => undefined);
+    const rows = readEntries(store.db, "bot:alpha", 1, { maxEntries: 100, maxBytes: 1e12 }).entries.map((entry) => entry.kind);
+    expect(rows).toEqual(["bot.updated", "turn.started", "bot.updated"]);
   });
 
   it("an oversized sub-agent update is stored cut instead of lost", async () => {
@@ -230,6 +273,48 @@ describe("the event tap writes a burst of snapshots of one object once", () => {
       await vi.advanceTimersByTimeAsync(60_000);
       await until(() => stored(store, "bot:alpha", "bot.updated").length === 2);
       expect(stored(store, "bot:alpha", "bot.updated")).toHaveLength(2);
+    });
+
+    it("after an urgent write a later snapshot waits for its own window again", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { store, tap } = setup({ coalesceMs: 60_000 });
+      tap.event({ type: "message.added", botId: "alpha", message: { id: "m1", role: "user", text: "hi", time: TIME } } as unknown as ContractEvent);
+      await until(() => tap.waiting === 0 && stored(store, "bot:alpha", "message.added").length > 0);
+      tap.event(botUpdated("alpha", { unread: 9 }));
+      expect(vi.getTimerCount()).toBe(1);
+      for (let i = 0; i < 20; i += 1) await settleOnce();
+      expect(stored(store, "bot:alpha", "bot.updated")).toHaveLength(0);
+      expect(tap.waiting).toBe(1);
+    });
+
+    it("an urgent event after a waiting snapshot writes both at once, in order, and the timer is gone", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { store, tap } = setup({ coalesceMs: 60_000 });
+      tap.event(botUpdated("alpha", { unread: 1 }));
+      tap.event({ type: "turn.started", botId: "alpha", turnId: "t1", messageId: "r1" } as unknown as ContractEvent);
+      await until(() => tap.waiting === 0);
+      const kinds = readEntries(store.db, "bot:alpha", 1, { maxEntries: 100, maxBytes: 1e12 }).entries.map((entry) => entry.kind);
+      expect(kinds).toEqual(["bot.updated", "turn.started"]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("IntentRuntime passes coalesceMs to its tap", async () => {
+      const { writer } = memoryStore();
+      const live = new LiveChannel({ sink: effectCheckpointSink(writer), checkpointIntervalMs: 5 });
+      const engine = new FakeTurnEngine();
+      const runtime = new IntentRuntime({ store: writer, engine, live, log: () => undefined, coalesceMs: 60_000 });
+      try {
+        await runtime.start();
+        runtime.tap.event(botUpdated("alpha", { unread: 1 }));
+        for (let i = 0; i < 20; i += 1) await settleOnce();
+        expect(runtime.tap.waiting).toBe(1); // still inside its window
+        await runtime.scope.submit(() => undefined);
+        expect(runtime.tap.waiting).toBe(0);
+      } finally {
+        runtime.close();
+        engine.close();
+        live.close();
+      }
     });
 
     it("a held tap keeps the snapshot until released, then the window applies", async () => {
