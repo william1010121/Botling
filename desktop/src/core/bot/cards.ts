@@ -133,7 +133,9 @@ export class BotCards {
     // A Claude bot that can start `<card>` workers is told the built-in components only; a card's worker picks from the rest (`cardBriefing`).
     // The same test as the prompt's (prompts.ts): a head that writes only `<card>` has neither the examples nor the inline blocks in its note.
     const appWorkers = this.owner.engine === "claude" && this.owner.workers.claudeWorkersOn();
-    const cardsOnly = headWritesCards(this.owner.engine, appWorkers, examples, this.owner.profile.id === MAINTAINER_ID);
+    // The head's OWN engine decides (as `desktopPrompts` does for its system prompt): an Antigravity or Codex head of a Claude bot is offered `<card>` (`reachesByCards`),
+    // but its prompt keeps the inline block guidance (it has no `CARD_WHEN_RULE`), so its note keeps the blocks and the examples that guidance names.
+    const cardsOnly = headWritesCards(this.ctx.engine, appWorkers, examples, this.owner.profile.id === MAINTAINER_ID);
     return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards(), cardsOnly);
   }
 

@@ -26,6 +26,7 @@ vi.mock("../../src/core/agent/codex", async (original) => ({ ...await original<a
 vi.mock("../../src/core/agent/agy-acp", () => ({ verifyAcpRuntime() {}, AgyAcpHead: class extends fixture.Head {} }));
 import { Bot } from "../../src/core/bot";
 import { CARD_WORKER } from "../../src/core/agent/claude-workers";
+import { CARD_NEEDS_CLAUDE } from "../../src/core/bot/workers";
 import { ComponentsContext } from "../../src/core/components/service";
 import { mainProfile } from "../../src/core/store/workspace";
 import { botPrompts } from "../../src/core/prompts";
@@ -46,9 +47,9 @@ async function waitFor(what: string, ok: () => unknown) {
 }
 
 /** `library`: a component library for the bot (name -> about.md; each gets a template). `realWorkers`: keep the real ClaudeWorkers (on the fake heads) instead of the handoff stand-in. */
-function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unknown>, onRequests?: (bot: any, requests: any[]) => any[], extra: { library?: Record<string, string>; realWorkers?: boolean } = {}) {
+function rig(engine: "claude" | "codex" | "agy" = "claude", launch?: Record<string, unknown>, onRequests?: (bot: any, requests: any[]) => any[], extra: { library?: Record<string, string>; realWorkers?: boolean; partner?: "agy" | "codex" } = {}) {
   const folder = tempDir("bot-worker-cards"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
-  writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", heads: { engines: [engine], answerWith: engine, codexModel: "m" } }));
+  writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", heads: { engines: extra.partner ? [engine, extra.partner] : [engine], answerWith: engine, codexModel: "m" } }));
   const events: any[] = [];
   const logs: string[] = [];
   let components: ComponentsContext | undefined;
@@ -60,6 +61,7 @@ function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unkn
   const b = new Bot({ profile, deferStartup: true, ...(components ? { components } : {}), ledger: { record() {}, forget() {} } as any,
     headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: folder, allowedTools: [] }; },
     codexConfig(_p, c) { return { command: "/never-spawn", cwd: folder, threads: new CodexThreads(join(folder, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null } as any; },
+    agyConfig(_p, c) { return { ...c, command: "/never-spawn", transport: "acp", cwd: folder } as any; },
     prompts: (e, heads) => botPrompts({ profile, engine: e, heads }),
     ...(launch ? { launch: () => ({ subagentHourCache: false, ...launch }) as any } : {}), ...(onRequests ? { onRequests } : {}),
     emit(event) { events.push(event); }, log(line: string) { logs.push(line); }, idleMs: 600000, approvalTimeoutMs: 1000, interruptGraceMs: 10, tidyTimeoutMs: 30 });
@@ -224,7 +226,102 @@ describe("a reply with <card>: the worker starts", () => {
     const r = rig("codex");
     const record = await answer(r, '<card title="t">go</card>');
     await waitFor("the card to fail", () => record.workerCards![0]!.status === "failed");
-    expect(record.workerCards![0]!.error).toMatch(/Claude bot/);
+    expect(record.workerCards![0]!.error).toBe(CARD_NEEDS_CLAUDE);
+    expect(r.handoff).not.toHaveBeenCalled();
+  });
+});
+
+describe("a <card> from the Antigravity or Codex head of a bot with a Claude head", () => {
+  /** The partner head finishes a turn with `reply` (the head's own turn, not the primary's): its bubble's record. */
+  function answerFrom(head: any, reply: string) {
+    const turn = head.newTurn("app", "go", null);
+    turn.reply.add({ kind: "delta", text: reply });
+    head.finishTurn(turn, "done");
+    return turn.record as { id: string; text: string; workerCards?: Array<Record<string, any>> };
+  }
+  const library = { "inline-chart": "Inline chart: a chart.\nBuilt-in: yes\nData: {}", status: "Status card: ok.\nData: {}" };
+
+  for (const partner of ["agy", "codex"] as const) {
+    it(`${partner}: the card is drawn by the Claude head's card worker (the app's haiku Claude worker), not refused for the replying head's engine`, async () => {
+      const r = rig("claude", undefined, undefined, { partner });
+      const head = r.peek.partner;
+      expect(head.engine).toBe(partner);
+      const record = answerFrom(head, 'Here it is.\n<card title="Plan compare">Compare the two plans: price and limits.</card>');
+      expect(record.workerCards).toHaveLength(1);
+      await waitFor("the card to be bound to its worker", () => record.workerCards![0]!.taskId || record.workerCards![0]!.status === "failed");
+      expect(record.workerCards![0]).toMatchObject({ title: "Plan compare", taskId: "T1", status: "running", run: 1 });
+      expect(record.workerCards![0]!.error).toBeUndefined();
+      expect(r.handoff).toHaveBeenCalledTimes(1);
+      const [tool, args] = r.handoff.mock.calls[0]!;
+      expect(tool).toBe("app_handoff");
+      expect(args).toMatchObject({ name: "Plan compare", group: "Plan compare", model: "haiku", effort: "low" });
+      expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBe(true);
+      // The line is the chat's (the owner holds it too): its card shows the worker.
+      expect(r.peek.messageView(r.peek.records.find((line: any) => line.id === record.id)).workerCards).toMatchObject([{ title: "Plan compare", status: "running", taskId: "T1" }]);
+    });
+  }
+
+  it("a head that is not Claude is told about <card> in its note exactly when its card can be drawn: workers on, it is offered and drawn; workers native, neither, and a stray card says why in plain words", async () => {
+    const on = rig("claude", { componentsViaCards: true }, undefined, { partner: "agy", library });
+    expect(on.peek.partner.componentNote()).toContain('<card title="');
+    const record = answerFrom(on.peek.partner, '<card title="t">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    expect(on.handoff).toHaveBeenCalledTimes(1);
+
+    const off = rig("claude", { componentsViaCards: true, claudeWorkers: "native" }, undefined, { partner: "agy", library });
+    expect(off.peek.partner.componentNote()).not.toContain("<card");
+    const stray = answerFrom(off.peek.partner, '<card title="t">go</card>');
+    await waitFor("the card to fail", () => stray.workerCards![0]!.status === "failed");
+    expect(stray.workerCards![0]!.error).toBe(CARD_NEEDS_CLAUDE);
+    expect(CARD_NEEDS_CLAUDE).not.toMatch(/app-managed|engine/);
+    expect(CARD_NEEDS_CLAUDE).toMatch(/Claude worker/);
+    expect(off.handoff).not.toHaveBeenCalled();
+  });
+
+  it("a card of a line the Claude head's chat does not hold is not started on a chat that cannot follow it: it fails in plain words and no worker is started", async () => {
+    const r = rig("claude", undefined, undefined, { partner: "agy" });
+    const head = r.peek.partner;
+    const record = { id: "not-in-the-owner-chat", role: "bot", text: "", date: 0, workerCards: [{ id: "99999999-2222-3333-4444-555555555555", title: "t", prompt: "go", status: "starting" }] } as any;
+    expect(r.peek.records.some((line: any) => line.id === record.id)).toBe(false);
+    head.workers.startCards(record);
+    await waitFor("the card to fail", () => record.workerCards[0].status === "failed");
+    expect(record.workerCards[0].error).toBe(CARD_NEEDS_CLAUDE);
+    expect(r.handoff).not.toHaveBeenCalled();
+  });
+
+  it("the card's reply box and redo work from the Claude head's chat for a card its Antigravity head wrote, and the worker is the Claude head's", async () => {
+    const r = rig("claude", undefined, undefined, { partner: "agy" });
+    const record = answerFrom(r.peek.partner, 'Here.\n<card title="Plan compare">Compare the plans.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const held = r.peek.records.find((line: any) => line.id === record.id);
+    expect(held).toBe(record);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: "Done." }));
+    await waitFor("the card to be done", () => record.workerCards![0]!.status === "done");
+    // The Claude head's workers know the card (the reply box and redo look it up there), and the redo is that head's worker.
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    const handoffs = r.handoff.mock.calls.filter(([tool]) => tool === "app_handoff");
+    expect(handoffs).toHaveLength(2);
+    expect(handoffs[1]![1]).toMatchObject({ model: "opus", group: "Plan compare" });
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", earlier: ["T1"] });
+  });
+
+  it("an Antigravity head's note keeps the inline blocks and their examples its own prompt names, and still offers <card>; the Claude head's note is cards-only", async () => {
+    const launch = { componentsViaCards: true, inlineBlockGuidance: "all" };
+    const r = rig("claude", launch, undefined, { partner: "agy", library });
+    const own = r.peek.componentNote(), theirs = r.peek.partner.componentNote();
+    expect(own).toContain("<card title=");
+    expect(theirs).toContain("<card title=");
+    expect(own).not.toContain("- inline-chart");
+    expect(theirs).toContain("- inline-chart");
+  });
+
+  it("a bot with no Claude head cannot draw a card: its note does not offer <card>, a stray one fails in plain words, and no worker is started", async () => {
+    const r = rig("agy", { componentsViaCards: true }, undefined, { library });
+    expect(r.peek.componentNote()).not.toContain("<card");
+    const record = answerFrom(r.peek, '<card title="t">go</card>');
+    await waitFor("the card to fail", () => record.workerCards![0]!.status === "failed");
+    expect(record.workerCards![0]!.error).toBe(CARD_NEEDS_CLAUDE);
     expect(r.handoff).not.toHaveBeenCalled();
   });
 });
@@ -724,7 +821,7 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(record.workerCards![0]).toMatchObject({ taskId: "T2", earlier: ["T1"] });
     const other = rig("codex");
     other.peek.records.push({ id: "m", role: "bot", text: "", date: 0, workerCards: [{ id: "11111111-2222-3333-4444-555555555555", title: "t", prompt: "p", status: "done", run: 1, taskId: "C1" }] });
-    await expect(other.peek.workers.redoCard("C1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/Claude bot/) });
+    await expect(other.peek.workers.redoCard("C1")).rejects.toMatchObject({ code: "conflict", message: CARD_NEEDS_CLAUDE });
     expect(other.handoff).not.toHaveBeenCalled();
   });
 
