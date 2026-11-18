@@ -504,7 +504,7 @@ describe("a stuck event loop is not the plugin's silence (switching a bot to Ant
 
 /** Fake clock probes: `jump` is a stuck loop (the clock is a second ahead when the timer comes round); nothing waits in real time. */
 describe("the late-timer allowance has its edges (fake clock)", () => {
-  const LIMIT = 53;
+  const LIMIT = RULES_TIME_LIMIT_MS; // the shipped limit, far above the allowance's slack: a timer that is only due is not late
   const jump = async () => { vi.setSystemTime(Date.now() + 1000); await vi.advanceTimersByTimeAsync(LIMIT); };
   const rig = () => {
     const said: string[] = [];

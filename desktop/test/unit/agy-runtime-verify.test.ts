@@ -137,12 +137,15 @@ describe("fileIdentity of a real file", () => {
   });
 
   it("changes when the bytes change with the same size and the old mtime put back (the ctime cannot be put back)", () => {
+    const MTIME = 1_700_000_000; // whole seconds: put back exactly, to the nanosecond
     put("aaaa");
-    const before = fileIdentity(file), at = statSync(file);
+    utimesSync(file, MTIME, MTIME);
+    const before = fileIdentity(file);
     const wait = Date.now() + 15; while (Date.now() < wait) { /* let the ctime tick */ }
     put("bbbb");
-    utimesSync(file, at.atime, at.mtime);
+    utimesSync(file, MTIME, MTIME);
     expect(statSync(file).size).toBe(4);
+    expect(statSync(file, { bigint: true }).mtimeNs).toBe(BigInt(MTIME) * 1_000_000_000n); // size and mtime are as they were
     expect(fileIdentity(file)).not.toBe(before);
   });
 
