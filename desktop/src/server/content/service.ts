@@ -281,7 +281,13 @@ export class ContentService {
       return [];
     }
     if (this.closed) return [];
-    const done = await this.options.store.submit((db) => this.complete(db, pendingId, result));
+    // D75: a file this commit stops naming is deleted right after it, so the commit is flushed first (a power loss must
+    // not bring back rows that name a deleted file).
+    const done = await this.options.store.submit((db, context) => {
+      const completed = this.complete(db, pendingId, result);
+      if (completed.drop) context.durable?.();
+      return completed;
+    });
     if (done.drop) {
       try { rmSync(done.drop, { force: true }); } catch { /* the next start sweeps it */ }
     }

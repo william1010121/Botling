@@ -10,7 +10,7 @@ import type { StreamId } from "../../src/protocol";
 import { ContentService, contentLineHook, finishedLine, Hasher, namedFiles, pathOfFileRef, pinFile, type LineLike } from "../../src/server/content";
 import { EventTap, TxScope } from "../../src/server/effects";
 import { appendEntries, ensureStream, readEntries } from "../../src/server/log";
-import { openServerStore, type ServerStore } from "../../src/server/store";
+import { openServerStore, type Command, type ServerStore } from "../../src/server/store";
 
 const BOT = "bot-a";
 const STREAM = `bot:${BOT}` as StreamId;
@@ -281,6 +281,32 @@ describe("pinned versions", () => {
     expect(content.map((row) => [row.id, row.pin])).toEqual([[sha(same), "copy"]]);
     expect(readdirSync(service.pinsDir)).toEqual([String(content[0]!.path).split("/").pop()]);
     expect(rows("SELECT seq FROM content_refs WHERE id = ? ORDER BY seq", sha(same)).length).toBe(4); // two lines + two content.ready
+  });
+});
+
+describe("D75: a file deleted after a commit", () => {
+  it("the commit that stops naming a pin is flushed before the pin is deleted (CommandContext.durable)", async () => {
+    await service.close();
+    const marks: string[] = [];
+    // The store as the service sees it, noting each command that asks for its batch to be flushed.
+    const watched = {
+      submit: <T>(command: Command<T>) => store.submit<T>((db, context) =>
+        command(db, { ...context, durable: () => { marks.push(readdirSync(service.pinsDir).join(",")); context.durable?.(); } })),
+      openReader: () => store.openReader(),
+    };
+    service = await openService({ pin: { force: "copy" }, store: watched });
+    const a = join(media, "a.png");
+    const b = join(media, "b.png");
+    const same = bytes("same-d75", 70_000);
+    writeFileSync(a, same);
+    writeFileSync(b, same);
+    await (await postLine(line("m1", `![a](${a})`))).ready;
+    expect(marks).toEqual([]); // the first version deletes nothing
+    await (await postLine(line("m2", `![b](${b})`))).ready;
+    // One mark, made while both pins were still there (the second is deleted only after the flushed commit).
+    expect(marks).toHaveLength(1);
+    expect(marks[0]!.split(",")).toHaveLength(2);
+    expect(readdirSync(service.pinsDir)).toHaveLength(1);
   });
 });
 

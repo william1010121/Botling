@@ -18,6 +18,11 @@
      Commit     the writer commits a command (a batch); one that wrote a durable table owes an acknowledgement
      Flush      the writer's flush of a marked batch (or a checkpoint): every commit so far is on the disk
      Ack        an owed acknowledgement leaves, once its commit is on the disk
+     Reject     the flush of a marked batch fails: its commands are rejected (no acknowledgement), the commit stays
+                in the OS, and the writer owes a flush (`debt`): every later batch is flushed before it settles until
+                one flush succeeds
+     Resend     the sender sends a command again that is already committed; the writer answers it from the stored
+                receipt in a batch that writes nothing, flushed only when the writer owes a flush
      Push       the reader gets the next entry (read from committed state, never waiting for a flush)
      Sub        the reader (re)subscribes with its cursor: follow, rewind (it holds more than the store), or reset
      Disconnect the reader's session ends
@@ -30,7 +35,8 @@ CONSTANTS Acks,      \* commands whose commit writes a durable table (an acknowl
           Events,    \* commands that write only the log and read models (engine output)
           MaxFault,  \* crashes and power losses, together
           Bug        \* "none": the design; "noflush": acknowledge after COMMIT without the flush;
-                     \* "norotate": no boot check (a run that lost its tail keeps its logId)
+                     \* "norotate": no boot check (a run that lost its tail keeps its logId);
+                     \* "nodebt": a failed flush owes nothing (a re-send is answered from an unflushed receipt)
 
 Cmds == Acks \cup Events
 
@@ -47,9 +53,10 @@ VARIABLES
   rOn,       \* the reader is subscribed to this run
   rLog,      \* what the reader holds of the stream
   rId,       \* the logId it holds them under
-  faults     \* crashes and power losses so far
+  faults,    \* crashes and power losses so far
+  debt       \* a flush failed in this run and none succeeded since
 
-vars == <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
+vars == <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults, debt>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
 IsPrefix(a, b) == Len(a) <= Len(b) /\ SubSeq(b, 1, Len(a)) = a
@@ -60,12 +67,12 @@ TypeOK ==
   /\ up \in BOOLEAN /\ log \in Seq(Cmds) /\ synced \in 0..Len(log)
   /\ owed \subseteq Acks /\ acked \subseteq Acks
   /\ logId \in Nat /\ openMark \in BOOLEAN /\ bootMark \in 0..MaxFault /\ boot \in 0..MaxFault
-  /\ rOn \in BOOLEAN /\ rLog \in Seq(Cmds) /\ rId \in Nat /\ faults \in 0..MaxFault
+  /\ rOn \in BOOLEAN /\ rLog \in Seq(Cmds) /\ rId \in Nat /\ faults \in 0..MaxFault /\ debt \in BOOLEAN
 
 Init ==
   /\ up = FALSE /\ log = <<>> /\ synced = 0 /\ owed = {} /\ acked = {}
   /\ logId = 0 /\ openMark = FALSE /\ bootMark = 0 /\ boot = 0
-  /\ rOn = FALSE /\ rLog = <<>> /\ rId = 0 /\ faults = 0
+  /\ rOn = FALSE /\ rLog = <<>> /\ rId = 0 /\ faults = 0 /\ debt = FALSE
 
 -----------------------------------------------------------------------------
 (* The server. *)
@@ -74,7 +81,7 @@ Init ==
 Start ==
   /\ ~up /\ up' = TRUE
   /\ logId' = IF openMark /\ bootMark # boot /\ Bug # "norotate" THEN logId + 1 ELSE logId
-  /\ openMark' = TRUE /\ bootMark' = boot /\ synced' = Len(log)
+  /\ openMark' = TRUE /\ bootMark' = boot /\ synced' = Len(log) /\ debt' = FALSE
   /\ UNCHANGED <<log, owed, acked, boot, rOn, rLog, rId, faults>>
 
 \* A command commits (it may be a re-send of one a power loss took).
@@ -82,34 +89,48 @@ Commit(c) ==
   /\ up /\ c \notin Range(log)
   /\ log' = Append(log, c)
   /\ owed' = IF c \in Acks THEN owed \cup {c} ELSE owed
-  /\ UNCHANGED <<up, synced, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
+  /\ UNCHANGED <<up, synced, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults, debt>>
 
 Flush ==
-  /\ up /\ synced < Len(log) /\ synced' = Len(log)
+  /\ up /\ synced < Len(log) /\ synced' = Len(log) /\ debt' = FALSE
   /\ UNCHANGED <<up, log, owed, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
 
 Ack(c) ==
   /\ up /\ c \in owed
   /\ Bug = "noflush" \/ Pos(c) <= synced
   /\ acked' = acked \cup {c} /\ owed' = owed \ {c}
-  /\ UNCHANGED <<up, log, synced, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
+  /\ UNCHANGED <<up, log, synced, logId, openMark, bootMark, boot, rOn, rLog, rId, faults, debt>>
+
+\* The flush after c's commit fails (writer.ts: every command of the batch is rejected; connection.ts: the gate owes).
+Reject(c) ==
+  /\ up /\ c \in owed /\ Pos(c) > synced
+  /\ owed' = owed \ {c} /\ debt' = (Bug # "nodebt")
+  /\ UNCHANGED <<up, log, synced, acked, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
+
+\* A copy of a committed command (a re-send after a rejection, a lost reply or a restart): admit() finds its receipt
+\* and the answer leaves when the batch settles; that batch is flushed only when the writer owes a flush.
+Resend(c) ==
+  /\ up /\ c \in Acks /\ c \in Range(log) /\ c \notin owed
+  /\ synced' = IF debt THEN Len(log) ELSE synced /\ debt' = FALSE
+  /\ acked' = acked \cup {c}
+  /\ UNCHANGED <<up, log, owed, logId, openMark, bootMark, boot, rOn, rLog, rId, faults>>
 
 \* writer.close() waits until every command settled; the flushed commit of the mark covers every commit.
 Close ==
   /\ up /\ owed = {}
-  /\ up' = FALSE /\ rOn' = FALSE /\ openMark' = FALSE /\ synced' = Len(log)
+  /\ up' = FALSE /\ rOn' = FALSE /\ openMark' = FALSE /\ synced' = Len(log) /\ debt' = FALSE
   /\ UNCHANGED <<log, owed, acked, logId, bootMark, boot, rLog, rId, faults>>
 
 Crash ==
   /\ up /\ faults < MaxFault
-  /\ up' = FALSE /\ rOn' = FALSE /\ owed' = {} /\ faults' = faults + 1
+  /\ up' = FALSE /\ rOn' = FALSE /\ owed' = {} /\ faults' = faults + 1 /\ debt' = FALSE
   /\ UNCHANGED <<log, synced, acked, logId, openMark, bootMark, boot, rLog, rId>>
 
 \* Also while the server is down (a crash left commits that were never flushed).
 PowerLoss ==
   /\ faults < MaxFault
   /\ \E k \in synced..Len(log) : log' = SubSeq(log, 1, k) /\ synced' = k
-  /\ up' = FALSE /\ rOn' = FALSE /\ owed' = {} /\ boot' = boot + 1 /\ faults' = faults + 1
+  /\ up' = FALSE /\ rOn' = FALSE /\ owed' = {} /\ boot' = boot + 1 /\ faults' = faults + 1 /\ debt' = FALSE
   /\ UNCHANGED <<acked, logId, openMark, bootMark, rLog, rId>>
 
 -----------------------------------------------------------------------------
@@ -118,25 +139,25 @@ PowerLoss ==
 Push ==
   /\ up /\ rOn /\ rId = logId /\ Len(rLog) < Len(log)
   /\ rLog' = Append(rLog, log[Len(rLog) + 1])
-  /\ UNCHANGED <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rOn, rId, faults>>
+  /\ UNCHANGED <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rOn, rId, faults, debt>>
 
 \* LogReader.sub: beyond the head of the same logId → a rewind (a new logId, written and flushed), then reset + snap;
 \* another logId → reset + snap; else follow from the cursor.
 Sub ==
   /\ up /\ ~rOn /\ rOn' = TRUE
   /\ CASE rId = logId /\ Len(rLog) > Len(log) ->
-            logId' = logId + 1 /\ rId' = logId + 1 /\ rLog' = log /\ synced' = Len(log)
-       [] rId # logId -> rId' = logId /\ rLog' = log /\ UNCHANGED <<logId, synced>>
-       [] OTHER -> UNCHANGED <<logId, rId, rLog, synced>>
+            logId' = logId + 1 /\ rId' = logId + 1 /\ rLog' = log /\ synced' = Len(log) /\ debt' = FALSE
+       [] rId # logId -> rId' = logId /\ rLog' = log /\ UNCHANGED <<logId, synced, debt>>
+       [] OTHER -> UNCHANGED <<logId, rId, rLog, synced, debt>>
   /\ UNCHANGED <<up, log, owed, acked, openMark, bootMark, boot, faults>>
 
 Disconnect ==
   /\ rOn /\ rOn' = FALSE
-  /\ UNCHANGED <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rLog, rId, faults>>
+  /\ UNCHANGED <<up, log, synced, owed, acked, logId, openMark, bootMark, boot, rLog, rId, faults, debt>>
 
 Next ==
   \/ Start \/ Flush \/ Close \/ Crash \/ PowerLoss \/ Push \/ Sub \/ Disconnect
-  \/ \E c \in Cmds : Commit(c) \/ Ack(c)
+  \/ \E c \in Cmds : Commit(c) \/ Ack(c) \/ Reject(c) \/ Resend(c)
 
 \* The writer flushes and sends what it owes, and the hub pushes to a subscribed reader; commands, crashes, power
 \* losses, closes, starts and the reader's comings and goings are never forced.
@@ -157,10 +178,14 @@ NoFork == rOn /\ rId = logId => IsPrefix(rLog, log)
 \* The flushed part is never more than what the OS shows.
 SyncedInLog == synced <= Len(log)
 
+\* The writer owes a flush only while something is unflushed.
+DebtUnsynced == debt => synced < Len(log)
+
 (* Liveness. *)
 
-\* An owed acknowledgement goes out, unless the process stops first (the sender re-sends; the receipt answers it).
-AckSent == \A c \in Acks : (c \in owed) ~> (c \in acked \/ ~up)
+\* An owed acknowledgement goes out, unless the process stops or its flush fails first (the sender re-sends; the
+\* receipt answers it).
+AckSent == \A c \in Acks : (c \in owed) ~> (c \in acked \/ ~up \/ debt)
 
 \* A subscribed reader catches up with the whole log, unless the server or its session stops.
 CatchesUp == (up /\ rOn) ~> ((rId = logId /\ rLog = log) \/ ~up \/ ~rOn)

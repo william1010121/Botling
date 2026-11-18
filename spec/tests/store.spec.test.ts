@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StoreDriver, StoreObservation } from "../driver/store-driver";
-import { Ack, Close, Commit, Crash, Disconnect, Flush, init, PowerLoss, Push, Start, Sub, violated, type StoreConsts, type StoreState } from "../reference/store";
+import { Ack, Close, Commit, Crash, Disconnect, Flush, init, PowerLoss, Push, Reject, Resend, Start, Sub, violated, type StoreConsts, type StoreState } from "../reference/store";
 import { storeDriver } from "../../desktop/spec-adapters/store-adapter";
 
 const c: StoreConsts = { acks: ["a1", "a2"], events: ["e1", "e2", "e3"], maxFault: 3, bug: process.env.SPEC_BUG === "store" ? "norotate" : "none" };
@@ -74,11 +74,28 @@ function follower(driver: StoreDriver, seed: number) {
     async start() { await driver.start(); take("Start", Start(c, s)); check(); },
     async commit(cmd: string) {
       const ack = c.acks.includes(cmd);
-      const { durable } = await driver.commit(cmd, ack ? "ack" : "event");
+      const { durable, rejected } = await driver.commit(cmd, ack ? "ack" : "event");
       take(`Commit(${cmd})`, Commit(c, s, cmd));
       expect(durable, `${where()}: ${cmd} flushed`).toBe(ack);
+      expect(rejected, `${where()}: ${cmd} rejected`).toBe(false);
       // The writer flushes a marked batch before it settles; the acknowledgement goes after.
       if (ack) { if (s.synced < s.log.length) take("Flush", Flush(c, s)); take(`Ack(${cmd})`, Ack(c, s, cmd)); }
+      check();
+    },
+    /** An acknowledged command whose flush fails: committed, rejected, and the writer owes a flush. */
+    async commitRejected(cmd: string) {
+      const { durable, rejected } = await driver.commit(cmd, "ack", { failFlush: true });
+      take(`Commit(${cmd})`, Commit(c, s, cmd));
+      expect({ durable, rejected }, `${where()}: ${cmd}'s flush failed`).toEqual({ durable: false, rejected: true });
+      take(`Reject(${cmd})`, Reject(c, s, cmd));
+      check();
+    },
+    /** A copy of a committed acknowledged command: answered from its receipt, flushed first only when owed. */
+    async resend(cmd: string) {
+      const owed = s.debt;
+      const { durable, found } = await driver.resend(cmd);
+      expect({ durable, found }, `${where()}: re-sent ${cmd}`).toEqual({ durable: owed, found: true });
+      take(`Resend(${cmd})`, Resend(c, s, cmd));
       check();
     },
     async close() { await driver.close(); take("Close", Close(c, s)); check(); },
@@ -100,6 +117,8 @@ describe("store: server.db durability (spec/models/store)", () => {
         const moves: Array<[number, () => Promise<void> | void]> = [];
         if (!s.up) moves.push([4, () => f.start()]);
         if (s.up) for (const cmd of [...c.acks, ...c.events]) if (!s.log.includes(cmd)) moves.push([2, () => f.commit(cmd)]);
+        if (s.up) for (const cmd of c.acks) if (!s.log.includes(cmd)) moves.push([1, () => f.commitRejected(cmd)]);
+        if (s.up) for (const cmd of c.acks) if (s.log.includes(cmd) && !s.owed.includes(cmd)) moves.push([1, () => f.resend(cmd)]);
         if (s.up && !s.owed.length) moves.push([1, () => f.close()]);
         if (s.up && s.faults < c.maxFault) moves.push([1, () => f.crash()]);
         if (s.faults < c.maxFault) {
@@ -142,6 +161,22 @@ describe("store: server.db durability (spec/models/store)", () => {
     await f.commit("a1");
     await f.commit("e2");
     expect(f.state.synced).toBe(2); // a1's flush covers e1 too
+    await f.powerLoss(2);
+    await f.start();
+    expect(f.state.log, f.where()).toEqual(["e1", "a1"]);
+  });
+
+  it("a re-send after a failed flush is answered only once the commit is flushed; a power loss keeps it (AckedKept)", async () => {
+    const f = follower(open("debt"), 0);
+    await f.start();
+    await f.commit("e1");
+    await f.commitRejected("a1");
+    expect(f.state.debt).toBe(true);
+    expect(f.state.synced).toBe(0);
+    await f.resend("a1"); // the writer owes a flush: this batch is flushed before the answer
+    expect(f.state.synced, f.where()).toBe(2);
+    expect(f.state.acked, f.where()).toEqual(["a1"]);
+    await f.resend("a1"); // paid: no flush again
     await f.powerLoss(2);
     await f.start();
     expect(f.state.log, f.where()).toEqual(["e1", "a1"]);

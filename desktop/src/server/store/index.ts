@@ -32,6 +32,8 @@ export interface OpenStoreOptions extends WriterOptions {
   onLostTail?: (db: Db) => void;
   /** Tests: this machine's boot id (default `machineBootId()`; null = unknown). */
   bootId?: string | null;
+  /** Tests: the data folder is on an external disk (default: `externalDiskNote`, a folder under /Volumes on macOS). */
+  externalDisk?: boolean;
 }
 
 export interface ServerStore {
@@ -82,7 +84,10 @@ export async function openServerStore(dataDir: string, options: OpenStoreOptions
       return row ? String(row.value) : undefined;
     };
     const hasMeta = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get());
-    lost = hasMeta && lostTail({ open: read(OPEN_KEY), boot: read(BOOT_KEY) }, current);
+    // A data folder on an external disk: that disk can lose power (unplugged, its enclosure off) while the machine runs
+    // on, so the same boot proves nothing there and its boot counts as unknown.
+    const external = options.externalDisk ?? externalDiskNote(dataDir) !== null;
+    lost = hasMeta && lostTail({ open: read(OPEN_KEY), boot: read(BOOT_KEY) }, external ? null : current);
     if (hasMeta) {
       const put = db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value");
       commitFlushed(db, () => {

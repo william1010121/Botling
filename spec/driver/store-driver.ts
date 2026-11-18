@@ -26,13 +26,27 @@ export interface StoreObservation {
 export interface StoreCommitResult {
   /** The batch was flushed before its promise settled (BatchInfo.durable). */
   durable: boolean;
+  /** The command was rejected (its flush failed); it is committed all the same. */
+  rejected: boolean;
+}
+
+export interface StoreResendResult {
+  /** The batch that answered the copy from its receipt was flushed before it settled. */
+  durable: boolean;
+  /** The receipt (the durable row behind the command) was found. */
+  found: boolean;
 }
 
 export interface StoreDriver {
   /** Opens the store from the disk (a copy of what the last run left), with this boot of the machine. */
   start(): Promise<void>;
-  /** One command, alone in its batch: its entry, plus (ack) the durable row behind its acknowledgement. */
-  commit(cmd: string, kind: StoreCmdKind): Promise<StoreCommitResult>;
+  /**
+   * One command, alone in its batch: its entry, plus (ack) the durable row behind its acknowledgement. `failFlush`: the
+   * flush after the commit fails (the model's Reject).
+   */
+  commit(cmd: string, kind: StoreCmdKind, options?: { failFlush?: boolean }): Promise<StoreCommitResult>;
+  /** A copy of the acknowledged command `cmd`, already committed: answered from the durable row (the model's Resend). */
+  resend(cmd: string): Promise<StoreResendResult>;
   /** store.close(). */
   close(): Promise<void>;
   /** The process dies: the disk keeps every commit (the WAL whole). */

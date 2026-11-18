@@ -18,7 +18,9 @@
 //   before it is on disk. Without a gate (tests that open their own connection) every batch counts as durable and no
 //   extra flush runs. If COMMIT fails, every command of the batch is rejected with StoreCommitError and nothing of the
 //   batch is kept; if the flush fails, the batch is committed but not known to be on disk, so every command of it is
-//   rejected too (no acknowledgement without the flush; a re-send finds its receipt and is answered from it).
+//   rejected too (no acknowledgement without the flush), and the gate owes a flush: every later batch is flushed before
+//   it settles until a flush succeeds, since one may answer from those commits (a re-send finds its receipt, which
+//   writes nothing) and that answer must not leave before they are on disk.
 import type { DurabilityGate } from "./connection";
 import type { Db } from "./sqlite";
 
@@ -27,6 +29,12 @@ export interface CommandContext {
   batch: number;
   /** 0-based position of the command inside that transaction. */
   index: number;
+  /**
+   * D75: flush this batch before it settles, although it may write no durable table. For a command whose caller acts
+   * outside the store on its result (deletes a file the rows it replaced named): the act must never outlive the commit.
+   * The writer always gives it; a caller that runs a command itself may leave it out.
+   */
+  durable?: () => void;
 }
 
 /** A command must be synchronous: it runs inside the transaction and its effects are what commits. */
@@ -133,7 +141,8 @@ export class Writer {
     try {
       gate?.clear();
       this.db.exec("BEGIN IMMEDIATE");
-      batch.forEach((pending, index) => outcomes.push(this.runOne(pending, { batch: number, index })));
+      const markDurable = () => gate?.mark();
+      batch.forEach((pending, index) => outcomes.push(this.runOne(pending, { batch: number, index, durable: markDurable })));
       this.options.beforeCommit?.(number);
       this.db.exec("COMMIT");
       committed = true;

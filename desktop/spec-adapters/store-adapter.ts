@@ -7,15 +7,17 @@
 //   1000-page auto-checkpoint), so the WAL only grows until a clean close folds it into server.db;
 // - a command is one batch: an entry of the bot stream (`turn.started` with the command as turnId), plus for an
 //   acknowledged one the slot row behind its `cmd.result` (writeNext, the `slots` table);
+// - a failed flush (the model's Reject) is a TEMP trigger of the writer connection, installed at each start, that
+//   refuses the flush's meta row once when armed; a re-send (Resend) is a batch that reads the slot row back;
 // - the reader keeps what a front end keeps: its cursor, and the commands of the entries it holds (after a snap: the
 //   store's entries up to the snap's seq, which the snap stands for).
 import { copyFileSync, existsSync, mkdirSync, openSync, closeSync, ftruncateSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { StoreCmdKind, StoreCommitResult, StoreDriver, StoreDriverOptions, StoreObservation } from "../../spec/driver/store-driver";
+import type { StoreCmdKind, StoreCommitResult, StoreDriver, StoreDriverOptions, StoreObservation, StoreResendResult } from "../../spec/driver/store-driver";
 import type { Message, Slot, StreamId } from "../src/protocol";
 import { appendEntries, ensureStream, LogHub, lostTailRewind, readEntries, readStream, type LogReader } from "../src/server/log";
-import { writeNext } from "../src/server/slots/tables";
-import { openServerStore, type BatchInfo, type ServerStore } from "../src/server/store";
+import { readNext, writeNext } from "../src/server/slots/tables";
+import { openServerStore, StoreCommitError, SYNCED_KEY, type BatchInfo, type ServerStore } from "../src/server/store";
 
 const STREAM = "bot:alpha" as StreamId;
 const QUEUE = { origin: "fe-spec", originEpoch: "e1", target: STREAM } as unknown as Pick<Slot, "origin" | "originEpoch" | "target">;
@@ -35,6 +37,10 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
   /** WAL size where it ended while `n` commits were in it (the last such moment). */
   let walAt = new Map<number, number>();
   let nextN = 1;
+  /** The slot each acknowledged command took (its `slots.next`). */
+  const slotOf = new Map<string, number>();
+  /** The next flush fails once (the TEMP trigger reads it through spec_fail_flush()). */
+  let failFlush = false;
   const logIds: string[] = [];
   const idOf = (logId: string) => {
     if (!logIds.includes(logId)) logIds.push(logId);
@@ -108,6 +114,14 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
         onBatch: (info) => { lastBatch = info; },
       });
       hub = new LogHub(store);
+      // Writes nothing durable (a function and a TEMP trigger of this connection): no mark, no frame.
+      await store.submit((db) => {
+        db.defineFunction("spec_fail_flush", () => { const fail = failFlush; failFlush = false; return fail ? 1 : 0; });
+        for (const op of ["INSERT", "UPDATE"]) {
+          db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS spec_fail_flush_${op.toLowerCase()} BEFORE ${op} ON main.meta `
+            + `WHEN NEW.key = '${SYNCED_KEY}' AND spec_fail_flush() = 1 BEGIN SELECT RAISE(ABORT, 'spec: the flush failed'); END`);
+        }
+      });
       synced = commits;
       noteWal();
       if (!readStream(hub.reader(), STREAM)) {
@@ -119,20 +133,39 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
         noteWal();
       }
     },
-    async commit(cmd: string, kind: StoreCmdKind): Promise<StoreCommitResult> {
+    async commit(cmd: string, kind: StoreCmdKind, options: { failFlush?: boolean } = {}): Promise<StoreCommitResult> {
       const n = nextN++;
       lastBatch = null;
-      await store!.submit((db) => {
-        appendEntries(db, STREAM, [{ kind: "turn.started", body: { botId: "alpha", turnId: cmd, messageId: "m" } }]);
-        if (kind === "ack") writeNext(db, QUEUE, n);
-      });
+      failFlush = options.failFlush === true;
+      let rejected = false;
+      try {
+        await store!.submit((db) => {
+          appendEntries(db, STREAM, [{ kind: "turn.started", body: { botId: "alpha", turnId: cmd, messageId: "m" } }]);
+          if (kind === "ack") writeNext(db, QUEUE, n);
+        });
+      } catch (error) {
+        if (!(error instanceof StoreCommitError) || !lastBatch?.committed) throw error;
+        rejected = true;
+      } finally {
+        failFlush = false;
+      }
+      if (kind === "ack") slotOf.set(cmd, n);
       const durable = lastBatch!.durable;
       commits += 1;
       if (durable) synced = commits;
       noteWal();
       hub!.committed([STREAM]);
       await tick();
-      return { durable };
+      return { durable, rejected };
+    },
+    async resend(cmd: string): Promise<StoreResendResult> {
+      lastBatch = null;
+      const n = slotOf.get(cmd) ?? Infinity;
+      const found = await store!.submit((db) => readNext(db, QUEUE) >= n);
+      const durable = lastBatch!.durable;
+      if (durable) synced = commits;
+      noteWal();
+      return { durable, found };
     },
     async close() {
       reader?.close(); reader = null; rd.on = false;

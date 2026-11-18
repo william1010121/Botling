@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  BOOT_KEY, DURABLE_TABLES, durabilityGate, lostTail, migrate, OPEN_KEY, openServerStore, openWriterDb, StoreCommitError, Writer,
+  BOOT_KEY, DURABLE_TABLES, durabilityGate, lostTail, machineBootId, migrate, OPEN_KEY, openServerStore, openWriterDb, StoreCommitError, Writer,
   type BatchInfo, type Db, type ServerStore,
 } from "../../src/server/store";
 import { openDb } from "../../src/server/store/sqlite";
@@ -40,6 +40,26 @@ const metaOf = (dir: string, key: string) => {
 };
 
 describe("durability gate (D75)", () => {
+  it("every table of the schema is classified: durable (flushed) or not (a new table needs a decision)", () => {
+    const db = openWriterDb(join(tempDir(), "server.db"));
+    try {
+      migrate(db);
+      const notDurable = [
+        "streams", "entries", "rows", "messages", "cards", "bots", "lists", "content", "content_refs", "variants", "media_jobs",
+        "chunk_cache", "fulltext", "content_names", "content_aliases", "content_meta", "peerlogs", "peerlog_entries",
+        "peer_content", "peer_content_refs", "peer_content_lines",
+      ];
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'").all().map((r) => String(r.name)).sort();
+      expect(tables).toEqual([...DURABLE_TABLES, ...notDurable].sort());
+      expect([...DURABLE_TABLES].sort()).toEqual([
+        "cancels", "effects", "forwarddead", "forwardq", "fwdcancels", "grants", "import_ids", "meta", "myorigins", "prefs",
+        "receipts", "retired", "roster", "slot_results", "slots",
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("flushes a batch that wrote a durable table before it settles, and only such a batch", async () => {
     const batches: BatchInfo[] = [];
     const store = await open(tempDir(), { onBatch: (info) => batches.push(info) });
@@ -104,7 +124,7 @@ describe("durability gate (D75)", () => {
     try {
       db.exec("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT) WITHOUT ROWID; CREATE TABLE slots (n INTEGER)");
       const real = durabilityGate(db);
-      const gate = { clear: () => real.clear(), marked: () => real.marked(), flushes: 0, flush: () => { throw new Error("EIO"); } };
+      const gate = { clear: () => real.clear(), marked: () => real.marked(), mark: () => real.mark(), flushes: 0, flush: () => { throw new Error("EIO"); } };
       const writer = new Writer(db, { durability: gate });
       const results = await Promise.allSettled([
         writer.submit((tx) => { tx.prepare("INSERT INTO slots VALUES (1)").run(); }),
@@ -120,7 +140,76 @@ describe("durability gate (D75)", () => {
   });
 });
 
+describe("durability gate after a failed flush, and a command's own mark (D75 review)", () => {
+  // The flush's meta row is refused by a TEMP trigger of the writer connection: the commit before it stays.
+  const flushFails = (db: Db) => {
+    db.exec("CREATE TEMP TRIGGER spec_fail_flush_i BEFORE INSERT ON main.meta WHEN NEW.key = 'store.synced' BEGIN SELECT RAISE(ABORT, 'EIO'); END");
+    db.exec("CREATE TEMP TRIGGER spec_fail_flush_u BEFORE UPDATE ON main.meta WHEN NEW.key = 'store.synced' BEGIN SELECT RAISE(ABORT, 'EIO'); END");
+  };
+  const flushWorks = (db: Db) => { db.exec("DROP TRIGGER temp.spec_fail_flush_i"); db.exec("DROP TRIGGER temp.spec_fail_flush_u"); };
+  const nextOf = (db: Db) => db.prepare("SELECT next FROM slots WHERE origin = 'fe'").get()?.next;
+
+  it("a batch after a failed flush is flushed before it settles, though it writes nothing (a re-send answered from the receipt)", async () => {
+    const batches: BatchInfo[] = [];
+    const store = await open(tempDir(), { onBatch: (info) => batches.push(info) });
+    await store.submit(flushFails);
+    await expect(store.submit(slot(7))).rejects.toBeInstanceOf(StoreCommitError);
+    expect(batches.at(-1)).toMatchObject({ committed: true, durable: false });
+    // The re-send: reads the committed row and answers from it. It must not settle before that row is on disk.
+    await expect(store.submit((db) => { flushWorks(db); return nextOf(db); })).resolves.toBe(7);
+    expect(batches.at(-1)).toMatchObject({ committed: true, durable: true });
+    expect(batches.at(-1)!.flushMs).toBeGreaterThan(0);
+    // Paid: the next batch that writes nothing durable is not flushed again.
+    await store.submit(nextOf);
+    expect(batches.at(-1)).toMatchObject({ durable: false, flushMs: 0 });
+  });
+
+  it("a failed flush keeps owing while flushes keep failing", async () => {
+    const batches: BatchInfo[] = [];
+    const store = await open(tempDir(), { onBatch: (info) => batches.push(info) });
+    await store.submit(flushFails);
+    await expect(store.submit(slot(1))).rejects.toBeInstanceOf(StoreCommitError);
+    await expect(store.submit(nextOf)).rejects.toBeInstanceOf(StoreCommitError);
+    expect(batches.at(-1)).toMatchObject({ committed: true, durable: false });
+    await expect(store.submit((db) => { flushWorks(db); return nextOf(db); })).resolves.toBe(1);
+    expect(batches.at(-1)).toMatchObject({ durable: true });
+  });
+
+  it("CommandContext.durable flushes a batch that wrote only the log", async () => {
+    const batches: BatchInfo[] = [];
+    const store = await open(tempDir(), { onBatch: (info) => batches.push(info) });
+    await store.submit((db, context) => { entry(1)(db); context.durable?.(); });
+    expect(batches.at(-1)).toMatchObject({ durable: true });
+    await store.submit(entry(2));
+    expect(batches.at(-1)).toMatchObject({ durable: false });
+  });
+});
+
 describe("boot check (D75)", () => {
+  it("a data folder on an external disk: any run that did not close may have lost its tail, same boot or not", async () => {
+    const dir = tempDir();
+    const unclosed = () => { const db = openDb(join(dir, "server.db")); db.prepare("UPDATE meta SET value = '1' WHERE key = ?").run(OPEN_KEY); db.close(); };
+    let store = await open(dir, { bootId: "b1", externalDisk: true });
+    await store.close(); stores.splice(stores.indexOf(store), 1);
+    unclosed();
+    store = await open(dir, { bootId: "b1", externalDisk: false });
+    expect(store.lostTail).toBe(false);
+    await store.close(); stores.splice(stores.indexOf(store), 1);
+    unclosed();
+    store = await open(dir, { bootId: "b1", externalDisk: true });
+    expect(store.lostTail).toBe(true);
+    expect(metaOf(dir, BOOT_KEY)).toBe("b1");
+    await store.close(); stores.splice(stores.indexOf(store), 1);
+    // Closed cleanly: nothing lost, external or not.
+    store = await open(dir, { bootId: "b2", externalDisk: true });
+    expect(store.lostTail).toBe(false);
+  });
+
+  it("reads this machine's boot id on macOS and Linux (unknown elsewhere)", () => {
+    if (process.platform === "darwin" || process.platform === "linux") expect(machineBootId()).toMatch(/^[0-9A-Fa-f-]{8,64}$/);
+    expect(machineBootId("win32")).toBeNull();
+  });
+
   it("lostTail: only an unclosed run from another (or an unknown) boot", () => {
     expect(lostTail({ open: undefined, boot: undefined }, "b1")).toBe(false); // a file from before D75
     expect(lostTail({ open: "0", boot: "b0" }, "b1")).toBe(false); // closed cleanly

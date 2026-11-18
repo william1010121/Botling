@@ -79,8 +79,14 @@ export function openWriterDb(file: string): Db {
 export interface DurabilityGate {
   /** Forgets the mark (the writer calls it right before BEGIN of each batch). */
   clear(): void;
-  /** The transaction since `clear` wrote a durable table. */
+  /**
+   * The batch must be flushed before it settles: the transaction since `clear` wrote a durable table or called `mark`,
+   * or an earlier flush failed (its commits are in the file but not known to be on disk, and a later batch may answer
+   * from them: a re-sent command found by its receipt, a forward row already queued).
+   */
   marked(): boolean;
+  /** Marks the running transaction as one to flush (CommandContext.durable: an effect outside the store follows it). */
+  mark(): void;
   /**
    * Makes every commit so far durable: one synchronous = FULL transaction (a meta row), whose WAL flush covers the
    * earlier frames too. Throws when it could not; the connection is back on NORMAL either way.
@@ -96,6 +102,8 @@ export interface DurabilityGate {
  */
 export function durabilityGate(db: Db): DurabilityGate {
   let mark = false;
+  /** A flush failed (or is running): every later batch flushes until one succeeds. */
+  let owing = false;
   let flushes = 0;
   db.defineFunction("botling_durable", () => { mark = true; return null; });
   const tables = new Set(
@@ -116,11 +124,13 @@ export function durabilityGate(db: Db): DurabilityGate {
   const hasMeta = tables.has("meta");
   return {
     clear() { mark = false; },
-    marked: () => mark,
+    marked: () => mark || owing,
+    mark() { mark = true; },
     get flushes() { return flushes; },
     flush() {
-      db.exec("PRAGMA synchronous = FULL");
+      owing = true;
       try {
+        db.exec("PRAGMA synchronous = FULL");
         db.exec("BEGIN IMMEDIATE");
         try {
           // A changed row gives the flush a frame to write (an empty transaction would not sync). No meta: refuse.
@@ -133,6 +143,7 @@ export function durabilityGate(db: Db): DurabilityGate {
           throw error;
         }
         flushes += 1;
+        owing = false;
       } finally {
         mark = false;
         db.exec("PRAGMA synchronous = NORMAL");

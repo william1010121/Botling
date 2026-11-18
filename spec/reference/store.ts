@@ -1,14 +1,14 @@
 // spec/models/store/Store.tla as a TypeScript state machine: the same variables and actions under the same names.
 // Pure: no app imports, no I/O. `next` lists every successor, as TLC would.
 
-export type StoreAction = "Start" | "Commit" | "Flush" | "Ack" | "Close" | "Crash" | "PowerLoss" | "Push" | "Sub" | "Disconnect";
-export type StoreBug = "none" | "noflush" | "norotate";
+export type StoreAction = "Start" | "Commit" | "Flush" | "Ack" | "Reject" | "Resend" | "Close" | "Crash" | "PowerLoss" | "Push" | "Sub" | "Disconnect";
+export type StoreBug = "none" | "noflush" | "norotate" | "nodebt";
 
 export interface StoreConsts {
   acks: readonly string[];
   events: readonly string[];
   maxFault: number;
-  /** "noflush": acknowledge after COMMIT without the flush; "norotate": no boot check. */
+  /** "noflush": acknowledge after COMMIT without the flush; "norotate": no boot check; "nodebt": a failed flush owes nothing. */
   bug: StoreBug;
 }
 
@@ -26,11 +26,13 @@ export interface StoreState {
   rLog: readonly string[];
   rId: number;
   faults: number;
+  /** A flush failed in this run and none succeeded since. */
+  debt: boolean;
 }
 
 export interface StoreStep {
   action: StoreAction;
-  /** Commit, Ack: the command. */
+  /** Commit, Ack, Reject, Resend: the command. */
   cmd?: string;
   /** PowerLoss: how many commits stay. */
   keep?: number;
@@ -44,14 +46,14 @@ const drop = (set: readonly string[], x: string) => set.filter((y) => y !== x);
 export function init(_c: StoreConsts): StoreState {
   return {
     up: false, log: [], synced: 0, owed: [], acked: [], logId: 0, openMark: false, bootMark: 0, boot: 0,
-    rOn: false, rLog: [], rId: 0, faults: 0,
+    rOn: false, rLog: [], rId: 0, faults: 0, debt: false,
   };
 }
 
 export function Start(c: StoreConsts, s: StoreState): StoreState | null {
   if (s.up) return null;
   const rotate = s.openMark && s.bootMark !== s.boot && c.bug !== "norotate";
-  return { ...s, up: true, logId: rotate ? s.logId + 1 : s.logId, openMark: true, bootMark: s.boot, synced: s.log.length };
+  return { ...s, up: true, logId: rotate ? s.logId + 1 : s.logId, openMark: true, bootMark: s.boot, synced: s.log.length, debt: false };
 }
 
 export function Commit(c: StoreConsts, s: StoreState, cmd: string): StoreState | null {
@@ -61,7 +63,7 @@ export function Commit(c: StoreConsts, s: StoreState, cmd: string): StoreState |
 
 export function Flush(_c: StoreConsts, s: StoreState): StoreState | null {
   if (!s.up || s.synced >= s.log.length) return null;
-  return { ...s, synced: s.log.length };
+  return { ...s, synced: s.log.length, debt: false };
 }
 
 export function Ack(c: StoreConsts, s: StoreState, cmd: string): StoreState | null {
@@ -70,19 +72,29 @@ export function Ack(c: StoreConsts, s: StoreState, cmd: string): StoreState | nu
   return { ...s, acked: add(s.acked, cmd), owed: drop(s.owed, cmd) };
 }
 
+export function Reject(c: StoreConsts, s: StoreState, cmd: string): StoreState | null {
+  if (!s.up || !s.owed.includes(cmd) || s.log.indexOf(cmd) + 1 <= s.synced) return null;
+  return { ...s, owed: drop(s.owed, cmd), debt: c.bug !== "nodebt" };
+}
+
+export function Resend(c: StoreConsts, s: StoreState, cmd: string): StoreState | null {
+  if (!s.up || !c.acks.includes(cmd) || !s.log.includes(cmd) || s.owed.includes(cmd)) return null;
+  return { ...s, synced: s.debt ? s.log.length : s.synced, debt: false, acked: add(s.acked, cmd) };
+}
+
 export function Close(_c: StoreConsts, s: StoreState): StoreState | null {
   if (!s.up || s.owed.length) return null;
-  return { ...s, up: false, rOn: false, openMark: false, synced: s.log.length };
+  return { ...s, up: false, rOn: false, openMark: false, synced: s.log.length, debt: false };
 }
 
 export function Crash(c: StoreConsts, s: StoreState): StoreState | null {
   if (!s.up || s.faults >= c.maxFault) return null;
-  return { ...s, up: false, rOn: false, owed: [], faults: s.faults + 1 };
+  return { ...s, up: false, rOn: false, owed: [], faults: s.faults + 1, debt: false };
 }
 
 export function PowerLoss(c: StoreConsts, s: StoreState, keep: number): StoreState | null {
   if (s.faults >= c.maxFault || keep < s.synced || keep > s.log.length) return null;
-  return { ...s, log: s.log.slice(0, keep), synced: keep, up: false, rOn: false, owed: [], boot: s.boot + 1, faults: s.faults + 1 };
+  return { ...s, log: s.log.slice(0, keep), synced: keep, up: false, rOn: false, owed: [], boot: s.boot + 1, faults: s.faults + 1, debt: false };
 }
 
 export function Push(_c: StoreConsts, s: StoreState): StoreState | null {
@@ -93,7 +105,7 @@ export function Push(_c: StoreConsts, s: StoreState): StoreState | null {
 export function Sub(_c: StoreConsts, s: StoreState): StoreState | null {
   if (!s.up || s.rOn) return null;
   if (s.rId === s.logId && s.rLog.length > s.log.length) {
-    return { ...s, rOn: true, logId: s.logId + 1, rId: s.logId + 1, rLog: s.log, synced: s.log.length };
+    return { ...s, rOn: true, logId: s.logId + 1, rId: s.logId + 1, rLog: s.log, synced: s.log.length, debt: false };
   }
   if (s.rId !== s.logId) return { ...s, rOn: true, rId: s.logId, rLog: s.log };
   return { ...s, rOn: true };
@@ -117,6 +129,8 @@ export function next(c: StoreConsts, s: StoreState): StoreStep[] {
   for (const cmd of [...c.acks, ...c.events]) {
     push("Commit", Commit(c, s, cmd), { cmd });
     push("Ack", Ack(c, s, cmd), { cmd });
+    push("Reject", Reject(c, s, cmd), { cmd });
+    push("Resend", Resend(c, s, cmd), { cmd });
   }
   return out;
 }
@@ -127,5 +141,6 @@ export function violated(_c: StoreConsts, s: StoreState): string[] {
   if (!s.acked.every((cmd) => s.log.includes(cmd))) out.push("AckedKept");
   if (s.rOn && s.rId === s.logId && !isPrefix(s.rLog, s.log)) out.push("NoFork");
   if (s.synced > s.log.length) out.push("SyncedInLog");
+  if (s.debt && s.synced >= s.log.length) out.push("DebtUnsynced");
   return out;
 }
