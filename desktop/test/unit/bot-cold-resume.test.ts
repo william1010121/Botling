@@ -362,7 +362,7 @@ describe("a cold cache is never reused, on every path a new turn takes", () => {
     let exitDone!: () => void;
     cold.exited = new Promise<void>((resolve) => { exitDone = resolve; });
     const finish = cold.finish.bind(cold);
-    cold.finish = () => { finish(); setTimeout(exitDone, 20); };
+    cold.finish = () => { finish(); setImmediate(() => setImmediate(exitDone)); };
     r.peek.begin(turn, cold);
     await waitFor("the turn to reach a new head", () => fixture.heads[1]?.sent.length === 1);
     expect(turn.open).toBe(true);
