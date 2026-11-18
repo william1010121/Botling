@@ -10,8 +10,9 @@ import { join } from "node:path";
 import { Core } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
 import { saveProjectRow } from "../../src/core/projects";
-import { ComponentLibrary, componentKnowledgeFor, componentRoles } from "../../src/core/components/library";
-import { cardInstructions, cardSystemPrompt, cardSystemRules } from "../../src/core/worker-cards";
+import { ComponentLibrary, NOT_BUILT_IN_NOTE, componentKnowledgeFor, componentRoles, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
+import { BotCards } from "../../src/core/bot/cards";
+import { CARD_BRIEF_MAX, cardCatalogSection, cardInstructions, cardSystemPrompt, cardSystemRules } from "../../src/core/worker-cards";
 import { tempDir } from "../helpers";
 import { writeLibrary } from "../fixtures/components";
 
@@ -167,5 +168,119 @@ describe("a component change leaves the card worker's system prompt as it was (t
     expect(full).toContain("/p/.bot/card-usage/<name>.md");
     // A card message with no catalog is just the card.
     expect(cardInstructions({ title: "T", prompt: "P" })).not.toContain("Components you may use");
+  });
+});
+
+describe("the card's first message starts with the catalog (every card shares the start)", () => {
+  it("the catalog section comes before the card's own words, byte-equal for two different cards", () => {
+    const brief = { components: "- a (JSON): A line", others: "", scriptsDir: "/p/.bot/card-scripts", usageDir: "/p/.bot/card-usage" };
+    const one = cardInstructions({ title: "One", prompt: "First prompt." }, brief), two = cardInstructions({ title: "Two", prompt: "Second prompt." }, brief);
+    const section = cardCatalogSection(brief);
+    expect(one.startsWith(section)).toBe(true);
+    expect(two.startsWith(section)).toBe(true);
+    expect(one.indexOf("First prompt.")).toBeGreaterThan(section.length - 1);
+  });
+});
+
+describe("what the card worker's brief and the lists leave out, and how they are ordered", () => {
+  it("a pin-only component and choices are in no worker catalog even when the bot's list names them", async () => {
+    const { core, flux } = rig({ pinned: "A pin.\nPin only: yes\nCommand: echo hi\n", choices: ABOUT("Choices", ""), shown: ABOUT("Shown card", "") });
+    try {
+      flux.setComponentList(["status", "pinned", "choices", "shown"]);
+      const whole = flux.cards.cardBrief();
+      expect(whole.components).toContain("- shown:");
+      for (const hidden of ["- pinned:", "- choices:"]) { expect(whole.components).not.toContain(hidden); expect(whole.others).not.toContain(hidden); }
+      const lines = flux.cards.cardCatalogBrief().components;
+      for (const hidden of ["- pinned", "- choices"]) expect(lines).not.toContain(hidden);
+    } finally { await core.shutdown(); }
+  });
+
+  it("the Note's / menu offers no pin-only component, listed or not; a plain one on the list is offered", async () => {
+    const { core, flux } = rig({ pinned: "A pin.\nPin only: yes\nCommand: echo hi\n", shown: ABOUT("Shown card", "") });
+    try {
+      flux.setComponentList(["status", "pinned", "shown"]);
+      const menu = flux.cards.noteComponents().components as { name: string; offered: boolean }[];
+      expect(menu.find((entry) => entry.name === "pinned")).toMatchObject({ offered: false });
+      expect(menu.find((entry) => entry.name === "shown")).toMatchObject({ offered: true });
+      // A bot with no list offers the whole library except the pin-only one.
+      flux.cards.componentList = null;
+      expect(flux.cards.noteComponents().components.find((entry: { name: string }) => entry.name === "pinned")).toMatchObject({ offered: false });
+      expect(flux.cards.cardLibrary().offered).not.toContain("pinned");
+    } finally { await core.shutdown(); }
+  });
+
+  it("the components whose usage did not fit lead the one-line list, before the rest of the library", async () => {
+    const big = `Big card.\nData: {}\n${"filler line of usage\n".repeat(Math.ceil(CARD_BRIEF_MAX / 20) + 500)}`;
+    const { core, flux } = rig({ "zzz-big": big, "aaa-shelf": ABOUT("Shelf card", "") });
+    try {
+      flux.setComponentList(["status", "zzz-big"]);
+      const brief = flux.cards.cardBrief();
+      expect(brief.components).not.toContain("- zzz-big:");
+      const lines = brief.others.split("\n");
+      expect(lines[0]).toMatch(/^- zzz-big: Big card/);
+      expect(lines.findIndex((line: string) => line.startsWith("- aaa-shelf"))).toBeGreaterThan(0);
+    } finally { await core.shutdown(); }
+  });
+
+  it("a reply's empty <show> of the app's own cards (choices, the preview card) is no mistake to tell; an empty one of a component is", () => {
+    const library = new ComponentLibrary(() => []);
+    (library as any).names = ["status", "網頁預覽卡片", "choices"];
+    const user = (date: number) => ({ id: `u${date}`, role: "user", text: "hi", date });
+    const reply = { id: "b1", role: "bot", text: "x", date: 5, displays: ["status", "網頁預覽卡片", "choices"].map((name) => ({ name, data: "null" })) };
+    const records: any[] = [user(1), reply, user(9)];
+    const owner: any = { profile: { folder: "/nowhere", id: "bot-1" }, engine: "claude", readOnly: false, store: { saveSetting() {}, directory: "/nowhere" } };
+    const bot = new BotCards({ readOnly: false, records, updated() {} } as any, { options: { components: { library } }, id: "bot-1", owner, peers: [], store: owner.store } as any);
+    const notes = bot.componentNotes(records[2]).join("\n");
+    expect(notes).toContain('<show name="status"></show>');
+    expect(notes).not.toContain("網頁預覽卡片");
+    expect(notes).not.toContain('<show name="choices">');
+  });
+});
+
+describe("the guidance's examples and the tag never disagree unannounced (invariant 4, the inline blocks)", () => {
+  it("an inline block the tag does not make built in is `yours: false` in the usage tool and named in the note; tagging it makes both agree again, and the change is told", async () => {
+    const { core, flux, library, retag } = rig({ "inline-chart": ABOUT("Inline chart", ""), "inline-report-block": ABOUT("Inline report block", "Built-in: yes") });
+    try {
+      const yours = (name: string) => flux.workers.componentUsage({ name }, "coordinator").yours as boolean;
+      const knowledge = (examples = true, cardsOnly = false) => componentKnowledgeFor(library, flux.cards.ownComponents(), examples, false, cardsOnly);
+      const told = knowledge();
+      expect(told.notBuiltIn).toEqual(["inline-chart"]);
+      expect([yours("inline-chart"), yours("inline-report-block")]).toEqual([false, true]);
+      expect(knowledgeFull(told)).toContain(NOT_BUILT_IN_NOTE(["inline-chart"]));
+      expect(NOT_BUILT_IN_NOTE(["inline-chart"])).toContain("inline-chart");
+      // Without the guidance (or for a head that writes only <card>) there is no example to contradict.
+      // A tagged one is never named, whichever list the caller passes.
+      expect(componentKnowledgeFor(library, [], true).notBuiltIn).toEqual(["inline-chart"]);
+      expect(knowledge(false).notBuiltIn).toBeUndefined();
+      expect(knowledge(true, true).notBuiltIn).toBeUndefined();
+      // Tag it: usage and note agree, and the bot is told the examples apply again.
+      retag("inline-chart", ABOUT("Inline chart", "Built-in: yes"));
+      const now = knowledge();
+      expect(now.notBuiltIn).toBeUndefined();
+      expect(yours("inline-chart")).toBe(true);
+      expect(knowledgeChanges(now, told)).toContain("Built in again, the examples in your instructions apply: inline-chart");
+      // Untag the other: both say so, and the change is told.
+      retag("inline-report-block", ABOUT("Inline report block", ""));
+      const last = knowledge();
+      expect(last.notBuiltIn).toEqual(["inline-report-block"]);
+      expect(yours("inline-report-block")).toBe(false);
+      expect(knowledgeChanges(last, now)).toContain(NOT_BUILT_IN_NOTE(["inline-report-block"]));
+      expect(knowledgeChanges(last, last)).toBeNull();
+      // On the bot's own list it is yours whatever the tag says, so nothing disagrees.
+      flux.setComponentList(["status", "inline-report-block"]);
+      expect(knowledge().notBuiltIn).toBeUndefined();
+      expect(yours("inline-report-block")).toBe(true);
+    } finally { await core.shutdown(); }
+  });
+});
+
+describe("choices stays the core's own protocol", () => {
+  it("app_component_usage says yours for choices whatever the tag says, and no tag lists it", async () => {
+    const { core, flux, library } = rig({ choices: ABOUT("Choices", ""), other: ABOUT("Other card", "") });
+    try {
+      expect(flux.workers.componentUsage({ name: "choices" }, "coordinator")).toMatchObject({ yours: true });
+      expect(flux.workers.componentUsage({ name: "other" }, "coordinator")).toMatchObject({ yours: false });
+      expect(componentRoles(library).builtIn).not.toContain("choices");
+    } finally { await core.shutdown(); }
   });
 });

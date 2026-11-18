@@ -176,12 +176,13 @@ export const CARD_OTHERS_MAX = 20_000;
 export const CARD_CATALOG_MAX = 30_000;
 
 /**
- * What the worker is told in its first message: this card's own part (the bot's prompt and the card it fills) and, given the brief, the components it may pick from
- * as the library is now (`cardCatalogSection`). How a card worker works is the same for every card and is its system prompt (`cardSystemRules`), where it is cached:
+ * What the worker is told in its first message: given the brief, the components it may pick from as the library is now (`cardCatalogSection`, first: the same start for
+ * every card), then this card's own part (the bot's prompt and the card it fills). How a card worker works is the same for every card and is its system prompt (`cardSystemRules`), where it is cached:
  * the library is not there, so a component change never rewrites the cached front.
  */
 export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">, brief?: CardBrief): string {
-  return `${card.prompt}\n\n(App: Your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it: each reply comes to you, and you change the card. Make it the finished result, not a status note.)${brief ? `\n\n${cardCatalogSection(brief)}` : ""}`;
+  // The catalog comes first: it is the same for every card while the library is, so every card of a project shares the start of its message (the model's cache serves it from the second card on).
+  return `${brief ? `${cardCatalogSection(brief)}\n\n` : ""}${card.prompt}\n\n(App: Your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it: each reply comes to you, and you change the card. Make it the finished result, not a status note.)`;
 }
 
 /**
