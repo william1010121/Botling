@@ -49,6 +49,12 @@ describe("routines", () => {
     await sleep(600);
     expect((await again.chat()).messages.filter((m: any) => m.role === "divider" && m.text.startsWith("Ping"))).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineRuns["* * * * * Ping: say hi to the user"]).toBeGreaterThan(swiftNow(-60_000));
+    // Every routine says when it last ran: the Ping line was handed to the bot, the daily summary has not run (null, not a made-up time).
+    const shown = await again.call({ type: "routines.list", botId: MAIN });
+    const ping = shown.routines.find((r: any) => r.title === "Ping");
+    expect(ping).toMatchObject({ lastResult: "sent" });
+    expect(Date.now() - Date.parse(ping.lastRun)).toBeLessThan(60_000);
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineLast["cron:* * * * * Ping: say hi to the user"]).toMatchObject({ result: "sent", at: expect.any(Number) });
   });
 
   it("an @once line a script appends to routines.cron reaches the bot's head once, and the core takes the line out", async () => {
@@ -86,6 +92,10 @@ describe("routines", () => {
     const saved = JSON.parse(readFileSync(join(dir, "main", "scheduled-routines.json"), "utf8")).routines[0];
     expect(saved).toMatchObject({ id: routine.id, state: "fired", requestID: "check-1", kind: "once" });
     expect(saved.dispatchedAt).toBeGreaterThan(saved.createdAt);
+    // Its row says when the bot was last handed the task (the schedule file's own format is untouched).
+    const fired = (updated as any).routines.find((r: any) => r.id === routine.id);
+    expect(fired).toMatchObject({ lastResult: "sent" });
+    expect(Date.now() - Date.parse(fired.lastRun)).toBeLessThan(60_000);
     // The same request id again is the same schedule; resuming a fired one is refused.
     await expect(c.call({ type: "routines.change", botId: MAIN, operation: "resume", id: routine.id })).rejects.toThrow(/Only pending or paused/);
     await c.kill();
@@ -123,6 +133,8 @@ describe("routines", () => {
     const list = await until(async () => { const r = await again.call({ type: "routines.list", botId: MAIN }); return r.routines.every((x: any) => x.watch?.state !== "never") && r; });
     expect(list.routines.find((r: any) => r.title === "Fine").watch).toMatchObject({ command: "echo all good", state: "ok", exit: 0 });
     expect(list.routines.find((r: any) => r.title === "Disk").watch).toMatchObject({ state: "failing", exit: 3 });
+    expect(list.routines.find((r: any) => r.title === "Fine")).toMatchObject({ lastResult: "ok", lastRun: expect.any(String) });
+    expect(list.routines.find((r: any) => r.title === "Disk")).toMatchObject({ lastResult: "failed", lastRun: expect.any(String) });
     await sleep(600);
     expect(claudeInputs(dir).filter((text) => text.includes("Your watch"))).toHaveLength(1);
     expect(claudeInputs(dir).some((text) => text.includes("Fine"))).toBe(false);

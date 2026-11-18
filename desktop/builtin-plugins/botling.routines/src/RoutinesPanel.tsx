@@ -1,11 +1,11 @@
 // The bot's routines (routines.cron and the app's own schedules), with Pause / Resume / Cancel: the body of the popover under
 // the chat header's Routines button. It reads and changes them through the program part (host.ts).
 // Grouped by where each stands (needs a look, running, paused, finished); a card says what kind it is, how often, when it runs
-// next and, for a watch, how its last run went. Cancel asks once more, since it cannot be undone.
+// next and how its last run went (a watch's own run, or when the bot was last handed the task). Cancel asks once more, since it cannot be undone.
 import { useEffect, useRef, useState } from "react";
 import type { RoutineRow, RoutinesList } from "../../../../Web/host/src/api";
 import {
-  GROUPS, GROUP_LABEL, KIND_LABEL, LABEL, cadence, groupOf, kindOf, nextRun, onceTime, operationsFor, standing, summary, watchResult, zoneName,
+  GROUPS, GROUP_LABEL, KIND_LABEL, LABEL, cadence, groupOf, kindOf, lastLine, nextRun, onceTime, operationsFor, standing, summary, zoneName,
   type Group, type Operation,
 } from "./routines-text";
 
@@ -51,7 +51,7 @@ function Card({ routine, now, busy, confirming, onAsk, onChange }: {
   const group = groupOf(routine);
   const kind = kindOf(routine);
   const state = standing(routine);
-  const result = watchResult(routine, now);
+  const result = lastLine(routine, now);
   const operations = operationsFor(routine.status);
   const compact = group === "done" || group === "paused";
   const task = routine.watch ? null : routine.task && routine.task !== routine.title ? routine.task : null;
@@ -65,12 +65,8 @@ function Card({ routine, now, busy, confirming, onAsk, onChange }: {
         </div>
         <When routine={routine} now={now} />
         {task && !compact && <div className="routine-task">{task}</div>}
-        {routine.watch && (
-          <div className="routine-watch" data-watch={routine.watch.state}>
-            <code>{routine.watch.command}</code>
-            {result && <div className="routine-result" data-tone={result.tone}><i />{result.word}{result.detail && <span> · {result.detail}</span>}</div>}
-          </div>
-        )}
+        {routine.watch && <div className="routine-watch"><code>{routine.watch.command}</code></div>}
+        {result && <div className="routine-result" data-tone={result.tone}><i />{result.word}{result.detail && <span> · {result.detail}</span>}</div>}
         {routine.status === "delivery_uncertain" && <div className="routine-note">It may not have reached the bot. Check the chat before asking again.</div>}
         {operations.length > 0 && (confirming ? (
           <div className="routine-buttons routine-confirm" role="group" aria-label="Cancel this routine?">

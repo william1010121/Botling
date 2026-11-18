@@ -11,6 +11,7 @@ import {
   appRoutinesCall, CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "../routines";
+import { fromRoutineLast, type LastRun } from "../routine-last";
 import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "../routine-watch";
 import { specTrace } from "../spec-trace";
 import { fromSwiftDate as fromSwiftDateMs, newId, toSwiftDate, type ChatRecord } from "../store/records";
@@ -46,6 +47,8 @@ export class BotRoutines {
   private routineRuns: Record<string, number> = {};
   /** Its watch routines' last runs (bot.json `routineWatches`, by routine id as the view gives it), and those running now. */
   private routineWatches: Record<string, WatchState> = {};
+  /** When each prompt routine last ran, kept when it runs (bot.json `routineLast`, by routine id as the view gives it); a watch keeps its own. */
+  private routineLast: Record<string, LastRun> = {};
   private watchesRunning = new Set<string>();
   private routineError: string | null = null;
   /** The error the clock last told in the chat: any read of the routines sets `routineError`, so it cannot be what says the notice was given. */
@@ -74,6 +77,7 @@ export class BotRoutines {
     const settings = this.store.loadSettings();
     this.routineRuns = fromRoutineRuns(settings.routineRuns);
     this.routineWatches = fromRoutineWatches(settings.routineWatches);
+    this.routineLast = fromRoutineLast(settings.routineLast);
     if (!this.readOnly && !this.profile.problem) {
       try {
         this.routineFile.create(legacyRoutineLines(settings.routines) ?? (this.profile.role === "main" ? [DAILY_SUMMARY] : []));
@@ -128,16 +132,28 @@ export class BotRoutines {
         if (job.kind === "once") next = fromSwiftDateMs(job.at ?? 0);
         else next = dueTime(job, now) ?? CronSchedule.parse(job.cron ?? "")?.nextTime(now, job.timezone) ?? null;
       }
-      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", cron: job.kind === "once" ? null : clip(job.cron ?? "", 400) ?? null, timezone: job.timezone.slice(0, 100), status, next: iso(next), ...this.watchView(job.id, job.task) };
+      // A run from before the app kept its own record: a scheduled routine still says when it was last handed to the bot.
+      const dispatched = job.dispatchedAt === undefined ? null : fromSwiftDateMs(job.dispatchedAt);
+      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", cron: job.kind === "once" ? null : clip(job.cron ?? "", 400) ?? null, timezone: job.timezone.slice(0, 100), status, next: iso(next), ...this.lastView(job.id, job.task, dispatched), ...this.watchView(job.id, job.task) };
     });
     for (const job of jobs.slice(0, 50)) {
       views.push({
         id: `cron:${job.id}`.slice(0, 2_200), kind: "legacy", task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "",
         schedule: job.once ? "Once, at the next check" : clip(job.schedule.description, 400) ?? "", cron: job.once ? "@once" : clip(job.schedule.text, 400) ?? null, timezone: "system_local", status: job.enabled ? "enabled" : "paused",
-        next: job.enabled ? iso(job.once ? now : job.schedule.nextTime(now, null)) : null, ...this.watchView(`cron:${job.id}`.slice(0, 2_200), job.task),
+        next: job.enabled ? iso(job.once ? now : job.schedule.nextTime(now, null)) : null, ...this.lastView(`cron:${job.id}`.slice(0, 2_200), job.task, null), ...this.watchView(`cron:${job.id}`.slice(0, 2_200), job.task),
       });
     }
     return { routines: views, error: this.routineError?.slice(0, 2_000) ?? null };
+  }
+
+  /** When a routine last ran and how that went, for its row: a watch's own last run, else when its prompt was last handed to the bot (`fallback`: a time the schedule file kept). */
+  lastView(key: string, task: string, fallback: number | null): Pick<RoutineView, "lastRun" | "lastResult"> {
+    if (watchCommand(task)) {
+      const state = this.routineWatches[key];
+      return state ? { lastRun: new Date(state.lastRun).toISOString(), lastResult: state.ok ? "ok" : "failed" } : { lastRun: null, lastResult: null };
+    }
+    const last = Object.hasOwn(this.routineLast, key) ? this.routineLast[key]! : fallback === null ? null : { at: fallback, result: "sent" as const };
+    return last ? { lastRun: new Date(last.at).toISOString(), lastResult: last.result } : { lastRun: null, lastResult: null };
   }
 
   /** A watch routine's command and last run, for its row; nothing for a prompt routine. */
@@ -257,7 +273,11 @@ export class BotRoutines {
   runRoutine(key: string, job: Routine, now: number) {
     const command = watchCommand(job.task);
     if (command) this.startWatch(key, job, command);
-    else this.dispatchRoutine(job, now);
+    else {
+      this.dispatchRoutine(job, now);
+      this.routineLast[key] = { at: now, result: "sent" };
+      if (!this.readOnly) this.store.saveSetting("routineLast", this.routineLast);
+    }
   }
 
   /**
@@ -293,9 +313,16 @@ export class BotRoutines {
     if (this.routineError) return;
     const live = new Set([...jobs.map((job) => `cron:${job.id}`.slice(0, 2_200)), ...scheduled.map((job) => job.id)]);
     const gone = Object.keys(this.routineWatches).filter((key) => !live.has(key) && !this.watchesRunning.has(key));
-    if (!gone.length) return;
-    for (const key of gone) delete this.routineWatches[key];
-    if (!this.readOnly) this.store.saveSetting("routineWatches", this.routineWatches);
+    if (gone.length) {
+      for (const key of gone) delete this.routineWatches[key];
+      if (!this.readOnly) this.store.saveSetting("routineWatches", this.routineWatches);
+    }
+    // A routine that is gone (a one-time `cron:` line leaves the file as it runs) loses its last-run record at the next look.
+    const lost = Object.keys(this.routineLast).filter((key) => !live.has(key));
+    if (lost.length) {
+      for (const key of lost) delete this.routineLast[key];
+      if (!this.readOnly) this.store.saveSetting("routineLast", this.routineLast);
+    }
   }
 
   /** A divider with its time, then its prompt as a message nobody typed, to this bot's (first) head (`Bot.run`). */

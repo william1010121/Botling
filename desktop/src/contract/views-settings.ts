@@ -117,6 +117,12 @@ export const RoutineView = z.strictObject({
   status: z.string().max(40),
   /** When it next runs (ISO-8601), if it will. */
   next: z.string().nullable(),
+  /**
+   * When it last ran (ISO-8601) and how that went; null: not yet. "sent": the task was handed to the bot (what a prompt routine
+   * can know: not how the bot's work went); "ok" / "failed": a watch's command. Older cores leave both out.
+   */
+  lastRun: z.string().nullable().optional(),
+  lastResult: z.enum(["sent", "ok", "failed"]).nullable().optional(),
   /** A watch ("Name: !command"): the app runs the command and wakes the bot only when it fails; its last run, if any. */
   watch: z.strictObject({
     command: z.string().max(2_000),

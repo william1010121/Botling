@@ -18,13 +18,14 @@ it("a routine's buttons follow its state: Pause while it will run, Resume while 
 
 it("says when a routine runs: the app's phrase or a cron line in words, a zone other than the system's, how far the next run is", () => {
   const base = { id: "R", kind: "recurring" as const, task: "t", title: "t", schedule: "Every weekday 09:00", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", status: "pending", next: null };
-  expect(cadence(base)).toBe("Every weekday 09:00");
+  expect(cadence(base)).toBe("Weekdays 09:00");
   expect(zoneName(base)).toBe("Taipei");
   expect(zoneName({ ...base, timezone: "system_local" })).toBeNull();
-  expect(cadence({ ...base, schedule: "*/10 * * * *" })).toBe("Every 10 min");
-  expect(cadence({ ...base, schedule: "0 9 * * 1-5" })).toBe("Every weekday 09:00");
-  expect(cadence({ ...base, schedule: "5 4 1 * *" })).toBe("Monthly on day 1, 04:05");
-  expect(cadence({ ...base, schedule: "1 2 3 4 5" })).toBe("1 2 3 4 5");
+  const phrase = { ...base, cron: null };
+  expect(cadence({ ...phrase, schedule: "*/10 * * * *" })).toBe("Every 10 min");
+  expect(cadence({ ...phrase, schedule: "5 4 3 * *" })).toBe("Monthly on day 3 04:05");
+  expect(cadence({ ...phrase, schedule: "1 2 3 4 5" })).toBe("1 2 3 4 5");
+  expect(cadence({ ...phrase, schedule: "Every day 08:15" })).toBe("Every day 08:15");
   expect(cadence({ ...base, kind: "once" })).toBe("One time");
   const now = Date.parse("2026-11-03T01:00:00.000Z");
   expect(distance(now + 6 * 60_000, now)).toBe("in 6 min");
@@ -84,7 +85,9 @@ it("the shipped ui.js registers the view and draws the list, pausing and a refus
   const rows = [...root.querySelectorAll("li")];
   expect(rows.map((row) => row.getAttribute("data-status"))).toEqual(["pending", "paused", "fired"]); // running, paused, finished
   expect(rows.map((row) => [...row.querySelectorAll("button")].map((button) => button.textContent))).toEqual([["Pause", "Cancel"], ["Resume", "Cancel"], []]);
-  expect(rows[0]!.querySelector(".routine-cadence")!.textContent).toBe("Every day 08:15");
+  expect(rows[0]!.querySelector(".routine-cadence")!.textContent).toBe("Daily 08:15");
+  // Every card has its last-result line, from the core's lastRun / lastResult
+  expect(rows.map((row) => row.querySelector(".routine-result")?.textContent)).toEqual(["Not run yet", "Not run yet", "Not run yet"]);
   expect(rows[0]!.querySelector(".routine-state")!.textContent).toBe("Scheduled");
   expect(document.head.querySelector("style")?.textContent).toContain("--ground");
   expect(document.head.querySelector("style")?.textContent).toContain(".routine-buttons");

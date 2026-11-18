@@ -202,6 +202,12 @@ button.wk-owner:hover { background: var(--hover); }
 .sbn-check { color: var(--link); }
 .sbn-purpose { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sbn-status { font-size: 11.5px; color: var(--soft-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 5px; }
+/* A routine's standing before the status words, in the Routines panel's dot colours (ok green, due blue, warn orange, bad red, the rest grey). */
+.sbn-rdot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.sbn-rdot[data-tone="ok"] { background: var(--green); }
+.sbn-rdot[data-tone="due"] { background: var(--blue); }
+.sbn-rdot[data-tone="warn"] { background: var(--orange); }
+.sbn-rdot[data-tone="bad"] { background: var(--error); }
 .sbn-spin { width: 9px; height: 9px; border-radius: 50%; box-sizing: border-box; border: 2px solid var(--blue); border-right-color: var(--active); flex-shrink: 0; }
 .sbn-search { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; margin: 8px 8px 2px; border: 1.5px solid var(--blue); border-radius: 8px; font-size: 12.5px; color: var(--muted); flex-shrink: 0; }
 .sbn-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; padding: 0; }

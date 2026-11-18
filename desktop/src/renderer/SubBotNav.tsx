@@ -37,7 +37,7 @@ function MenuRow({ row, current, onOpen, pins, pinnedAt = -1 }: { row: SubBotRow
       <span className="sbn-text">
         <span className="sbn-line1"><b>{row.name}</b>{corner}</span>
         {row.purpose && <span className="sbn-purpose">{row.purpose}</span>}
-        {row.status && <span className="sbn-status">{row.dot === "working" && <span className="sbn-spin" aria-hidden="true" />}{row.status}</span>}
+        {row.status && <span className="sbn-status">{row.dot === "working" && <span className="sbn-spin" aria-hidden="true" />}{row.routine && <i className="sbn-rdot" data-tone={row.routine.tone} aria-hidden="true" />}{row.status}</span>}
       </span>
     </button>
   );

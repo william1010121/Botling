@@ -107,7 +107,9 @@ describe("navigation v5, part 3: pins, Scheduled, New sub bot, Archive", () => {
   it("Scheduled lists the sub bot with a routine coming, its schedule in the corner", () => {
     const markup = picker();
     expect(markup).toContain(">Scheduled<");
-    expect(markup).toContain("⟳ Every day 09:00");
+    expect(markup).toContain("⟳ Daily 09:00");
+    // Its status line leads with the routine's standing (a dot in the panel's colours) and says the next run in the panel's words.
+    expect(markup).toContain('<i class="sbn-rdot" data-tone="ok" aria-hidden="true"></i>Scheduled · Next ');
   });
   it("the footer offers + New sub bot… where it can be made", () => {
     expect(picker({ onNew: async () => {} })).toContain('class="sbn-act"');
