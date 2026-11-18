@@ -11,9 +11,15 @@
 //   that queued up while the synchronous commit blocked the event loop) wait in the queue, and the next drain takes
 //   them all.
 // - Each command runs inside its own SAVEPOINT; a command that throws rolls back to it and fails alone.
-// - Every promise settles only after COMMIT returned. With synchronous = FULL and fullfsync = ON (connection.ts) COMMIT
-//   returns once the WAL is flushed, so a resolved command is durable. If COMMIT itself fails, every command of the
-//   batch is rejected with StoreCommitError and nothing of the batch is kept.
+// - Every promise settles only after COMMIT returned, and, when the batch must be durable, after the flush (D75):
+//   COMMIT runs with synchronous = NORMAL (connection.ts), so it survives a crash of this process but not a power loss.
+//   A batch that wrote a durable table (the `durability` gate's mark: receipts, slots, the forward queue, origins,
+//   effects, the roster…) is flushed before any of its promises settle, so nothing that says "stored" or "done" leaves
+//   before it is on disk. Without a gate (tests that open their own connection) every batch counts as durable and no
+//   extra flush runs. If COMMIT fails, every command of the batch is rejected with StoreCommitError and nothing of the
+//   batch is kept; if the flush fails, the batch is committed but not known to be on disk, so every command of it is
+//   rejected too (no acknowledgement without the flush; a re-send finds its receipt and is answered from it).
+import type { DurabilityGate } from "./connection";
 import type { Db } from "./sqlite";
 
 export interface CommandContext {
@@ -31,8 +37,12 @@ export interface BatchInfo {
   size: number;
   failed: number;
   committed: boolean;
-  /** Milliseconds from BEGIN to the end of COMMIT. */
+  /** The batch is on disk when its promises settle (it was flushed, or there is no gate and every commit counts). */
+  durable: boolean;
+  /** Milliseconds from BEGIN to the end of COMMIT, the flush included. */
   ms: number;
+  /** Milliseconds of the flush alone (0: none ran). */
+  flushMs: number;
 }
 
 export interface WriterOptions {
@@ -41,6 +51,11 @@ export interface WriterOptions {
   onBatch?: (info: BatchInfo) => void;
   /** Test seam: runs after the last command of a batch, before COMMIT. */
   beforeCommit?: (batch: number) => void;
+  /**
+   * D75: which batches must be flushed, and the flush (connection.ts `durabilityGate`). Absent: the connection's own
+   * synchronous setting decides, and every batch is reported durable.
+   */
+  durability?: DurabilityGate;
 }
 
 export class StoreCommitError extends Error {
@@ -111,18 +126,30 @@ export class Writer {
     const outcomes: Array<{ ok: true; value: unknown } | { ok: false; error: unknown }> = [];
     const started = performance.now();
     let commitError: unknown = null;
+    let committed = false;
+    let durable = false;
+    let flushMs = 0;
+    const gate = this.options.durability;
     try {
+      gate?.clear();
       this.db.exec("BEGIN IMMEDIATE");
       batch.forEach((pending, index) => outcomes.push(this.runOne(pending, { batch: number, index })));
       this.options.beforeCommit?.(number);
       this.db.exec("COMMIT");
+      committed = true;
+      if (!gate) durable = true;
+      else if (gate.marked()) {
+        const flushStarted = performance.now();
+        try { gate.flush(); } finally { flushMs = performance.now() - flushStarted; }
+        durable = true;
+      }
     } catch (error) {
       commitError = error;
       try { if (this.db.inTransaction) this.db.exec("ROLLBACK"); } catch { /* the connection reports its own state */ }
     }
     const failed = commitError ? batch.length : outcomes.filter((outcome) => !outcome.ok).length;
     try {
-      this.options.onBatch?.({ batch: number, size: batch.length, failed, committed: !commitError, ms: performance.now() - started });
+      this.options.onBatch?.({ batch: number, size: batch.length, failed, committed, durable, ms: performance.now() - started, flushMs });
     } catch { /* an observer must not break acknowledgements */ }
     this.running = false;
     batch.forEach((pending, index) => {

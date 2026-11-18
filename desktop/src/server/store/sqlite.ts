@@ -24,6 +24,8 @@ export interface Db {
   prepare(sql: string): Statement;
   /** The first column of the first row of `PRAGMA <body>`, or undefined. */
   pragma(body: string): SqlValue | undefined;
+  /** A scalar SQL function of this connection only (D75's durability marks call one from TEMP triggers). */
+  defineFunction(name: string, fn: (...args: SqlValue[]) => SqlValue): void;
   close(): void;
 }
 
@@ -56,6 +58,10 @@ class Connection implements Db {
   pragma(body: string): SqlValue | undefined {
     const row = this.raw.prepare(`PRAGMA ${body}`).get() as SqlRow | undefined;
     return row ? Object.values(row)[0] : undefined;
+  }
+
+  defineFunction(name: string, fn: (...args: SqlValue[]) => SqlValue): void {
+    this.raw.function(name, { deterministic: false, directOnly: false }, fn as (...args: unknown[]) => SqlValue);
   }
 
   close(): void {

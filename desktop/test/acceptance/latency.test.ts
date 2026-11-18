@@ -1,7 +1,8 @@
 // Acceptance check 6 (M1 brief §5): speed. The built botlingd (fake engine, no window) runs with server.db on the
 // INTERNAL disk (a temp folder under the OS temp dir, deleted afterwards; never the external SSD, D43), with the
 // test-only preload commit-timer.cjs timing every server.db write transaction at the node:sqlite boundary
-// (BEGIN IMMEDIATE → COMMIT, and COMMIT alone, which is the WAL flush with synchronous = FULL, fullfsync = ON).
+// (BEGIN IMMEDIATE → COMMIT, and COMMIT alone; since D75 a commit writes the WAL with synchronous = NORMAL, and a
+// batch that wrote a durable table, e.g. a receipt, adds one flushed commit with fullfsync = ON).
 //
 // Phase 1, command rates: a scripted front end sends chat.react commands (an intent each: entries + receipt + the
 // core's rows in one transaction) at 20, 100, 250 and 500 commands/s for ~8 s each, and measures each command's ack
