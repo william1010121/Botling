@@ -35,6 +35,7 @@ function client() {
     requests.push(command);
     if (command.type === "plugins.panel") return { title: "t", source: "export const activate = () => {};", settings: {} };
     if (command.type === "card.page") return { url: `botling-card://page/${requests.length}` };
+    if (command.type === "plugins.list") return { plugins: [] }; // Plugins.tsx reads list.plugins for the frame's stamp
     return settingsView({});
   });
   return { requests, client: { request, onEvent: () => () => {} } as unknown as Client };

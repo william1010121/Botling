@@ -75,7 +75,7 @@ describe("the sleep after a restart's recovery", () => {
     const first = r.peek.session.sessionId;
     // What `retainRestartIdentity` leaves behind after a core restart, for as long as the bot object lives.
     r.peek.restarts.recoveryStarted();
-    r.peek.headRun.lastModelAt = Date.now() - 60_000;
+    r.peek.headRun.setModelClock(Date.now() - 60_000);
     await r.b.sleep({ tidyMs: 0 });
     expect(r.peek.session.started).toBe(false);
     expect(r.peek.briefing).toBe(true);
@@ -164,7 +164,7 @@ describe("a cold cache is never resumed (ensureHead)", () => {
     const id = r.peek.session.sessionId;
     expect(fixture.heads[0].running).toBe(true);
     r.peek.restartFor({ told: "model", shown: "M" });
-    r.peek.headRun.lastModelAt = Date.now() - WARM_WINDOW_MS - 60_000;
+    r.peek.headRun.setModelClock(Date.now() - WARM_WINDOW_MS - 60_000);
     r.peek.briefing = false;
     r.b.send("after a long idle");
     await waitFor("the message to reach a new head", () => fixture.heads[1]?.sent.length === 1);
@@ -200,7 +200,7 @@ describe("what counts as a model call", () => {
       r.peek.ensureHead();
       const head = fixture.heads[0];
       await flush();
-      r.peek.headRun.lastModelAt = null;
+      r.peek.headRun.setModelClock(null);
       const before = Date.now();
       // What the item does after it is noted is not this test's business; only the stamp is.
       try { r.peek.onItem(head, item); } catch { /* ignored */ }

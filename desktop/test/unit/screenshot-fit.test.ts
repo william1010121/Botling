@@ -2,7 +2,7 @@
 // sent (the "Queued for ever" of the eeg bot after two "Not right" taps, 2026-11-18).
 import { describe, expect, it } from "vitest";
 import { encodeFrame, FRAME_LIMIT, type Message } from "../../src/protocol";
-import { COMMAND_FRAME_HEADROOM, fitScreenshot, pictureBudget, type FitPicture } from "../../src/main/screenshot-fit";
+import { COMMAND_FRAME_HEADROOM, SCREENSHOT_FRAME_LIMIT, fitScreenshot, pictureBudget, type FitPicture } from "../../src/main/screenshot-fit";
 
 /** A picture whose PNG is `bytesAt(width)` bytes; `resize` gives the same kind of picture at the new width. */
 function picture(width: number, bytesAt: (width: number) => number): FitPicture {
@@ -20,6 +20,12 @@ function frameOf(cmd: ReturnType<typeof feedback>) {
   const message = { t: "cmd", slot: { origin: "desktop", originEpoch: "a".repeat(32), target: "bot:b1", n: 88 }, floor: 86, inc: "i".repeat(64), cmd } as unknown as Message;
   return encodeFrame(message, "fe", { local: true });
 }
+
+describe("the frame limit", () => {
+  it("is the codec's own (the 2.x main entry cannot import the protocol, so screenshot-fit.ts writes it down)", () => {
+    expect(SCREENSHOT_FRAME_LIMIT).toBe(FRAME_LIMIT);
+  });
+});
 
 describe("fitScreenshot", () => {
   it("keeps the picture as it is when the command still fits one frame", () => {

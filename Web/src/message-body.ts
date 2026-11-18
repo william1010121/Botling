@@ -1,6 +1,7 @@
 import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
+import { isComposingEnter } from "./ime";
 import { t } from "./i18n";
 import { answerAction, answerImages, choicesData, choicesDrawGroups, commandCard, componentElement, detailTarget, fallbackChoices, questionGroupData } from "./components";
 import { groupSummary, questionGroupElement } from "./question-group";
@@ -248,7 +249,7 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     });
     // Enter while the IME is composing picks a character, it does not send. Escape on an empty box puts it away.
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+      if (event.key === "Enter" && isComposingEnter(event)) event.preventDefault();
       else if (event.key === "Escape" && !input.value) { setOpen(false); toggle.focus(); }
     });
     // A draft in the box is never put away by the toggle (it would hide words the user wrote): pressing Reply again just puts the cursor back.

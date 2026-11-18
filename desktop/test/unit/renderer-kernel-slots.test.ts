@@ -89,7 +89,7 @@ describe("KernelSlot", () => {
     rendererKernel.install({ name: "slot.framed", contributes: { slots: ["app/side"] } });
     void rendererKernel.load("slot.framed", (plugin) => { rendererKernel.contribute(plugin, "app/side", { kind: "frame", frame: "slot", plugin: "acme.tool", view: "acme.tool.view", title: "Acme" }); });
     cleanups.push(async () => { await rendererKernel.requestUnload("slot.framed"); rendererKernel.uninstall("slot.framed"); });
-    const client = { request: vi.fn(async () => ({ title: "t", source: "", settings: {} })), onEvent: () => () => {} } as unknown as Client;
+    const client = { request: vi.fn(async (command: { type: string }) => command.type === "plugins.list" ? { plugins: [] } : { title: "t", source: "", settings: {} }), onEvent: () => () => {} } as unknown as Client;
     const without = await mount(createElement(KernelSlot, { slot: "app/side" }));
     expect(without.host.querySelector(".plugin-slot")).toBeNull();
     const withClient = await mount(createElement(KernelSlot, { slot: "app/side", frames: { client } }));

@@ -88,6 +88,7 @@ describe("bottom panels on the app page", () => {
         if (command.type === "plugins.panel") return { title: command.name, source: "", settings: {} };
         if (command.type === "card.page") return { url: `botling-card://page/${requests.length}` };
         if (command.type === "plugins.web") return { specs: [] };
+        if (command.type === "plugins.list") return { plugins: [] }; // Plugins.tsx reads list.plugins for the frame's stamp
         return { result: null };
       }),
       onEvent: () => () => {},

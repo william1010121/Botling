@@ -2,7 +2,10 @@
 // the command goes through the front end's durable outbox, and a copy the frame codec refuses can never be sent (L-005).
 // `fitScreenshot` takes the picture at full size when it fits, then smaller and smaller, and gives up (null) when even the
 // smallest does not: the caller then sends the command without a picture. PNG all the way (the core keeps it as `.png`).
-import { FRAME_LIMIT } from "../protocol/frame";
+
+// The 2.x main entry bundles this file and must not pull in the v3 protocol (main-v3-server-client.test.ts), so the limit is
+// written here; screenshot-fit.test.ts checks it against the codec's own FRAME_LIMIT.
+export const SCREENSHOT_FRAME_LIMIT = 256 * 1024;
 
 /** What the `cmd` frame adds around the command: `t`, the slot, floor, inc, basis, via (a long target and plugin names included). */
 export const COMMAND_FRAME_HEADROOM = 16 * 1024;
@@ -21,7 +24,7 @@ export interface FitPicture {
 
 /** The UTF-8 bytes of the command's JSON without a picture (what is left of the frame for it, with the headroom). */
 export function pictureBudget(rest: unknown): number {
-  return FRAME_LIMIT - COMMAND_FRAME_HEADROOM - FIELD_BYTES - Buffer.byteLength(JSON.stringify(rest), "utf8");
+  return SCREENSHOT_FRAME_LIMIT - COMMAND_FRAME_HEADROOM - FIELD_BYTES - Buffer.byteLength(JSON.stringify(rest), "utf8");
 }
 
 /** The picture as base64 PNG that fits `budget` characters (base64 is ASCII, so characters are bytes), or null. */

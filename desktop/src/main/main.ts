@@ -13,9 +13,8 @@ import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
 import { sealWithSafeStorage } from "./safe-seal";
-import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
-import {captureScale,composeWindow} from "./window-capture";
-import {fitScreenshot,pictureBudget} from "./screenshot-fit";
+import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor} from "./editor-host";
+import {windowPicture,shotFor} from "./window-shot";
 import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
@@ -780,49 +779,12 @@ async function openLink(url: string, reveal = false): Promise<{opened:boolean}> 
 }
 
 /**
- * The shell's window as the user sees it: the shell's pixels with the native chat view drawn in
- * (window-capture.ts). The shell's capturePage alone has an empty chat column, since the chat lives
- * in its own WebContentsView. `rect` (window DIPs) crops the result, as capturePage(rect) did.
- */
-async function windowPicture(contents: WebContents, rect?: Electron.Rectangle): Promise<Electron.NativeImage> {
-  const owner = BrowserWindow.fromWebContents(contents);
-  const width = owner && !owner.isDestroyed() && owner.webContents === contents ? owner.getContentBounds().width : 0;
-  // Not a window's own page (no chat drawn over it): its capture is already the whole picture.
-  if (!width) return contents.capturePage(rect);
-  const shellImage = await contents.capturePage();
-  const picture = await composeWindow(shellImage, width, nativeEditorLayer(contents),
-    (bitmap) => nativeImage.createFromBitmap(bitmap.data, { width: bitmap.width, height: bitmap.height })) as Electron.NativeImage;
-  if (!rect) return picture;
-  const scale = captureScale(shellImage, width);
-  return picture.crop({ x: Math.round(rect.x * scale), y: Math.round(rect.y * scale), width: Math.round(rect.width * scale), height: Math.round(rect.height * scale) });
-}
-
-/**
- * The picture for a command's `screenshot` field, small enough that the whole command fits one frame (it goes through the
- * durable outbox, and a copy over the frame limit can never be sent); undefined, with a note, when even the smallest does not.
- */
-function fitShot(image: Electron.NativeImage, rest: unknown, what: string): string | undefined {
-  const shot = fitScreenshot(image, pictureBudget(rest));
-  if (shot === null) note(`${what}: the screenshot does not fit one frame, sent without it`);
-  return shot ?? undefined;
-}
-
-/**
  * A component card's report: the card as it looks now (1.x's `snapshot(of:in:)`), taken from the app's
  * window at `rect`, goes to the core with the user's words and pictures. A page cannot supply its own.
  */
 async function reportComponent(cmd: Extract<Command, { type: "component.report" }>, sender: WebContents): Promise<unknown> {
   const { screenshot: _ignored, ...rest } = cmd;
-  let screenshot: string | undefined;
-  if (cmd.rect) {
-    try {
-      const rect = { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) };
-      const image = await windowPicture(sender, rect);
-      if (!image.isEmpty()) screenshot = fitShot(image, rest, "component report");
-    } catch (error) {
-      note(`component report: no screenshot (${(error as Error).message})`);
-    }
-  }
+  const screenshot = cmd.rect ? await shotFor(sender, cmd.rect, rest, "component report", note) : undefined;
   return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
 }
 
@@ -854,14 +816,7 @@ async function noteSnapshot(cmd: Extract<Command, { type: "plugins.noteSnapshot"
 /** "Not right" on a reply: the chat as you saw it (its frame's rect), then the core sends the report. */
 async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, sender: WebContents): Promise<unknown> {
   const { screenshot: _ignored, ...rest } = cmd;
-  let screenshot: string | undefined;
-  try {
-    const rect = cmd.rect ? { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) } : undefined;
-    const image = await windowPicture(sender, rect);
-    if (!image.isEmpty()) screenshot = fitShot(image, rest, "feedback");
-  } catch (error) {
-    note(`feedback: no screenshot (${(error as Error).message})`);
-  }
+  const screenshot = await shotFor(sender, cmd.rect, rest, "feedback", note);
   return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
 }
 

@@ -35,7 +35,7 @@ async function mount() {
   stop = observeEditorLayout(host, bridge, () => true);
   const off = vi.fn(), onOpen = vi.fn();
   // A plugin block whose frame never loads (its page request never settles) must not hold any controls or focus hostage.
-  const request = vi.fn((cmd: any) => cmd.type === 'plugins.panel' ? new Promise(() => {}) : Promise.resolve(settingsView({ developerMode: true })));
+  const request = vi.fn((cmd: any) => cmd.type === 'plugins.panel' ? new Promise(() => {}) : cmd.type === 'plugins.list' ? Promise.resolve({ plugins: [] }) : Promise.resolve(settingsView({ developerMode: true })));
   const client = { request, onEvent: () => off } as unknown as Client;
   await act(async () => root.render(createElement(SidebarSettings, {
     client, settings: settingsView({}), plugins: usagePlugin, settingsOpen: false, onOpen,
