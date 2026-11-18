@@ -653,25 +653,29 @@ describe("messages", () => {
     document.body.append(row);
     expect(row.querySelector(".worker-card .component-frame")).not.toBeNull();
     const notes = row.querySelector<HTMLElement>(".worker-card-notes")!;
-    // Folded: the words are not even built, the toggle says how to open them, the warning is in sight.
+    const toggle = row.querySelector<HTMLButtonElement>(".worker-card-tools .steps-toggle")!;
+    // Folded: the words are not even built, the toggle (in the toolbar) says how to open them, the warning is in sight.
     expect(notes.querySelector(".markdown")).toBeNull();
-    expect(notes.querySelector(".steps-toggle")?.textContent).toBe("Show notes");
+    expect(toggle.textContent).toBe("Show notes");
     expect(row.querySelector(".worker-card-warning")?.textContent).toBe("⚠ the command \"x\" was not kept");
     expect(row.querySelector(".worker-card-warning")?.closest(".worker-card-notes")).toBeNull();
-    notes.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    toggle.click();
     expect(notes.querySelector<HTMLElement>(".worker-card-body")!.hidden).toBe(false);
     expect(notes.textContent).toContain("Files touched: a.py");
-    expect(notes.querySelector(".steps-toggle")?.textContent).toBe("Hide notes");
+    expect(toggle.textContent).toBe("Hide notes");
+    // Open notes keep the toolbar shown.
+    expect(row.querySelector(".worker-card")!.classList.contains("notes-open")).toBe(true);
     // Drawn again as the worker moves on: still open.
     expect(messageElement(message({ id: "m50", workerCards: [card] }), components).querySelector(".worker-card-notes.open")).not.toBeNull();
-    notes.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    toggle.click();
     expect(notes.querySelector<HTMLElement>(".worker-card-body")!.hidden).toBe(true);
+    expect(row.querySelector(".worker-card")!.classList.contains("notes-open")).toBe(false);
   });
 
   it("a worker card has a 'make a new component' button: its suggestion box sends a follow-up to the card's worker, asking Maintainer for a new component", () => {
     const row = messageElement(message({ id: "m52", workerCards: [{ id: "c3", title: "Prices", status: "done", run: 1, taskId: "T9", at: null, text: "x" }] }), {});
     document.body.append(row);
-    const button = row.querySelector<HTMLButtonElement>(".worker-card-head .worker-card-new")!;
+    const button = row.querySelector<HTMLButtonElement>(".worker-card-tools .worker-card-new")!;
     expect(button).not.toBeNull();
     button.click();
     const box = document.querySelector<HTMLElement>(".report")!;
@@ -695,7 +699,7 @@ describe("messages", () => {
     const base = { id: "c5", title: "Prices", status: "done" as const, run: 1, taskId: "T7", at: null, text: "x" };
     const row = messageElement(message({ id: "m60", workerCards: [base] }), {});
     document.body.append(row);
-    const button = row.querySelector<HTMLButtonElement>(".worker-card-head .worker-card-redo")!;
+    const button = row.querySelector<HTMLButtonElement>(".worker-card-tools .worker-card-redo")!;
     expect(button.textContent).toBe("Redo with Opus");
     expect(row.querySelector(".worker-card-model")).toBeNull();
     sent.length = 0;
@@ -728,24 +732,28 @@ describe("messages", () => {
     expect(messageElement(message({ id: "m64", workerCards: [{ id: "c9", title: "t", status: "failed", run: 0, at: null, error: "x" }] }), {}).querySelector(".worker-card-redo")).toBeNull();
   });
 
-  it("a worker card is one caption line (state dot, title, Opus tag, then the tools) with no box and no reply box until Reply is pressed", () => {
+  it("a finished worker card is only its data: no title, no state, no head; its tools are one toolbar in the corner, the reply box put away until Reply is pressed", () => {
     const base = { id: "c10", title: "Prices", status: "done" as const, run: 1, taskId: "T5", at: null, text: "x" };
     const row = messageElement(message({ id: "m70", workerCards: [{ ...base, model: "opus" }] }), {});
     document.body.append(row);
-    const head = row.querySelector<HTMLElement>(".worker-card-head")!;
-    // The head holds the dot, title and tag; the tools (new component, and redo when it applies) follow in the same line.
-    expect([...head.children].map((el) => el.className.split(" ")[0])).toEqual(["worker-card-dot", "worker-card-title", "worker-card-model", "worker-card-status", "reply-button"]);
-    expect(head.querySelector(".worker-card-dot")?.getAttribute("aria-label")).toBe(head.querySelector(".worker-card-status")?.textContent);
+    const root = row.querySelector<HTMLElement>(".worker-card")!;
+    expect(root.querySelector(".worker-card-head, .worker-card-title, .worker-card-dot, .worker-card-status, .worker-card-line")).toBeNull();
+    expect(root.textContent).not.toContain("Prices");
+    expect(root.querySelector(".worker-card-body")?.textContent).toContain("x");
+    // The toolbar holds the new-component cube, Reply, and the Opus tag last (in the corner); a card on Opus has no redo.
+    const tools = root.querySelector<HTMLElement>(":scope > .worker-card-tools")!;
+    expect([...tools.children].map((el) => el.className.split(" ").find((name) => /^(worker-card-(new|redo|model|reply-toggle))$/.test(name)))).toEqual(["worker-card-new", "worker-card-reply-toggle", "worker-card-model"]);
     // The reply box is built but put away; the toggle (Reply) opens it, and an empty box closes on Escape.
     const form = row.querySelector<HTMLFormElement>(".worker-card-reply")!;
-    const toggle = row.querySelector<HTMLButtonElement>(".worker-card-reply-toggle")!;
+    const toggle = tools.querySelector<HTMLButtonElement>(".worker-card-reply-toggle")!;
     expect(form.hidden).toBe(true);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     toggle.click();
     expect(form.hidden).toBe(false);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(root.classList.contains("replying")).toBe(true);
     form.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(form.hidden).toBe(true);
+    expect(root.classList.contains("replying")).toBe(false);
     // A draft keeps it open after the chat is drawn again.
     toggle.click();
     const input = form.querySelector("input")!;
@@ -754,15 +762,76 @@ describe("messages", () => {
     expect(messageElement(message({ id: "m70", workerCards: [{ ...base, model: "opus" }] }), {}).querySelector<HTMLFormElement>(".worker-card-reply")!.hidden).toBe(false);
   });
 
-  it("the tools of a worker card sit in one hover row: redo and new component beside the title, the Opus tag only on a card that was redone", () => {
+  it("the toolbar has the redo and the new component buttons on a plain card, only the Opus tag (no redo) on a card that was redone", () => {
     const base = { id: "c11", title: "Prices", status: "done" as const, run: 1, taskId: "T6", at: null, text: "x" };
     const plain = messageElement(message({ id: "m71", workerCards: [base] }), {});
-    expect(plain.querySelectorAll(".worker-card-head > .worker-card-redo, .worker-card-head > .worker-card-new")).toHaveLength(2);
+    expect(plain.querySelectorAll(".worker-card-tools > .worker-card-redo, .worker-card-tools > .worker-card-new")).toHaveLength(2);
     expect(plain.querySelector(".worker-card-model")).toBeNull();
     const onOpus = messageElement(message({ id: "m72", workerCards: [{ ...base, id: "c12", model: "opus" }] }), {});
-    expect(onOpus.querySelector(".worker-card-head > .worker-card-model")?.textContent).toBe("Opus");
+    expect(onOpus.querySelector(".worker-card-tools > .worker-card-model")?.textContent).toBe("Opus");
     expect(onOpus.querySelector(".worker-card-redo")).toBeNull();
-    expect(onOpus.querySelector(".worker-card-head > .worker-card-new")).not.toBeNull();
+    expect(onOpus.querySelector(".worker-card-tools > .worker-card-new")).not.toBeNull();
+  });
+
+  it("a card with no data to show says so in one quiet line (title and state): working, the error in red when it failed, the state when it stopped", () => {
+    const base = { id: "c14", title: "Prices", run: 1, taskId: "T7", at: null };
+    const running = messageElement(message({ id: "m74", workerCards: [{ ...base, status: "running" as const }] }), {});
+    const line = running.querySelector<HTMLElement>(".worker-card-line")!;
+    expect(running.querySelectorAll(".worker-card-line")).toHaveLength(1);
+    expect(line.querySelector(".worker-card-title")?.textContent).toBe("Prices");
+    expect(line.querySelector(".worker-card-detail")?.textContent).toBe("The worker is collecting the data…");
+    expect(running.querySelector(".worker-card-body")).toBeNull();
+    const failed = messageElement(message({ id: "m75", workerCards: [{ ...base, status: "failed" as const, error: "401 Unauthorized" }] }), {});
+    expect(failed.querySelector(".worker-card-line .worker-card-error")?.textContent).toBe("401 Unauthorized");
+    expect(messageElement(message({ id: "m76", workerCards: [{ ...base, status: "failed" as const }] }), {}).querySelector(".worker-card-line .worker-card-error")?.textContent).toBe("Failed");
+    expect(messageElement(message({ id: "m77", workerCards: [{ ...base, status: "stopped" as const }] }), {}).querySelector(".worker-card-line .worker-card-detail")?.textContent).toBe("Stopped");
+    // A done card with something to draw has no line; a redraw while its worker is working again keeps the data and adds the line.
+    expect(messageElement(message({ id: "m78", workerCards: [{ ...base, status: "done" as const, text: "x" }] }), {}).querySelector(".worker-card-line")).toBeNull();
+    const again = messageElement(message({ id: "m79", workerCards: [{ ...base, status: "running" as const, text: "x" }] }), {});
+    expect(again.querySelector(".worker-card-body")).not.toBeNull();
+    expect(again.querySelector(".worker-card-line .worker-card-detail")?.textContent).toBe("Working…");
+    // The orange warning under the data is not a line of its own and does not make one.
+    const warned = messageElement(message({ id: "m80", workerCards: [{ ...base, status: "done" as const, text: "x", warning: "⚠ blocked" }] }), {});
+    expect(warned.querySelector(".worker-card-line")).toBeNull();
+    expect(warned.querySelector(".worker-card-warning")?.textContent).toBe("⚠ blocked");
+  });
+
+  it("a card keeps its toolbar shown (tools-open) while its redo / new-component box is open, through a redraw, and drops it when the box goes away", async () => {
+    const card = { id: "c13", title: "Prices", status: "done" as const, run: 1, taskId: "T10", at: null, text: "x" };
+    const row = messageElement(message({ id: "m73", workerCards: [card] }), {});
+    document.body.append(row);
+    const root = row.querySelector<HTMLElement>(".worker-card")!;
+    const redo = row.querySelector<HTMLButtonElement>(".worker-card-redo")!;
+    const fresh = row.querySelector<HTMLButtonElement>(".worker-card-new")!;
+    expect(root.classList.contains("tools-open")).toBe(false);
+    redo.click();
+    expect(root.classList.contains("tools-open")).toBe(true);
+    // The worker moves on and the card is drawn again while the box is open: still held.
+    expect(messageElement(message({ id: "m73", workerCards: [card] }), {}).querySelector(".worker-card.tools-open")).not.toBeNull();
+    // Opening the card's other box replaces the first one; the first box's closing must not undo the second hold.
+    fresh.click();
+    expect(document.querySelectorAll(".report")).toHaveLength(1);
+    expect(root.classList.contains("tools-open")).toBe(true);
+    // A press outside the box puts it away and the toolbar goes back to hover-only.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".report")).toBeNull();
+    expect(root.classList.contains("tools-open")).toBe(false);
+    expect(messageElement(message({ id: "m73", workerCards: [card] }), {}).querySelector(".worker-card.tools-open")).toBeNull();
+    // Sending also lets go.
+    fresh.click();
+    expect(root.classList.contains("tools-open")).toBe(true);
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+    expect(root.classList.contains("tools-open")).toBe(false);
+  });
+
+  it("the toolbar's CSS puts the buttons away until the card is the target (hover, focus-within, an open box, notes or reply), keeps the Opus tag, and shows all on a touch screen", () => {
+    const css = readChatCss();
+    const shown = css.match(/\.worker-card:is\([^)]*\) > \.worker-card-tools > \*[^{]*\{ opacity: 1;/)?.[0] ?? "";
+    for (const part of [":hover", ":focus-within", ".tools-open", ".notes-open", ".replying", ".worker-card-new"]) expect(shown).toContain(part);
+    expect(css).toMatch(/\.worker-card-tools > :not\(\.worker-card-model\)[^{]*\{ opacity: 0; pointer-events: none;/);
+    expect(css).toMatch(/\.row \.worker-card-tools \.worker-card-new[^{]*\{ opacity: 0;/);
+    expect(css).toMatch(/@media \(hover: none\) \{\s*\.worker-card-tools \{[^}]*\}\s*\.worker-card-tools > \*[^{]*\{ opacity: 1;/);
   });
 
   it("no new-component button on a card that has no worker yet, nor on an ordinary reply", () => {

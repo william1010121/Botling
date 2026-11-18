@@ -136,40 +136,29 @@ const CARD_STATUS_KEYS = {
 } as const;
 
 /**
- * A worker card: the title and state of its worker, its latest report drawn as a reply is (words and components), and a small box
- * whose words go to that worker as a follow-up. Its next report replaces the one shown.
+ * A worker card: its worker's latest report drawn as a reply is, with nothing around it. A finished card is only its data (the component,
+ * or the words when the worker made a picture): no title, no state. A card with no data to show says so in one quiet line (title and state,
+ * red with the error when it failed). Its tools (redo with Opus, new component, notes, reply) are a small toolbar at the top-right corner,
+ * shown while the pointer or focus is on the card or something it opened is still open; the Opus tag stays in that corner. Its next report
+ * replaces the one shown.
  */
 export function workerCardElement(message: MessageView, card: WorkerCardView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement {
   const root = document.createElement("div");
-  root.className = `worker-card status-${card.status}`;
+  root.className = `worker-card status-${card.status}${cardToolsHeld.has(card.id) ? " tools-open" : ""}`;
   root.dataset.card = card.id;
-  const head = document.createElement("div");
-  head.className = "worker-card-head";
-  // The state is a dot before the title (its words are for the dot's label and, for a state that needs saying, beside the title).
-  const dot = document.createElement("span");
-  dot.className = "worker-card-dot";
-  dot.setAttribute("role", "img");
-  const title = document.createElement("span");
-  title.className = "worker-card-title";
-  title.textContent = card.title;
-  const status = document.createElement("span");
-  status.className = "worker-card-status";
-  status.textContent = t(CARD_STATUS_KEYS[card.status]);
-  dot.setAttribute("aria-label", status.textContent);
-  head.append(dot, title);
-  // Which model the card is on, once it was redone by another one (a small tag that stays beside the title).
-  if (card.model) head.append(modelTag(card.model));
-  head.append(status);
+  const tools = document.createElement("div");
+  tools.className = "worker-card-tools";
+  tools.setAttribute("role", "toolbar");
+  tools.setAttribute("aria-label", card.title);
   // "Redo with Opus": a finished card whose first worker is still the card worker; its words go to the core, which starts the Opus worker and binds the card to it.
-  // It shows beside the title with the other tools, while the pointer is over the card.
-  if (card.taskId && !card.model && card.status !== "starting" && card.status !== "running") head.append(redoButton(card.id, card.taskId));
+  if (card.taskId && !card.model && card.status !== "starting" && card.status !== "running") tools.append(redoButton(card.id, card.taskId));
   // "Make a new component": the same small box as "make it a visual report" on a reply; its words go to the card's worker as any reply on the card does.
-  // It shows beside the title while the pointer is over the card.
-  if (card.taskId) head.append(newComponentButton(card.taskId));
-  root.append(head);
+  if (card.taskId) tools.append(newComponentButton(card.id, card.taskId));
+  root.append(tools);
   const hasDisplays = !!card.displays?.length;
-  let notes: HTMLElement | null = null;
-  if (card.text || hasDisplays || card.warning) {
+  const drawn = !!card.text || hasDisplays;
+  let notes: { toggle: HTMLElement; panel: HTMLElement } | null = null;
+  if (drawn || card.warning) {
     // The report is drawn as a reply is. The component keeps the id `<line>:card-<n>` (its command and answers are found by it).
     const draw = (text: string, displays: DisplayView[] | null): HTMLElement => {
       const report: MessageView = {
@@ -185,19 +174,31 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     // With a component drawn, the worker's own words (how it got the data, notes) are folded; with none they are all the card has (a picture it made is in them), so they stay in sight.
     if (card.text && !hasDisplays) root.append(draw(card.text, null));
     if (hasDisplays) root.append(draw("", card.displays!));
-    // A rejected command is said on the card, never folded.
+    // A rejected command is said on the card, one orange line under the data, never folded.
     if (card.warning) {
       const warning = document.createElement("div");
       warning.className = "worker-card-warning";
       warning.textContent = card.warning;
       root.append(warning);
     }
-    if (card.text && hasDisplays) notes = cardNotes(card.id, () => draw(card.text!, null));
-  } else if (card.status === "starting" || card.status === "running") {
-    const wait = document.createElement("div");
-    wait.className = "worker-card-wait";
-    wait.textContent = t("card.waiting");
-    root.append(wait);
+    if (card.text && hasDisplays) notes = cardNotes(card.id, root, () => draw(card.text!, null));
+  }
+  // No data to show, or its worker is not done: one quiet line with the title and the state (the error, in red, when it failed).
+  if (card.status !== "done" || (!drawn && !card.warning)) {
+    const waiting = card.status === "starting" || card.status === "running";
+    const line = document.createElement("div");
+    line.className = "worker-card-line";
+    const dot = document.createElement("span");
+    dot.className = "worker-card-dot";
+    dot.setAttribute("aria-hidden", "true");
+    const title = document.createElement("span");
+    title.className = "worker-card-title";
+    title.textContent = card.title;
+    const detail = document.createElement("span");
+    detail.className = card.status === "failed" ? "worker-card-detail worker-card-error" : "worker-card-detail";
+    detail.textContent = card.error || (waiting && !drawn ? t("card.waiting") : t(CARD_STATUS_KEYS[card.status]));
+    line.append(dot, title, detail);
+    root.append(line);
   }
   if (card.waiting) {
     const waiting = document.createElement("div");
@@ -205,17 +206,9 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     waiting.textContent = t(card.waiting === "late" ? "card.waitLate" : "card.waitComponent");
     root.append(waiting);
   }
-  if (card.error) {
-    const error = document.createElement("div");
-    error.className = "worker-card-error";
-    error.textContent = card.error;
-    root.append(error);
-  }
-  // One quiet line under the report: "Show notes" and "Reply" (the reply box opens from it, and stays open for a draft).
-  const foot = document.createElement("div");
-  foot.className = "worker-card-foot";
-  if (notes) foot.append(notes);
   const taskId = card.taskId;
+  let reply: HTMLElement | null = null;
+  let replyToggle: HTMLElement | null = null;
   if (taskId) {
     const form = document.createElement("form");
     form.className = "worker-card-reply";
@@ -234,7 +227,7 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     const setOpen = (open: boolean, focus = false) => {
       form.hidden = !open;
       toggle.setAttribute("aria-expanded", String(open));
-      foot.classList.toggle("replying", open);
+      root.classList.toggle("replying", open);
       if (open) openReplies.add(card.id);
       else openReplies.delete(card.id);
       if (open && focus) input.focus();
@@ -261,20 +254,44 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     toggle.addEventListener("click", () => setOpen(form.hidden, true));
     shut();
     form.append(input, send);
-    foot.append(toggle, form);
+    reply = form;
+    replyToggle = toggle;
     setOpen(!!input.value || openReplies.has(card.id));
   }
-  if (foot.childElementCount) root.append(foot);
+  // The toolbar's last buttons, then the Opus tag in the corner; what the buttons opened (notes, the reply box) comes below the data.
+  if (notes) tools.append(notes.toggle);
+  if (replyToggle) tools.append(replyToggle);
+  if (card.model) tools.append(modelTag(card.model));
+  if (notes) root.append(notes.panel);
+  if (reply) root.append(reply);
   return root;
 }
 
-/** The small tag in a card's title bar that says which model its worker is ("Opus"). */
+/** The small tag in a card's corner that says which model its worker is ("Opus"); it stays when the other tools are put away. */
 function modelTag(model: string): HTMLElement {
   const tag = document.createElement("span");
   tag.className = "worker-card-model";
   tag.textContent = model.charAt(0).toUpperCase() + model.slice(1);
   tag.title = t("card.model.title");
   return tag;
+}
+
+/**
+ * Cards whose small input box (redo, new component) is open: their toolbar stays shown (class `tools-open`) while it is, though the pointer
+ * has left the card to reach the box. A redraw keeps it. Returns what the box calls when it goes away.
+ */
+const cardToolsHeld = new Map<string, symbol>();
+
+function holdTools(button: HTMLElement, cardID: string): () => void {
+  // A box opened on the same card's other tool replaces this one: the older box's closing must not undo the newer hold.
+  const mine = Symbol(cardID);
+  cardToolsHeld.set(cardID, mine);
+  button.closest(".worker-card")?.classList.add("tools-open");
+  return () => {
+    if (cardToolsHeld.get(cardID) !== mine) return;
+    cardToolsHeld.delete(cardID);
+    for (const card of document.querySelectorAll<HTMLElement>(".worker-card.tools-open")) if (card.dataset.card === cardID) card.classList.remove("tools-open");
+  };
 }
 
 /** Cards whose redo was just asked for: their button does nothing more until the card shows the new worker (a double tap asks once). */
@@ -294,6 +311,7 @@ function redoButton(cardID: string, taskId: string): HTMLElement {
       question: t("card.redo.question"),
       placeholder: t("card.redo.placeholder"),
       pictures: false,
+      onClose: holdTools(button, cardID),
       send: (text) => {
         if (cardRedoing.has(cardID)) return;
         cardRedoing.add(cardID);
@@ -310,7 +328,7 @@ function redoButton(cardID: string, taskId: string): HTMLElement {
 
 const replyIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v4"/></svg>`;
 
-function newComponentButton(taskId: string): HTMLElement {
+function newComponentButton(cardID: string, taskId: string): HTMLElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "reply-button regather-button worker-card-new";
@@ -323,6 +341,7 @@ function newComponentButton(taskId: string): HTMLElement {
       question: t("card.new.question"),
       placeholder: t("card.new.placeholder"),
       pictures: false,
+      onClose: holdTools(button, cardID),
       send: (text) => post({ type: "cardSend", taskID: taskId, text: newComponentText(text) }),
     });
   });
@@ -335,10 +354,13 @@ const openReplies = new Set<string>();
 /** Cards whose folded words the user opened (a redraw, as the worker moves on, keeps them open). */
 const openNotes = new Set<string>();
 
-/** The worker's words under a card's component, folded to one line ("Show notes"), as a reply's steps are ("Worked · 5 steps"). Built when first opened. */
-function cardNotes(cardID: string, build: () => HTMLElement): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "worker-card-notes";
+/**
+ * The worker's words under a card's component, folded ("Show notes" in the card's toolbar, as a reply's steps are "Worked · 5 steps"):
+ * the toggle goes in the toolbar, the panel below the data. The words are built when first opened.
+ */
+function cardNotes(cardID: string, root: HTMLElement, build: () => HTMLElement): { toggle: HTMLElement; panel: HTMLElement } {
+  const panel = document.createElement("div");
+  panel.className = "worker-card-notes";
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "steps-toggle";
@@ -346,18 +368,18 @@ function cardNotes(cardID: string, build: () => HTMLElement): HTMLElement {
   const label = toggle.querySelector("span")!;
   let body: HTMLElement | null = null;
   const setOpen = (open: boolean) => {
-    wrap.classList.toggle("open", open);
+    panel.classList.toggle("open", open);
+    root.classList.toggle("notes-open", open);
     toggle.setAttribute("aria-expanded", String(open));
     label.textContent = t(open ? "card.notesHide" : "card.notesShow");
-    if (open && !body) { body = build(); wrap.append(body); }
+    if (open && !body) { body = build(); panel.append(body); }
     if (body) body.hidden = !open;
     if (open) openNotes.add(cardID);
     else openNotes.delete(cardID);
   };
-  toggle.addEventListener("click", () => setOpen(!wrap.classList.contains("open")));
-  wrap.append(toggle);
+  toggle.addEventListener("click", () => setOpen(!panel.classList.contains("open")));
   setOpen(openNotes.has(cardID));
-  return wrap;
+  return { toggle, panel };
 }
 
 /** Whose call it was: one of the bot's subagents ("Subagent · Fix group B  Open ›"), opening it. */

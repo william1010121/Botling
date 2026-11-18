@@ -191,43 +191,29 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 /* A turn cut off before it answered: what it had said and done so far stays, marked. */
 .interrupted-note { margin-top: 6px; font-size: 12px; color: var(--faint); font-style: italic; }
 
-/* A worker card (`<card>` tag): no box of its own. It sits in the reply as a line of text does: a small caption (state dot, title,
-   and on hover the "new component" and "redo with Opus" buttons, and the Opus tag when the card was redone), its report as the reply draws it, and one quiet line under it ("Show notes", "Reply"). */
+/* A worker card (`<card>` tag): nothing around it, no title and no state while it is done: it is only its data, in the reply as a line of text is.
+   A card with no data (or whose worker is not done) has one quiet line (dot, title, state; the error in red). Its tools are a small toolbar at
+   the top-right corner, shown while the pointer or focus is on the card or something it opened is open (a small box, the notes, the reply
+   box, a draft); a touch screen has no hover, so they stay shown there. The Opus tag stays in that corner. */
 .worker-card { position: relative; margin-top: 10px; min-width: 0; }
-.worker-card-head { display: flex; align-items: center; gap: 7px; min-height: 22px; min-width: 0; font-size: 12.5px; line-height: 1.4; }
+.worker-card-body { min-width: 0; overflow-wrap: anywhere; }
+.worker-card-body > :first-child { margin-top: 0; }
+.worker-card-body > .component { margin-top: 0; }
+.worker-card-line { display: flex; align-items: center; gap: 7px; min-height: 22px; min-width: 0; font-size: 12.5px; line-height: 1.4; color: var(--faint); }
 .worker-card-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
-.worker-card.status-done .worker-card-dot { background: var(--green); }
 .worker-card.status-running .worker-card-dot, .worker-card.status-starting .worker-card-dot { background: var(--orange); animation: card-pulse 1.4s ease-in-out infinite; }
 .worker-card.status-failed .worker-card-dot { background: var(--error); }
 @keyframes card-pulse { 50% { opacity: 0.35; } }
-.worker-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--muted); }
-/* A finished card's state is the green dot (its label is the dot's); a state that needs saying is said beside the title. */
-.worker-card-status { flex-shrink: 0; color: var(--faint); }
-.worker-card.status-done .worker-card-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.worker-card.status-running .worker-card-status, .worker-card.status-starting .worker-card-status { color: var(--orange-text); }
-.worker-card.status-failed .worker-card-status { color: var(--error); }
-.worker-card-body { min-width: 0; overflow-wrap: anywhere; }
-.worker-card-body > :first-child { margin-top: 0; }
-.worker-card-redo { flex-shrink: 0; height: 22px; padding: 0 2px; border: none; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
-.worker-card-redo:hover:not(:disabled) { color: var(--text); }
-.worker-card-redo:disabled { opacity: 0.5; cursor: default; }
-.worker-card-model { flex-shrink: 0; height: 16px; line-height: 16px; padding: 0 6px; border-radius: 8px; background: var(--accent-bg); color: var(--link); font-size: 10.5px; font-weight: 600; }
-.worker-card-body > .component { margin-top: 6px; }
-.worker-card-new { width: 22px; height: 22px; border-radius: 6px; }
-.worker-card:hover .worker-card-new, .worker-card:focus-within .worker-card-new, .worker-card-new:focus-visible { opacity: 1; }
-.worker-card:hover .worker-card-redo, .worker-card:focus-within .worker-card-redo, .worker-card:has(.worker-card-notes.open) .worker-card-redo, .worker-card:has(.worker-card-foot.replying) .worker-card-redo { opacity: 1; }
-@media (hover: none) { .worker-card-new, .worker-card-redo { opacity: 1; } }
-.worker-card-warning { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--orange-text); white-space: pre-wrap; overflow-wrap: anywhere; }
-.worker-card-wait, .worker-card-error { margin-top: 2px; font-size: 13px; color: var(--faint); }
+.worker-card-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--muted); }
+.worker-card-detail { min-width: 0; overflow-wrap: anywhere; }
+.worker-card.status-running .worker-card-detail, .worker-card.status-starting .worker-card-detail { color: var(--orange-text); }
 .worker-card-error { color: var(--error); }
-/* The foot: its buttons share a line; the opened notes and the reply box take a line each below it. */
-.worker-card-foot { display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; margin-top: 4px; }
-.worker-card-notes { display: contents; }
-.worker-card-foot .steps-toggle { order: 0; font-size: 12.5px; }
-.worker-card-reply-toggle { order: 1; }
-.worker-card-notes > .worker-card-body { order: 2; flex: 0 0 100%; margin: 4px 0 2px; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+.worker-card-warning { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--orange-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.worker-card-wait { margin-top: 2px; font-size: 13px; color: var(--faint); }
+.worker-card-notes { margin-top: 6px; }
+.worker-card-notes > .worker-card-body { padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); font-size: 13.5px; line-height: 1.55; }
 .worker-card-notes > .worker-card-body[hidden] { display: none; }
-.worker-card-reply { order: 3; flex: 0 0 100%; display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.worker-card-reply { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .worker-card-reply[hidden] { display: none; }
 .worker-card-reply input { flex: 1; min-width: 0; height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 15px; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
 .worker-card-reply input:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
@@ -235,23 +221,23 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .worker-card-reply button:hover:not(:disabled) { background: var(--accent-bg); }
 .worker-card-reply button:disabled, .worker-card-reply input:disabled { opacity: 0.5; cursor: default; }
 
-/* Rest state: only the caption and the report show. "Show notes" and "Reply" join the caption's line, and the "new component" button its end,
-   while the pointer or focus is on the card; they stay while the notes or the reply box are open or a draft waits (a touch screen has no hover,
-   so they stay there). The "Redo with Opus" button joins the same row; the Opus tag is not a tool, it stays beside the title.. The foot dissolves into the card, so the reply box and opened notes still come below the report. */
-.worker-card { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
-.worker-card > * { order: 4; flex: 0 0 100%; }
-.worker-card > .worker-card-head { order: 0; flex: 0 1 auto; }
-.worker-card > .worker-card-body { order: 3; }
-.worker-card-foot { display: contents; }
-.worker-card-foot .steps-toggle { flex: none; margin: 0; padding: 0; }
-.worker-card-notes > .steps-toggle { order: 1; }
-.worker-card-foot .worker-card-reply-toggle { order: 2; }
-.worker-card-notes > .worker-card-body { order: 5; }
-.worker-card-reply { order: 6; }
-.worker-card-foot .steps-toggle, .worker-card-new, .worker-card-redo { opacity: 0; transition: opacity 0.12s; }
-.worker-card:hover .steps-toggle, .worker-card:focus-within .steps-toggle,
-.worker-card:has(.worker-card-notes.open) .steps-toggle, .worker-card:has(.worker-card-foot.replying) .steps-toggle { opacity: 1; }
-@media (hover: none) { .worker-card-foot .steps-toggle { opacity: 1; } }
+/* The toolbar: its buttons are put away until the card is the target; the Opus tag is the one thing that stays. `.row .worker-card-tools …` beats
+   `.row:hover .reply-button`, so the cube too shows only when the card is the target, not the whole reply. */
+.worker-card-tools { position: absolute; top: -4px; right: 0; z-index: 3; display: flex; align-items: center; gap: 2px; padding: 2px 4px; border: 1px solid transparent; border-radius: 9px; font-size: 12.5px; line-height: 1.4; }
+.worker-card-tools > :not(.worker-card-model), .row .worker-card-tools .worker-card-new { opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+.worker-card-tools .steps-toggle, .worker-card-redo { flex: none; height: 22px; padding: 0 6px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.worker-card-tools .steps-toggle:hover, .worker-card-redo:hover:not(:disabled) { background: var(--accent-bg); color: var(--text); }
+.worker-card-redo:disabled { cursor: default; }
+.worker-card-new { width: 22px; height: 22px; border-radius: 6px; }
+.worker-card-model { flex-shrink: 0; height: 16px; line-height: 16px; padding: 0 6px; border-radius: 8px; background: var(--accent-bg); color: var(--link); font-size: 10.5px; font-weight: 600; }
+.worker-card:is(:hover, :focus-within, .tools-open, .notes-open, .replying) > .worker-card-tools { background: var(--card); border-color: var(--card-line); }
+.worker-card:is(:hover, :focus-within, .tools-open, .notes-open, .replying) > .worker-card-tools > *, .row .worker-card:is(:hover, :focus-within, .tools-open, .notes-open, .replying) > .worker-card-tools .worker-card-new { opacity: 1; pointer-events: auto; }
+.worker-card:is(:hover, :focus-within, .tools-open, .notes-open, .replying) > .worker-card-tools > .worker-card-redo:disabled { opacity: 0.5; }
+@media (hover: none) {
+  .worker-card-tools { background: var(--card); border-color: var(--card-line); }
+  .worker-card-tools > *, .row .worker-card-tools .worker-card-new { opacity: 1; pointer-events: auto; }
+  .worker-card-tools > .worker-card-redo:disabled { opacity: 0.5; }
+}
 
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
