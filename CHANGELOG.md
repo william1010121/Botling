@@ -1,8 +1,10 @@
 # Changelog
 
 Botling uses [semantic versioning](https://semver.org): a new feature bumps the minor
-version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
-app and publishes it on GitHub Releases.
+version, a fix alone bumps the patch. Pushing a tag builds the app (`.github/workflows/release.yml`): a Botling 2
+release is a `v<version>` tag and is published as GitHub's Latest; a Botling 3 release is a `v<version>-v3` tag
+(the suffix is the update channel 3.x installs follow) and is a pre-release draft that a person publishes, see
+`docs/release-v3.md`.
 
 ## 3.2.1
 

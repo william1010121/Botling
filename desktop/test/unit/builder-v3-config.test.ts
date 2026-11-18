@@ -25,6 +25,8 @@ function loadFreshConfig(configPath: string): Record<string, any> {
 function normalizeForDiffCheck(config: Record<string, any>): Record<string, any> {
   const clone = structuredClone(config);
   delete clone.appId;
+  delete clone.dmg?.contents; // v3 always holds the Applications link; the 2.x trial layout depends on package.json
+  if (clone.extraMetadata) delete clone.extraMetadata.botlingDevTrial;
   delete clone.productName;
   delete clone.artifactName;
   if (clone.extraMetadata) {
@@ -151,5 +153,36 @@ describe("Botling 3 electron-builder config (M6-07a / M6-07c)", () => {
     expect(pkgMod.resolveBuilderConfigPath(["--mac", "--dir"], desktopRoot)).toBe(v2ConfigPath);
     expect(pkgMod.resolveBuilderConfigPath(["--v3"], desktopRoot)).toBe(v3ConfigPath);
     expect(pkgMod.resolveBuilderConfigPath(["--mac", "--dir", "--v3"], desktopRoot)).toBe(v3ConfigPath);
+  });
+
+  it("is never a dev trial: the packed package.json says false and the DMG holds the Applications link, whatever package.json says", () => {
+    const v2 = loadFreshConfig(v2ConfigPath);
+    const v3 = loadFreshConfig(v3ConfigPath);
+    expect(v3.extraMetadata.botlingDevTrial).toBe(false);
+    expect(v2.extraMetadata.botlingDevTrial).toBeUndefined();
+    const paths = v3.dmg.contents.map((item: Record<string, any>) => item.path ?? null);
+    expect(v3.dmg.contents).toContainEqual({ x: 450, y: 180, type: "link", path: "/Applications" });
+    for (const name of ["DEV-TRIAL.md", "Launch Dev Trial.command"]) expect(v3.dmg.contents.map((item: Record<string, any>) => item.name)).not.toContain(name);
+    expect(paths.some((path: string | null) => path?.includes("dev-trial"))).toBe(false);
+    expect(v3.dmg.sign).toBe(v2.dmg.sign);
+    expect(v3.dmg.writeUpdateInfo).toBe(false);
+  });
+
+  it("has a dist:mac:v3 script that packages the v3 config for macOS", () => {
+    const pkg = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8"));
+    expect(pkg.scripts["dist:mac:v3"]).toBe("node scripts/package.mjs --v3 --mac");
+  });
+
+  it("a Botling 3 release build must be told package.json's version (BOTLING_V3_VERSION); other builds are not judged", async () => {
+    const { assertV3ReleaseVersion } = await import(pathToFileURL(packageScriptPath).href);
+    const release = { BOTLING_RELEASE_BUILD: "1" };
+    expect(() => assertV3ReleaseVersion(["--v3", "--mac"], release, "3.2.2")).toThrow(/BOTLING_V3_VERSION=3\.2\.2.*got nothing/);
+    expect(() => assertV3ReleaseVersion(["--v3", "--mac"], { ...release, BOTLING_V3_VERSION: "3.0.0-beta.1" }, "3.2.2")).toThrow(/got 3\.0\.0-beta\.1/);
+    expect(() => assertV3ReleaseVersion(["--v3", "--mac"], { ...release, BOTLING_V3_VERSION: "3.2.1" }, "3.2.2")).toThrow(/BOTLING_V3_VERSION/);
+    expect(() => assertV3ReleaseVersion(["--v3", "--mac"], { ...release, BOTLING_V3_VERSION: "2.6.0" }, "2.6.0")).toThrow(/stable 3\.x\.y/);
+    expect(() => assertV3ReleaseVersion(["--v3", "--mac"], { ...release, BOTLING_V3_VERSION: "3.2.2" }, "3.2.2")).not.toThrow();
+    // A developer's local build, and a 2.x build, keep working without it.
+    expect(() => assertV3ReleaseVersion(["--v3", "--dir"], {}, "3.2.2")).not.toThrow();
+    expect(() => assertV3ReleaseVersion(["--mac"], release, "3.2.2")).not.toThrow();
   });
 });
