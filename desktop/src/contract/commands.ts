@@ -242,6 +242,8 @@ const BASE_COMMANDS = [
   z.strictObject({ type: z.literal("agent.move"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), to: AgentMoveTo, notifyAgent: z.boolean().optional() }),
   /** The owner's follow-up for an agent shown in its rows (an app-managed worker of any engine): joined into its run, its next run, or sent after its run. */
   z.strictObject({ type: z.literal("agent.message"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), text: z.string().min(1).max(64_000) }),
+  /** "Redo with Opus" on a worker card: a new Opus (medium) worker redoes the card from what its first worker left, and the card is bound to it. `note` is the user's wish. */
+  z.strictObject({ type: z.literal("card.redo"), botId, taskId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), note: z.string().max(4_000).optional() }),
   /** The owner stops one agent shown in its rows (no report is made). */
   z.strictObject({ type: z.literal("agent.stop"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** "New sub bot with these…": several agents shown in `botId`'s rows move to one new sub bot together (all or none). */

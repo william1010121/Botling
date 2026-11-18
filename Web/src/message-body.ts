@@ -152,6 +152,10 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
   status.className = "worker-card-status";
   status.textContent = t(CARD_STATUS_KEYS[card.status]);
   head.append(title);
+  // Which model the card is on, once it was redone by another one.
+  if (card.model) head.append(modelTag(card.model));
+  // "Redo with Opus": a finished card whose first worker is still the card worker; its words go to the core, which starts the Opus worker and binds the card to it.
+  if (card.taskId && !card.model && card.status !== "starting" && card.status !== "running") head.append(redoButton(card.id, card.taskId));
   // "Make a new component": the same small box as "make it a visual report" on a reply; its words go to the card's worker as any reply on the card does.
   if (card.taskId) head.append(newComponentButton(card.taskId));
   head.append(status);
@@ -231,6 +235,46 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     root.append(form);
   }
   return root;
+}
+
+/** The small tag in a card's title bar that says which model its worker is ("Opus"). */
+function modelTag(model: string): HTMLElement {
+  const tag = document.createElement("span");
+  tag.className = "worker-card-model";
+  tag.textContent = model.charAt(0).toUpperCase() + model.slice(1);
+  tag.title = t("card.model.title");
+  return tag;
+}
+
+/** Cards whose redo was just asked for: their button does nothing more until the card shows the new worker (a double tap asks once). */
+const cardRedoing = new Set<string>();
+
+function redoButton(cardID: string, taskId: string): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "worker-card-redo";
+  button.textContent = t("card.redo.label");
+  button.title = t("card.redo.title");
+  button.disabled = cardRedoing.has(cardID);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (cardRedoing.has(cardID)) return;
+    openReportBox(button, {
+      question: t("card.redo.question"),
+      placeholder: t("card.redo.placeholder"),
+      pictures: false,
+      send: (text) => {
+        if (cardRedoing.has(cardID)) return;
+        cardRedoing.add(cardID);
+        button.disabled = true;
+        const note = text.trim();
+        post({ type: "cardRedo", taskID: taskId, ...(note ? { note } : {}) });
+        // The card shows the Opus tag when the core has started it; if it refused, the button comes back after a moment.
+        setTimeout(() => { cardRedoing.delete(cardID); button.disabled = false; }, 4_000);
+      },
+    });
+  });
+  return button;
 }
 
 function newComponentButton(taskId: string): HTMLElement {

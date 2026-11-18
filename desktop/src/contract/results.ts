@@ -19,7 +19,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.store", "plugins.storeInstall", "plugins.storeDismiss", "plugins.revert", "plugins.remove", "plugins.setting", "plugins.secret", "plugins.command", "plugins.tabCommand", "plugins.linkCommand", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink", "plugin.grant",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "mobile.cluster", "mobile.confirm", "machines.view", "machines.hosts", "machines.add", "machines.pair", "machines.approve", "machines.decline", "machines.revoke", "machines.remove", "machines.check", "projects.pick", "waiting.list", "waiting.ignore",
-  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
+  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "card.redo", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "link.drag", "worker.file",
   "storage.list", "storage.add", "storage.pick", "storage.remove", "storage.open", "storage.drag",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -96,6 +96,7 @@ export interface Results {
   "agent.move": { agentId: string; ownerBotId: string; mode: "owner" | "handoff" };
   "agent.message": { agentId: string; how: "steered" | "newRun" | "queued"; run: number | null };
   "agent.stop": { agentId: string; stopped: boolean };
+  "card.redo": { taskId: string; run: number };
   "agent.group": { ownerBotId: string; agentIds: string[] };
   "subbot.close": { closed: boolean; parentBotId: string; returned: number; stopped: number };
   "bots.create": { botId: string; created: boolean };

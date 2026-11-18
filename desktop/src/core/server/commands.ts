@@ -313,6 +313,7 @@ export class CoreCommands {
       case "agent.move": return this.moveAgent(cmd.botId, cmd.subagentId, cmd.to, { notifyAgent: cmd.notifyAgent === true });
       case "agent.message": return this.agentMessageCommand(cmd.botId, cmd.subagentId, cmd.text);
       case "agent.stop": return this.agentStopCommand(cmd.botId, cmd.subagentId);
+      case "card.redo": return this.bot(cmd.botId).workers.redoCard(cmd.taskId, cmd.note);
       case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
       case "subbot.close": return this.closeSubBot(cmd.botId);
       case "chat.shown": {

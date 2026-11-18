@@ -380,3 +380,151 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     expect(r.handoff.mock.calls.find(([tool]) => tool === "app_send_message")![1]).toEqual({ task_id: "T1", message: "gpu-gauge is ready." });
   });
 });
+
+describe("redo with Opus: a new Opus worker takes over the card", () => {
+  async function finished(r: ReturnType<typeof rig>) {
+    const record = await answer(r, '<card title="Prices">Collect the prices.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'Plans: A $5.\n<show name="inline-chart">{"series":[5]}</show>' }));
+    expect(record.workerCards![0]).toMatchObject({ status: "done" });
+    return record;
+  }
+  const handoffCalls = (r: ReturnType<typeof rig>) => r.handoff.mock.calls.filter(([tool]) => tool === "app_handoff");
+
+  it("starts an opus worker at medium effort (not the haiku card's), given the request and what the first worker left, and binds the card to it", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    const done = await r.peek.workers.redoCard("T1", "a bar chart");
+    expect(done).toEqual({ taskId: "T2", run: 1 });
+    const [, args] = handoffCalls(r)[1]!;
+    expect(args).toMatchObject({ model: "opus", effort: "medium", group: "Prices" });
+    expect(String(args.instructions)).toContain("Collect the prices.");
+    expect(String(args.instructions)).toContain(JSON.stringify("Plans: A $5."));
+    expect(String(args.instructions)).toContain(JSON.stringify('{"series":[5]}'));
+    expect(String(args.instructions)).toContain(JSON.stringify("a bar chart"));
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "running", run: 1, earlier: ["T1"], text: "Plans: A $5." });
+    expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ taskId: "T2", model: "opus", status: "running" });
+  });
+
+  it("from then on the card follows the opus worker only, and the user's words on the card go to its task id", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    r.peek.projectWorker(ledger({ id: "T1", status: "done", run: 2, text: "late words of the first worker" }));
+    expect(record.workerCards![0]!.text).toBe("Plans: A $5.");
+    r.peek.projectWorker(ledger({ id: "T2", status: "done", run: 1, text: 'Better.\n<show name="inline-chart">{"series":[5,9]}</show>' }));
+    expect(record.workerCards![0]).toMatchObject({ status: "done", text: "Better.", taskId: "T2" });
+    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5,9]}');
+    // The reply box sends to the card's task id: the opus worker's.
+    const view = r.peek.messageView(record).workerCards[0];
+    expect(Command.safeParse({ type: "agent.message", botId: "b", subagentId: view.taskId, text: "and yearly?" }).success).toBe(true);
+    expect(view.taskId).toBe("T2");
+  });
+
+  it("neither worker's report wakes the head (the first worker's late one included); a stranger's still does", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    const sent = () => fixture.heads.reduce((n, head) => n + head.sent.length, 0);
+    const before = sent();
+    expect(r.peek.workers.workerReport("<app_task_result>opus</app_task_result>", "T2")).toBe(true);
+    expect(r.peek.workers.workerReport("<app_task_result>late first</app_task_result>", "T1")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent()).toBe(before);
+    expect(record.workerCards).toHaveLength(1);
+    expect(r.peek.workers.workerReport("<app_task_result>other</app_task_result>", "OTHER")).toBe(true);
+    await waitFor("the other report to reach the head", () => sent() > before);
+  });
+
+  it("refuses while the card's worker is at work, when the card is already on Opus, for an unknown worker and for a non-Claude bot; nothing changes", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="Prices">Go.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const calls = () => handoffCalls(r).length;
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/still at work/) });
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: "x" }));
+    await expect(r.peek.workers.redoCard("NOPE")).rejects.toMatchObject({ code: "not_found" });
+    expect(calls()).toBe(1);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    r.peek.projectWorker(ledger({ id: "T2", status: "done", run: 1, text: "y" }));
+    await expect(r.peek.workers.redoCard("T2")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/already redone/) });
+    expect(calls()).toBe(2);
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", earlier: ["T1"] });
+    const other = rig("codex");
+    other.peek.records.push({ id: "m", role: "bot", text: "", date: 0, workerCards: [{ id: "11111111-2222-3333-4444-555555555555", title: "t", prompt: "p", status: "done", run: 1, taskId: "C1" }] });
+    await expect(other.peek.workers.redoCard("C1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/Claude bot/) });
+    expect(other.handoff).not.toHaveBeenCalled();
+  });
+
+  it("a double tap starts one worker; a handoff that fails leaves the card as it was and says why", async () => {
+    const r = rig();
+    const record = await finished(r);
+    let release!: () => void;
+    r.handoff.mockImplementation((tool: string) => (tool === "app_handoff" ? new Promise((resolve) => { release = () => resolve({ task_id: "T2", run: 1 }); }) : Promise.resolve({})));
+    const first = r.peek.workers.redoCard("T1");
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/already being started/) });
+    release();
+    await first;
+    expect(handoffCalls(r)).toHaveLength(2);
+
+    const again = rig();
+    const second = await finished(again);
+    again.handoff.mockImplementation(async (tool: string) => { if (tool === "app_handoff") throw new Error("Too many workers are running."); return {}; });
+    await expect(again.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("Too many workers are running.") });
+    expect(second.workerCards![0]).toMatchObject({ taskId: "T1", status: "done", text: "Plans: A $5." });
+    expect(second.workerCards![0]!.model).toBeUndefined();
+    // The failure released the guard: a second try starts.
+    again.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T3", run: 1 } : {}));
+    await expect(again.peek.workers.redoCard("T1")).resolves.toMatchObject({ taskId: "T3" });
+    void record;
+  });
+
+  it("an opus run that fails with no report keeps the first worker's drawing on the card, shown with the failure", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    r.peek.projectWorker(ledger({ id: "T2", status: "failed", run: 1 }));
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "failed", text: "Plans: A $5.", error: expect.stringMatching(/failed without a report.*earlier drawing is kept/) });
+    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5]}');
+    const view = r.peek.messageView(record).workerCards[0];
+    expect(view).toMatchObject({ status: "failed", model: "opus", text: "Plans: A $5.", error: expect.stringMatching(/earlier drawing is kept/) });
+  });
+
+  it("while the app is stopping a redo starts nothing and says so", async () => {
+    const r = rig();
+    const record = await finished(r);
+    const before = handoffCalls(r).length;
+    r.peek.shuttingDown = true;
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/app is stopping/) });
+    expect(handoffCalls(r)).toHaveLength(before);
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T1", status: "done" });
+    expect(record.workerCards![0]!.model).toBeUndefined();
+  });
+
+  it("a card that changed while the redo was starting is left alone and the new worker is cancelled", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => {
+      if (tool !== "app_handoff") return {};
+      // Another path bound the card elsewhere while the handoff was answered.
+      record.workerCards![0]!.taskId = "Z9";
+      return { task_id: "T2", run: 1 };
+    });
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/changed while the redo was starting/) });
+    expect(record.workerCards![0]).toMatchObject({ taskId: "Z9", status: "done" });
+    expect(record.workerCards![0]!.model).toBeUndefined();
+    expect(r.handoff.mock.calls.find(([tool]) => tool === "app_cancel_task")![1]).toEqual({ task_id: "T2" });
+  });
+
+  it("the card's redo is a contract command: its shape, and nothing else is taken", () => {
+    expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1" }).success).toBe(true);
+    expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1", note: "again" }).success).toBe(true);
+    expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "../x" }).success).toBe(false);
+    expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1", model: "opus" }).success).toBe(false);
+  });
+});

@@ -691,6 +691,43 @@ describe("messages", () => {
     expect((sent[0] as { text: string }).text).not.toContain("My suggestion");
   });
 
+  it("a finished worker card has a 'Redo with Opus' button: it asks for the redo once, with the user's wish; a card on Opus shows the tag instead", () => {
+    const base = { id: "c5", title: "Prices", status: "done" as const, run: 1, taskId: "T7", at: null, text: "x" };
+    const row = messageElement(message({ id: "m60", workerCards: [base] }), {});
+    document.body.append(row);
+    const button = row.querySelector<HTMLButtonElement>(".worker-card-head .worker-card-redo")!;
+    expect(button.textContent).toBe("Redo with Opus");
+    expect(row.querySelector(".worker-card-model")).toBeNull();
+    sent.length = 0;
+    button.click();
+    const box = document.querySelector<HTMLElement>(".report")!;
+    box.querySelector("textarea")!.value = "check the numbers again";
+    box.querySelector<HTMLButtonElement>(".send")!.click();
+    expect(sent).toEqual([{ type: "cardRedo", taskID: "T7", note: "check the numbers again" }]);
+    // Asked: the button is shut, a second click does nothing.
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(document.querySelector(".report")).toBeNull();
+    expect(sent).toHaveLength(1);
+    // On Opus: no button (it was done), the tag says which model, and the card is not offered the redo again.
+    const redone = messageElement(message({ id: "m61", workerCards: [{ ...base, id: "c6", model: "opus" }] }), {});
+    expect(redone.querySelector(".worker-card-redo")).toBeNull();
+    expect(redone.querySelector(".worker-card-model")?.textContent).toBe("Opus");
+  });
+
+  it("a redo without words sends no note; a card at work, or with no worker, has no redo button", () => {
+    const row = messageElement(message({ id: "m62", workerCards: [{ id: "c7", title: "t", status: "done", run: 1, taskId: "T8", at: null, text: "x" }] }), {});
+    document.body.append(row);
+    sent.length = 0;
+    row.querySelector<HTMLButtonElement>(".worker-card-redo")!.click();
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+    expect(sent).toEqual([{ type: "cardRedo", taskID: "T8" }]);
+    for (const status of ["starting", "running"] as const) {
+      expect(messageElement(message({ id: "m63", workerCards: [{ id: "c8", title: "t", status, run: 0, taskId: "T9", at: null }] }), {}).querySelector(".worker-card-redo")).toBeNull();
+    }
+    expect(messageElement(message({ id: "m64", workerCards: [{ id: "c9", title: "t", status: "failed", run: 0, at: null, error: "x" }] }), {}).querySelector(".worker-card-redo")).toBeNull();
+  });
+
   it("no new-component button on a card that has no worker yet, nor on an ordinary reply", () => {
     const starting = messageElement(message({ id: "m53", workerCards: [{ id: "c4", title: "t", status: "starting", run: 0, at: null }] }), {});
     expect(starting.querySelector(".worker-card-new")).toBeNull();

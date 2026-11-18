@@ -103,6 +103,7 @@ export const COMMAND_SCOPES: Record<CommandType, CommandScope> = {
   "routines.change": manage,
   "agent.move": manage,
   "agent.stop": manage,
+  "card.redo": manage,
   "agent.group": manage,
   "subbot.close": manage,
   "subagent.settle": manage,

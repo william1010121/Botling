@@ -206,6 +206,8 @@ export interface WorkerCardView {
   /** The ⚠ lines on a rejected command: always in sight, never folded. */
   warning?: string;
   waiting?: "component" | "late";
+  /** The model of the worker the card is on, when it is not the card worker's own ("opus" after "Redo with Opus"). */
+  model?: string;
   displays?: DisplayView[];
   error?: string;
 }
@@ -452,6 +454,8 @@ export type Action =
   | { type: "openSubagent"; id: string }
   /** Words typed on a worker card: they go to its worker (`taskID`), as a follow-up on its task. */
   | { type: "cardSend"; taskID: string; text: string }
+  /** "Redo with Opus" on a worker card whose worker (`taskID`) has finished; `note` is the user's wish, if they typed one. */
+  | { type: "cardRedo"; taskID: string; note?: string }
   | { type: "taskOutput"; messageID: string; taskID: string }
   | { type: "closeSubagent" }
   | { type: "feedback"; messageID: string; text: string; images: { name: string; base64: string }[] }

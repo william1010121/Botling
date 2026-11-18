@@ -201,6 +201,9 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .worker-card.status-failed .worker-card-status { color: var(--error); }
 .worker-card-body { padding: 10px 12px; min-width: 0; overflow-wrap: anywhere; }
 .worker-card-body > :first-child { margin-top: 0; }
+.worker-card-redo { flex-shrink: 0; height: 22px; padding: 0 9px; border: none; border-radius: 11px; background: var(--accent-bg); color: var(--link); font: inherit; font-size: 12px; cursor: pointer; }
+.worker-card-redo:disabled { opacity: 0.5; cursor: default; }
+.worker-card-model { flex-shrink: 0; height: 18px; line-height: 18px; padding: 0 7px; border-radius: 9px; background: var(--accent-bg); color: var(--link); font-size: 11px; font-weight: 600; }
 .worker-card-new { width: 24px; height: 24px; }
 .worker-card:hover .worker-card-new, .worker-card-new:focus-visible { opacity: 1; }
 .worker-card-notes { padding: 4px 12px 6px; }
