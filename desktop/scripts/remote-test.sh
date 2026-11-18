@@ -11,7 +11,7 @@
 #   desktop/scripts/remote-test.sh <branch-or-sha> --repeat N [...]     run the tests N times (2-50) in one slot and one connection
 #   desktop/scripts/remote-test.sh --setup [host]                        one-time host setup (Node 24, bare repo)
 #
-# --typecheck / --typecheck-only / --fresh / --repeat N come right after the commit, in any order. The typecheck reports
+# --typecheck / --typecheck-only / --repeat N come right after the commit, in any order; --fresh may stand anywhere. The typecheck reports
 # PASS or FAIL with its time and, on failure, every error (the whole output is also in the saved log); tests after a
 # failed typecheck are not run. With --changed it is redundant (test:changed typechecks) and ignored.
 #
@@ -129,6 +129,8 @@ while :; do
     *) break ;;
   esac
 done
+pargs=(); for a in "$@"; do if [ "$a" = --fresh ]; then fresh=1; else pargs+=("$a"); fi; done   # vitest has no --fresh: accept it anywhere
+set -- "${pargs[@]+"${pargs[@]}"}"
 [ "$fresh" = 1 ] || fresh=0
 case "${1:-}" in
   --changed) [ $# -ge 2 ] || usage; mode=changed; base=$2; shift 2 ;;
