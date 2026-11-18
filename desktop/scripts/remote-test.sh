@@ -314,7 +314,7 @@ trap 'exit 143' TERM HUP INT
 # ---- Memo and dedupe: the same run (key) that already passed, or is running now, is not run again -------------------
 key=$(printf '%s\0' "$sha" "$mode" "$base" "$tc" "$workers" "$envs" "$repeat" "$@" | sha256sum | cut -c1-24)
 memo=$dir/memo/$key
-find "$dir/memo" -type f -mtime +7 -delete 2>/dev/null
+find "$dir/memo" -type f -name '*.pass*' -mtime +7 -delete 2>/dev/null   # not the .lock files: deleting one a run holds would let a second identical run take a new lock
 # memo file: run id, log path on the Mac, finish time (epoch), seconds, commit, then the summary lines as printed
 memo_show() { # $1: how it came about; prints the cached summary and returns 0 when a PASS is remembered
   local m_run m_log m_at m_secs m_sha ago
@@ -339,7 +339,9 @@ finish() {
 if [ "$fresh" != 1 ]; then
   memo_show "nothing was run again" && exit 0
   exec 6>>"$memo.lock"
-  if ! flock -n 6; then
+  if flock -n 6; then
+    memo_show "it passed just now" && exit 0   # an identical run may have finished between the first look and the lock
+  else
     say "an identical run ($(cat "$memo.running" 2>/dev/null || echo unknown)) of this commit and test set is in progress; waiting for its result instead of running it twice (--fresh runs it anyway)"
     dstart=$(date +%s) dlast=$(date +%s)
     until flock -w 3 6; do
