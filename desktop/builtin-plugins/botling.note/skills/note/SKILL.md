@@ -116,6 +116,10 @@ A branch shows alternative versions of a part of the note (e.g. two approaches).
 - **Add a new branch:** wrap the alternatives in `<!-- branch: Name -->` + `<!-- route: A -->` … `<!-- route: B -->` … `<!-- end branch -->` at the place they belong. To turn existing text into the first route, put the `branch` and first `route` lines above it, and the second `route`, its lines and `end branch` below it; the existing text itself stays unchanged.
 - **Nest a branch:** do the same inside a route, keeping the inner `end branch` above the outer branch's next `route` / `end branch`.
 
+## Linking to a bot
+
+`@Name` in a cell, where Name is a bot of the left column (any case; a name two bots share is left alone), is drawn as a small chip that opens that bot's chat when clicked. Sub bots are not in the left column, so they are not linked. It is plain text in the file (`@EEG`, nothing else); a name that is not a bot stays text, and code, math and the text of a link are never turned into chips (to keep a bot's name as text, put it in code).
+
 ## Live cards
 
 A `<show>` tag standing on its own line(s) is drawn as a live card, the same syntax as the chat's cards:

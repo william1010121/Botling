@@ -7,7 +7,7 @@
 // Where a passage is now: by the id of its cell in note.db (notes.outline), then by its text; a passage that is gone leaves its card at
 // the bottom marked "原文找不到", one in a route that is not shown leaves it hidden. Design: MARGIN.md.
 
-import { inline, openHref } from "./ui-text.js";
+import { inline, openAnchor } from "./ui-text.js";
 import { MARGIN_CSS } from "./ui-margin-css.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -72,7 +72,7 @@ function mdEl(src, ccb, botId) {
     const a = e.target.closest?.("a");
     if (!a) return;
     e.preventDefault();
-    openHref(ccb, botId, a.getAttribute("href"));
+    openAnchor(ccb, botId, a);
   });
   return box;
 }
@@ -445,7 +445,17 @@ export function install(st, api) {
     t.append(av, msg);
     return t;
   };
-  const textP = (s) => Object.assign(h("div", "nm-md"), { innerHTML: `<p>${inline(String(s))}</p>` });
+  // the user's own question: a chip (or link) in it opens like the one in a bot's answer
+  const textP = (s) => {
+    const box = Object.assign(h("div", "nm-md"), { innerHTML: `<p>${inline(String(s))}</p>` });
+    box.addEventListener("click", (e) => {
+      const a = e.target.closest?.("a");
+      if (!a) return;
+      e.preventDefault();
+      openAnchor(ccb, st.botId, a);
+    });
+    return box;
+  };
 
   function cardFor(t) {
     const winOpen = mg.win?.id === t.id;

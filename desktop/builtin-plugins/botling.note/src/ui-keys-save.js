@@ -7,7 +7,7 @@
 
 import { importImage, localizeNote, IMAGE_API_AVAILABLE } from "./assets.js";
 import { SAVE_MS } from "./ui-css.js";
-import { openHref, classify, QUOTE_LEAD } from "./ui-text.js";
+import { openAnchor, setBots, classify, QUOTE_LEAD } from "./ui-text.js";
 
 export function install(st, api) {
   const { ccb } = api;
@@ -231,10 +231,11 @@ export function install(st, api) {
 
   // Rendered links open on a plain click (the line is not being edited); Cmd/Ctrl+click inside the edited line is on its textarea.
   st.body.addEventListener("click", (e) => {
+    if (e.defaultPrevented) return; // a link inside the margin's answer was already opened by its own handler (ui-margin.js mdEl)
     const a = e.target.closest?.("a[href]");
     if (!a || !st.body.contains(a)) return;
     e.preventDefault();
-    openHref(ccb, st.botId, a.getAttribute("href"));
+    openAnchor(ccb, st.botId, a);
   });
 
   st.body.addEventListener("mousedown", (e) => {
@@ -313,9 +314,12 @@ export function install(st, api) {
   async function load(initial) {
     try {
       const view = initial ? ccb.host.call("viewGet", { botId: st.botId }).catch(() => null) : null;
+      // the bots of the left column, for the @Name chips (none from an app that cannot say: the names stay text)
+      const bots = initial ? Promise.resolve().then(() => ccb.host.call("bots")).then(setBots, () => setBots([])) : null;
       const note = await ccb.host.call("read", { botId: st.botId });
       if (initial) {
         const v = await view;
+        await bots;
         if (v && typeof v === "object") {
           if (v.routes && typeof v.routes === "object" && !Array.isArray(v.routes)) st.sel = { ...v.routes };
           if (v.pos && typeof v.pos === "object") st.pos = v.pos;

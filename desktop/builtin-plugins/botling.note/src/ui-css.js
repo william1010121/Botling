@@ -76,6 +76,8 @@ const CSS = `
 .note code { font: .88em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--n-code); border: 1px solid var(--n-line);
   padding: .08em .38em; border-radius: 5px; }
 .note a { color: var(--n-link, var(--n-accent)); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; border-bottom: 0; }
+.note a.n-bot { text-decoration: none; padding: 0 .35em; border-radius: 999px; background: color-mix(in srgb, var(--n-link, var(--n-accent)) 16%, transparent); font-weight: 500; white-space: nowrap; }
+.note a.n-bot:hover { background: color-mix(in srgb, var(--n-link, var(--n-accent)) 28%, transparent); text-decoration: none; }
 .note a:hover { text-decoration-thickness: 2px; filter: brightness(1.15); }
 .note del { color: var(--n-muted); }
 .note strong { font-weight: 650; }

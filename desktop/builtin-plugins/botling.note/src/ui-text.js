@@ -20,6 +20,63 @@ function mathHtml(tex, display) {
 // by a space and not followed by a digit, so "$4 and $20" stays text.
 const INLINE_MATH = /(?<![\\$\w])\$(?![\s$])((?:\\.|[^$\\\n])+?)(?<![\s\\])\$(?![\d$])/g;
 
+// @Name: the bots of the left column ({ id, name }), as the program part's `bots` gives them; longest name first. A name two bots
+// share (any case) is ambiguous and is left out: a mention never opens the wrong bot. Returns whether the list changed.
+let BOTS = [];
+let BOTS_KEY = "[]";
+export function setBots(list) {
+  const named = (Array.isArray(list) ? list : []).filter((b) => b && typeof b.id === "string" && b.id && typeof b.name === "string" && b.name && !/[\u0000-\u001f]/.test(b.name));
+  const seen = new Map();
+  for (const b of named) seen.set(b.name.toLowerCase(), (seen.get(b.name.toLowerCase()) ?? 0) + 1);
+  const next = named
+    .filter((b) => seen.get(b.name.toLowerCase()) === 1)
+    .map((b) => ({ id: b.id, name: esc(b.name), lower: esc(b.name).toLowerCase(), plain: b.name }))
+    .sort((a, b) => b.name.length - a.name.length);
+  const key = JSON.stringify(next.map((b) => [b.id, b.plain]));
+  const changed = key !== BOTS_KEY;
+  BOTS = next;
+  BOTS_KEY = key;
+  return changed;
+}
+
+const WORD = /[A-Za-z0-9_]/;
+// Turns @Name in the (escaped) text between tags into a chip. A name must not follow a letter (an e-mail address) and must end where
+// a word ends (CJK text may follow it directly); tags and the text of an <a> are left as they are.
+function mentions(text) {
+  if (!text.includes("@")) return text;
+  let out = "";
+  let from = 0;
+  for (let i = text.indexOf("@"); i >= 0; i = text.indexOf("@", i + 1)) {
+    if (i < from || (i > 0 && WORD.test(text[i - 1]))) continue;
+    const bot = BOTS.find((b) => {
+      const end = i + 1 + b.name.length;
+      if (text.slice(i + 1, end).toLowerCase() !== b.lower) return false;
+      return !(WORD.test(b.plain.at(-1)) && /[A-Za-z0-9_-]/.test(text[end] ?? ""));
+    });
+    if (!bot) continue;
+    const end = i + 1 + bot.name.length;
+    out += `${text.slice(from, i)}<a class="n-bot" href="#" data-bot="${esc(bot.id)}" title="開啟 ${bot.name} 的聊天">@${text.slice(i + 1, end)}</a>`;
+    from = end;
+  }
+  return out + text.slice(from);
+}
+function linkBots(html) {
+  if (!BOTS.length || !html.includes("@")) return html;
+  return html.split(/(<a\b[^>]*>[\s\S]*?<\/a>|<[^>]*>)/).map((part, i) => (i % 2 ? part : mentions(part))).join("");
+}
+
+// Opens what a rendered anchor points at: a bot chip opens that bot's chat, any other link as openHref does.
+function openAnchor(ccb, botId, a) {
+  if (a.classList?.contains("n-bot")) {
+    const id = a.dataset?.bot ?? "";
+    if (!id) return;
+    if (typeof ccb.commands?.execute !== "function") return ccb.notify?.("This Botling version cannot open a bot's chat from here yet.");
+    ccb.commands.execute("botling.openChat", id);
+    return;
+  }
+  openHref(ccb, botId, a.getAttribute("href"));
+}
+
 // Open a link through the app: web links in the default browser, .md in the app's preview, other files by the system.
 function openHref(ccb, botId, href) {
   if (!href || href.startsWith("#")) return;
@@ -59,7 +116,7 @@ export function inline(raw) {
     .replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, (_, p, t) => `${p}<em>${t}</em>`)
     .replace(/(^|[^_\w])_([^_\s][^_]*)_(?!\w)/g, (_, p, t) => `${p}<em>${t}</em>`)
     .replace(/~~([^~]+)~~/g, "<del>$1</del>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
+  return linkBots(s).replace(/\u0000(\d+)\u0000/g, (_, i) => stash[+i]);
 }
 
 // Fill the image spans of a rendered element through the adapter (never rejects).
@@ -286,4 +343,4 @@ const INSERT_ITEMS = [
   { id: "branch", ic: ICONS.branch, label: "分支", hint: "⌘⇧B", keys: "branch fork route 分支 路線 分叉" },
 ];
 
-export { openHref, hrefAt, hydrateImages, mathBlockEl, QUOTE_LEAD, quoteOfLine, QUOTE_STEP, quoteBars, joinQuotes, drawLine, svg, ASK_SVG, FORK_SVG, ICONS, INSERT_ITEMS };
+export { openHref, openAnchor, hrefAt, hydrateImages, mathBlockEl, QUOTE_LEAD, quoteOfLine, QUOTE_STEP, quoteBars, joinQuotes, drawLine, svg, ASK_SVG, FORK_SVG, ICONS, INSERT_ITEMS };
