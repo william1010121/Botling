@@ -7,7 +7,9 @@
 //     ending with nothing to show, a sub bot removed).
 // SPEC_BUG=callin runs the reference as the app was before 78bf1640 (drops left no notice);
 // SPEC_BUG=callin-sub as before 9d7c0bda (sub bots not callable either); SPEC_BUG=callin-nowake as before a failed
-// bot @ was handed back to the bot that asked (only an answer was): all must go red.
+// bot @ was handed back to the bot that asked (only an answer was); SPEC_BUG=callin-nosibling as before 95276dee (a sub
+// bot's @ to its sibling refused): all must go red.
+// Every bot has a chat, a sub bot's too: S and T are C's sub bots (siblings), U is A's.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +18,7 @@ import { createCallinDriver } from "../../desktop/spec-adapters/callin-adapter";
 import type { CallinDriver } from "../driver/callin-driver";
 import { CallinReference, viewOf, type CallinAction, type CallinState, type Outcome } from "../reference/callin";
 
-const BUG = ({ callin: "silent", "callin-sub": "sub", "callin-nowake": "nowake" } as const)[process.env.SPEC_BUG ?? ""] ?? "none";
+const BUG = ({ callin: "silent", "callin-sub": "sub", "callin-nowake": "nowake", "callin-nosibling": "nosibling" } as const)[process.env.SPEC_BUG ?? ""] ?? "none";
 const BODIES = ["deploy it", "check it"];
 const BOUNDS = { maxAts: 12, maxOwn: 2 };
 const INTERNAL = ["Start", "Take", "GiveUp"] as const;
@@ -43,7 +45,7 @@ async function open(): Promise<{ driver: CallinDriver; ref: CallinReference }> {
 function internal(ref: CallinReference, s: CallinState, broken: string[]): CallinState {
   for (let moved = true; moved;) {
     moved = false;
-    for (const c of ref.config.top) for (const name of INTERNAL) {
+    for (const c of ref.bots) for (const name of INTERNAL) {
       const next = ref.step(s, { name, c });
       if (next) { broken.push(...ref.stepProperties(s, { name, c }, next)); s = next; moved = true; }
     }
@@ -131,6 +133,13 @@ describe("callin conformance", () => {
     ["a bot's @ to a busy bot is handed back to it as not answered", [{ name: "UserLine", c: "B", t: null }, { name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }]],
     ["a bot's @ whose callee fails is handed back, and the reply to that goes one level deeper", [{ name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }, { name: "NoAnswer", c: "A" }, { name: "BotReply", c: "A", t: "C", b: BODIES[0] }, { name: "NoAnswer", c: "A" }]],
     ["a bot's @ to its sub bot removed before its turn is handed back", [{ name: "UserLine", c: "C", t: "A" }, { name: "UserLine", c: "C", t: null }, { name: "OwnEnd", b: "C" }, { name: "BotReply", c: "C", t: "S", b: BODIES[0] }, { name: "Remove", s: "S" }, { name: "Answer", c: "C" }]],
+    // A sub bot's chat (Conversations.kinOf): the project bots, its parent too, and its siblings; never another bot's sub bot.
+    ["a sub bot's reply reaches its sibling, answered in its own chat", [{ name: "UserLine", c: "S", t: null }, { name: "BotReply", c: "S", t: "T", b: BODIES[0] }, { name: "Answer", c: "S" }]],
+    ["a sub bot's reply reaches its parent, then another project bot one level deeper", [{ name: "UserLine", c: "S", t: null }, { name: "BotReply", c: "S", t: "C", b: BODIES[0] }, { name: "Answer", c: "S" }, { name: "BotReply", c: "S", t: "A", b: BODIES[0] }, { name: "Answer", c: "S" }]],
+    ["a sub bot's reply to another bot's sub bot is refused, and its chat says so", [{ name: "UserLine", c: "S", t: null }, { name: "BotReply", c: "S", t: "U", b: BODIES[0] }]],
+    ["your @ in a sub bot's chat calls its sibling in", [{ name: "UserLine", c: "S", t: "T" }, { name: "Answer", c: "S" }]],
+    ["a sibling removed before its turn is told of in the sub bot's chat", [{ name: "UserLine", c: "S", t: "A" }, { name: "UserLine", c: "S", t: "T" }, { name: "Remove", s: "T" }, { name: "Answer", c: "S" }]],
+    ["a sibling answering in a sub bot's chat is busy for its own chat's call-in", [{ name: "UserLine", c: "S", t: "T" }, { name: "UserLine", c: "C", t: "T" }, { name: "Answer", c: "S" }]],
   ] as [string, CallinAction[]][])("%s", async (_, actions) => {
     const { done } = await walk(fixed(actions), actions.length);
     expect(done).toHaveLength(actions.length);
@@ -189,7 +198,7 @@ function replay(ref: CallinReference, lines: Line[], nameOf: (id: string) => str
   const msgs = new Map<string, number>();
   // Untraced steps from `from`: a callee's turn begins, a bot's own turns end (any number), a sub bot is removed.
   const hidden = (from: CallinState): CallinState[] => [
-    ...[...ref.config.top.map((c) => ({ name: "Take" as const, c })), ...Object.keys(ref.config.parent).map((sub) => ({ name: "Remove" as const, s: sub }))]
+    ...[...ref.bots.map((c) => ({ name: "Take" as const, c })), ...Object.keys(ref.config.parent).map((sub) => ({ name: "Remove" as const, s: sub }))]
       .flatMap((a) => ref.step(from, a) ?? []),
     ...ref.bots.flatMap((b) => {
       const ends: CallinState[] = [];
@@ -235,7 +244,7 @@ function replay(ref: CallinReference, lines: Line[], nameOf: (id: string) => str
     s = found;
     // Unless the chat's next call-in line says the callee gave up, its turn began at once (it waits 0 ms here),
     // so its own turns had all ended by then.
-    for (const chat of ref.config.top) {
+    for (const chat of ref.bots) {
       const next = lines.slice(i + 1).find((later) => later.action !== "UserLine" && later.action !== "BotReply" && nameOf(later.state.chat) === chat);
       if (s.phase[chat] !== "wait" || next?.action === "GiveUp") continue;
       let free = s;

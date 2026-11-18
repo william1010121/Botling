@@ -214,13 +214,24 @@ export class Conversations {
   }
 
   /**
+   * The sub bots `chatId` reaches by their name alone: a project bot's own sub bots, and, for a sub bot, its siblings
+   * (the other sub bots of its project bot). Never the sub bots of another project bot.
+   */
+  private kinOf(chatId: string): Member[] {
+    const subs = this.deps.subBots?.() ?? [];
+    const self = subs.find((sub) => sub.id === chatId);
+    if (!self) return this.subBotsOf(chatId);
+    return subs.filter((sub) => sub.parent === self.parent && sub.id !== chatId).map(({ id, name }) => ({ id, name }));
+  }
+
+  /**
    * The names a bot's @ can be written with, for `chatId`'s chat: every project bot by its name, every sub bot by
-   * its full path ("Parent/Sub"), by its name alone the chat's own sub bots (and, to say they are out of reach, other
-   * bots' sub bots), and peer bots by "@name (machine)" and "@name" after local members.
+   * its full path ("Parent/Sub"), by its name alone the chat's own sub bots (a sub bot's siblings; and, to say they
+   * are out of reach, other bots' sub bots), and peer bots by "@name (machine)" and "@name" after local members.
    */
   private mentionAliases(chatId: string): { member: Member; name: string; full: boolean; own: boolean; path: string; local: boolean }[] {
     const tops = this.deps.members();
-    const own = this.subBotsOf(chatId);
+    const own = this.kinOf(chatId);
     const aliases: { member: Member; name: string; full: boolean; own: boolean; path: string; local: boolean }[] = tops.map((member) => ({ member, name: member.name, full: true, own: true, path: member.name, local: true }));
     for (const sub of this.deps.subBots?.() ?? []) {
       const parent = tops.find((member) => member.id === sub.parent);
@@ -292,13 +303,16 @@ export class Conversations {
     return [...new Map(found.map((member) => [member.id, member])).values()];
   }
 
-  /** The bots that can be called into `chat` with @: everyone but its own bot, its own sub bots, and peer bots (`callable(into:)`). */
+  /**
+   * The bots that can be called into `chat` with @: everyone but its own bot, its own sub bots, and peer bots
+   * (`callable(into:)`); for a sub bot's chat, the project bots (its parent too), its sibling sub bots and peer bots.
+   */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
     const remotes = this.remoteMembers().filter((member) => member.id !== chatId);
     if (members.some((member) => member.id === chatId)) return [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId), ...remotes];
-    // A sub bot may call the project bots in (its parent too), never another bot's sub bots.
-    return (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId) ? [...members, ...remotes] : [];
+    // A sub bot may call the project bots in (its parent too) and its sibling sub bots, never another bot's sub bots.
+    return (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId) ? [...members, ...this.kinOf(chatId), ...remotes] : [];
   }
 
   /** The names the @ menu offers (the main bot and Maintainer), then every other bot (`callInView`). */
@@ -316,7 +330,7 @@ export class Conversations {
     // Local names win a clash with a peer bot of the same bare name; @name (machine) still reaches the peer.
     const localNames = new Set([
       ...this.deps.members().map((member) => member.name.toLowerCase()),
-      ...this.subBotsOf(chatId).map((member) => member.name.toLowerCase()),
+      ...this.kinOf(chatId).map((member) => member.name.toLowerCase()),
     ]);
     const entries = callable
       .filter((member) => !isRemoteMember(member) || !localNames.has(member.name.toLowerCase()))
@@ -336,9 +350,10 @@ export class Conversations {
     return notes.length ? notes.join("\n") : null;
   }
 
-  /** A guest's line in a bot's own chat (`isCalledIn`). */
+  /** A guest's line in a bot's own chat, a project bot's or a sub bot's (`isCalledIn`). */
   isCalledIn(record: ChatRecord, chatId: string): boolean {
-    return record.role === "bot" && typeof record.sourceID === "string" && this.deps.members().some((member) => member.id === chatId);
+    return record.role === "bot" && typeof record.sourceID === "string"
+      && (this.deps.members().some((member) => member.id === chatId) || (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId));
   }
 
   /**
@@ -365,7 +380,8 @@ export class Conversations {
     if (wake) this.followUps.delete(chat.id);
     const depth = wake && wake.until > Date.now() ? wake.depth : 0;
     const route = (to: string | null, body: string | null, outcome: string) => {
-      if (this.deps.members().some((member) => member.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
+      // A project bot's chat or a sub bot's (spec/models/callin: every bot has a chat).
+      if (this.deps.members().some((member) => member.id === chat.id) || (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
     };
     if (!record.text.includes("@")) { route(null, null, "none"); return; }
     const isSub = (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id);
