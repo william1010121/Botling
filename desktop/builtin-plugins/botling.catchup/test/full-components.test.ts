@@ -2,6 +2,7 @@
 // The source viewer ("Show N messages") shows a folded message's components whole, and is wide enough for them:
 // no card is cut at a height behind a "Show whole card" button, and the dialog may grow past 960px.
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { SourceSnapshot } from "../../../../Web/src/source-snapshot";
 import { SummaryViewer } from "../src/viewer";
 import type { ChatState, MessageView } from "../../../../Web/src/types";
 import type { CatchUpView } from "../src/types";
@@ -10,10 +11,11 @@ import { mediaHTML, renderMarkdown } from "../../../../Web/src/markdown";
 import { setPage } from "../src/page";
 import { catchupCSS } from "./page";
 
-// A running chat frame's picture, taller than the old 240px clip.
+// A running chat frame's picture, taller than the old 240px clip (or none, when the frame does not answer).
+const snapshotAnswer = vi.hoisted(() => ({ value: { html: "<p>whole card</p>", height: 600 } as { html: string; height: number } | null }));
 vi.mock("../../../../Web/src/source-snapshot", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../../Web/src/source-snapshot")>()),
-  requestSourceSnapshot: async () => ({ html: "<p>whole card</p>", height: 600 }),
+  requestSourceSnapshot: async (): Promise<SourceSnapshot | null> => snapshotAnswer.value,
 }));
 
 setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label) });
@@ -24,6 +26,7 @@ const state = (m: MessageView): ChatState => ({ botID: "bot", botName: "Garden",
 let viewer: SummaryViewer;
 let height: PropertyDescriptor | undefined;
 beforeEach(() => {
+  snapshotAnswer.value = { html: "<p>whole card</p>", height: 600 };
   setLanguage("en"); document.body.innerHTML = "<main></main>"; viewer = new SummaryViewer();
   // jsdom lays nothing out: every card "measures" far taller than the old 240px clip.
   height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
@@ -69,4 +72,26 @@ it("the viewer dialog is wider than 960px (up to 1280px), and still fits a narro
   expect(width, rule).not.toBeNull();
   expect(Number(width![1])).toBeGreaterThanOrEqual(1200);
   expect(Number(width![2])).toBeLessThanOrEqual(24);
+});
+
+it("a running chat frame that does not answer falls back to its saved data, shown in full", async () => {
+  snapshotAnswer.value = null;
+  const rows = Array.from({ length: 40 }, (_, i) => `row ${i}`);
+  const m = message("a", { displays: [{ name: "gone-chart", data: JSON.stringify({ rows }, null, 2) }] });
+  const row = document.createElement("div"); row.innerHTML = '<iframe class="component-frame"></iframe>';
+  viewer.open("owner", state(m), view, () => row, () => {});
+  await settle();
+  expect(document.querySelector(".source-snapshot pre")?.textContent).toContain("row 39");
+  nothingCut();
+});
+
+it("a card taller than the dialog scrolls inside the dialog's body (the dialog never grows past the window)", () => {
+  const rule = (selector: RegExp) => catchupCSS.match(selector)?.[0] ?? "";
+  const dialog = rule(/\.summary-source-viewer\s*\{[^}]*\}/);
+  expect(dialog).toMatch(/height:\s*min\(\d+px,\s*calc\(100dvh - 32px\)\)/);
+  expect(dialog).toMatch(/overflow:\s*hidden/);
+  const body = rule(/\.source-body\s*\{[^}]*\}/);
+  expect(body).toMatch(/flex:\s*1/);
+  expect(body).toMatch(/min-height:\s*0/);
+  expect(body).toMatch(/overflow:\s*auto/);
 });
