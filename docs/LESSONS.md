@@ -4,7 +4,7 @@ Every night a worker looks back at the day's commits and reviews and writes down
 mistake is not made a fourth time. The procedure is in [`lessons-retro.md`](lessons-retro.md). Hard rules that came
 out of this file are in [`code-standards.md`](code-standards.md).
 
-Last run: 2026-11-18T12:07+08:00 (main at `9bbb7cef`; commits on main and all `bot/*` branches, the review files in `.bot/artifacts/` and the chat archive up to that time). Numbering skips L-018: it is on `bot/card-style-1b` and not on main yet.
+Last run: 2026-11-18T12:07+08:00 (main at `9bbb7cef`; commits on main and all `bot/*` branches, the review files in `.bot/artifacts/` and the chat archive up to that time). L-018 came from `bot/card-style-1b` (the lessons run numbered from L-019 because it was not on main yet); both are in this tree.
 
 ## What goes in
 
@@ -314,6 +314,22 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-16 | thin-check | `.bot/artifacts/v3-m7/plugin-deps-review.md` (R6 and R7, `frame.test.ts` reads prebuilt `out/…/ui.js`)
   - 2026-11-18 | thin-check | (no review file; chat of 11-18 11:14) a mutation batch of 27 checks for the Opus redo reported all of them caught, but its baseline run (no mutant) already failed on an assertion the test rig cannot satisfy, so no result counted; the batch was run again after the fix | fix `c998df9c`, merge `410dcd3e`
 
+## L-018 · App code never hard-codes a fix for a component's inner look; ask Maintainer to change the component
+- Rule: when something inside a component frame looks wrong in the chat (padding, spacing, alignment, colors, sizes of
+  what the component draws), the app side (Web/src, `chat/*.css`, `message-body.ts`) does not add an offset, a negative
+  margin, an override or a magic number to compensate. Components belong to Maintainer: ask it (a `<component>` request,
+  with the context, for example "inside a worker card, no box around it") to change the component or the shared
+  component layout so it fits that context. The app may only pass a context signal that already exists (for example the
+  `componentTokens` hook); it does not invent a new one for this. A reviewer rejects a CSS rule or a test assertion that
+  encodes a component's inner measurement.
+- Why: a number copied from a component into the app (here "components draw up to ~12px padding") breaks without any
+  test failing when the component changes (compact 8px and narrow 10px components were already off by 2–4px), and it
+  puts a component's look in two places owned by different parties.
+- Tags: ui, web, components
+- Status: open · days 1 of 3 (2026-11-18)
+- Evidence:
+  - 2026-11-18 | rework | `bot/card-style-1b`: worker card with no box and no title showed the component's data about 12px in from the reply text; the review fix pulled the frame out by a hard-coded `--card-inset: 12px` (negative margins on `.worker-card-body > .component`) | the owner rejected it ("talk to Maintainer, do not hard-code"); added in `7b9ae771`, removed in the commit after `2b00e152`
+
 ## L-019 · Text a parser or mover takes out of a reply stays visible when its target is missing
 - Rule: when a tag handler, a mover or a report holder removes text from a reply (`<pin-say>`, a held worker report, a
   redo's first drawing), the text goes to a place the user can see before it leaves the old one. If its target is not
@@ -387,22 +403,6 @@ Three kinds of mistakes, one category per evidence line:
   - 2026-11-16 | rework | (no review file; chat of 11-16 02:24) the saved-tokens brief told workers to use `where.mjs`, which does not exist in other projects; sent back | (no hash in the chat)
   - 2026-11-18 | rework | (no review file; commit messages) the prompts said what each engine can do: agy handoff is agy only, Codex main has no file tools, Maintainer's editor call per transport, the report page rule names no inline blocks | fix `c5b24cd3`, `1f4f6e33`, `977be72b`, merge `9bbb7cef`, `5b0489c0`
   - 2026-11-18 | rework | (no review file; commit messages) a no-lookup sentence covered kinds with no example; an example title said another share than its data | fix `94b3b1e4`, `d6cebdbd`
-
-## L-018 · App code never hard-codes a fix for a component's inner look; ask Maintainer to change the component
-- Rule: when something inside a component frame looks wrong in the chat (padding, spacing, alignment, colors, sizes of
-  what the component draws), the app side (Web/src, `chat/*.css`, `message-body.ts`) does not add an offset, a negative
-  margin, an override or a magic number to compensate. Components belong to Maintainer: ask it (a `<component>` request,
-  with the context, for example "inside a worker card, no box around it") to change the component or the shared
-  component layout so it fits that context. The app may only pass a context signal that already exists (for example the
-  `componentTokens` hook); it does not invent a new one for this. A reviewer rejects a CSS rule or a test assertion that
-  encodes a component's inner measurement.
-- Why: a number copied from a component into the app (here "components draw up to ~12px padding") breaks without any
-  test failing when the component changes (compact 8px and narrow 10px components were already off by 2–4px), and it
-  puts a component's look in two places owned by different parties.
-- Tags: ui, web, components
-- Status: open · days 1 of 3 (2026-11-18)
-- Evidence:
-  - 2026-11-18 | rework | `bot/card-style-1b`: worker card with no box and no title showed the component's data about 12px in from the reply text; the review fix pulled the frame out by a hard-coded `--card-inset: 12px` (negative margins on `.worker-card-body > .component`) | the owner rejected it ("talk to Maintainer, do not hard-code"); added in `7b9ae771`, removed in the commit after `2b00e152`
 
 ## Watch list (seen once, not a lesson yet)
 
