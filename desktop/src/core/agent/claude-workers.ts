@@ -193,7 +193,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const DEFAULT_CLAUDE_WORKER_LIMIT = 4;
 export const CLAUDE_WORKER_LIMIT_MAX = 16;
 
-const workerLimit = (wanted = DEFAULT_CLAUDE_WORKER_LIMIT) =>
+/** How many workers may be at work at once, from settings.json's `claudeWorkerLimit` (unset or invalid: the default; never above `CLAUDE_WORKER_LIMIT_MAX`). */
+export const workerLimit = (wanted = DEFAULT_CLAUDE_WORKER_LIMIT) =>
   (Number.isSafeInteger(wanted) && wanted >= 1 ? Math.min(wanted, CLAUDE_WORKER_LIMIT_MAX) : DEFAULT_CLAUDE_WORKER_LIMIT);
 const nonEmpty = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 
@@ -351,6 +352,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     try { return this.machine(name); }
     catch (error) { throw new Error(`This bot's workers run on ${name} by default (its settings), but: ${(error as Error).message} Pass machine "local" to run it here.`); }
   }
+
+  /** A card's worker (`engineData.card`, set from `CARD_WORKER`) is not under the worker limit: it starts at once and is not counted against it. */
+  slotFree(r: Readonly<WorkerLedgerRecord>) { return r.engineData.card === true; }
 
   /** A run into its kept-alive process takes no slot. */
   needsSlot(r: Readonly<WorkerLedgerRecord>) { return !nonEmpty(r.engineData.machine) && !this.procs.get(r.id)?.head?.running; }

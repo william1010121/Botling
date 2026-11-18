@@ -50,6 +50,7 @@ function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unkn
   const folder = tempDir("bot-worker-cards"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", heads: { engines: [engine], answerWith: engine, codexModel: "m" } }));
   const events: any[] = [];
+  const logs: string[] = [];
   let components: ComponentsContext | undefined;
   if (extra.library) {
     const root = join(folder, "lib-components");
@@ -61,14 +62,14 @@ function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unkn
     codexConfig(_p, c) { return { command: "/never-spawn", cwd: folder, threads: new CodexThreads(join(folder, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null } as any; },
     prompts: (e, heads) => botPrompts({ profile, engine: e, heads }),
     ...(launch ? { launch: () => ({ subagentHourCache: false, ...launch }) as any } : {}), ...(onRequests ? { onRequests } : {}),
-    emit(event) { events.push(event); }, log() {}, idleMs: 600000, approvalTimeoutMs: 1000, interruptGraceMs: 10, tidyTimeoutMs: 30 });
+    emit(event) { events.push(event); }, log(line: string) { logs.push(line); }, idleMs: 600000, approvalTimeoutMs: 1000, interruptGraceMs: 10, tidyTimeoutMs: 30 });
   bots.push(b);
   const peek = b as any;
   // The Claude worker host stands in: it takes the same `tool("app_handoff", …)` call a bot's own tool call makes.
   // Typed as ClaudeWorkers.tool is (it answers unknown), so a test may answer other tools with {}.
   const handoff = vi.fn(async (_name: string, _args: Record<string, unknown>): Promise<unknown> => ({ task_id: "T1", run: 1 }));
   if (!extra.realWorkers) peek.workers.ensureClaudeWorkers = () => ({ tool: handoff });
-  return { b, peek, events, handoff };
+  return { b, peek, events, handoff, logs };
 }
 
 /** The bot answers `reply` to a message; its bubble's record. */
@@ -151,14 +152,56 @@ describe("a reply with <card>: the worker starts", () => {
     expect(r.peek.records.some((line: any) => line.id === record.id)).toBe(true);
   });
 
-  it("only three cards of one reply start a worker; the bot is told about the rest", async () => {
-    const r = rig();
+  it("every card of a reply gets a record and starts its worker at once, however many; above the worker limit (3 here) only a warning is logged", async () => {
+    const r = rig("claude", { claudeWorkerLimit: 3 });
+    let n = 0;
+    r.handoff.mockImplementation(async () => ({ task_id: `T${++n}`, run: 1 }));
     const note = vi.spyOn(r.b, "queueNote");
-    const record = await answer(r, [1, 2, 3, 4, 5].map((n) => `<card title="c${n}">job ${n}</card>`).join("\n"));
+    const record = await answer(r, [1, 2, 3, 4, 5, 6].map((k) => `<card title="c${k}">job ${k}</card>`).join("\n"));
+    expect(record.workerCards).toHaveLength(6);
+    await waitFor("six handoffs", () => r.handoff.mock.calls.length === 6);
+    await waitFor("all bound", () => record.workerCards!.every((card) => card.taskId));
+    expect(r.handoff.mock.calls.map((call) => (call[1] as { name: string }).name)).toEqual(["c1", "c2", "c3", "c4", "c5", "c6"]);
+    expect(record.workerCards!.map((card) => card.status)).toEqual(Array(6).fill("running"));
+    // Nothing is held back or said to the bot; the warning is a log line with the count and the limit, one for each card above the limit.
+    expect(note).not.toHaveBeenCalled();
+    const warnings = r.logs.filter((line) => /\] warn: /.test(line));
+    expect(warnings).toHaveLength(3);
+    expect(warnings.map((line) => /warn: (\d+) card workers.*limit of (\d+)/.exec(line)!.slice(1))).toEqual([["4", "3"], ["5", "3"], ["6", "3"]]);
+  });
+
+  it("no warning at or below the worker limit", async () => {
+    const r = rig("claude", { claudeWorkerLimit: 3 });
+    const record = await answer(r, [1, 2, 3].map((k) => `<card title="c${k}">job ${k}</card>`).join("\n"));
     await waitFor("three handoffs", () => r.handoff.mock.calls.length === 3);
-    expect(record.workerCards).toHaveLength(3);
-    expect(r.handoff).toHaveBeenCalledTimes(3);
-    expect(note).toHaveBeenCalledWith(expect.stringMatching(/Only 3 of the 5 cards.*other 2 were not started/));
+    await waitFor("bound", () => record.workerCards!.every((card) => card.taskId));
+    expect(r.logs.filter((line) => /\] warn: /.test(line))).toEqual([]);
+  });
+
+  it("a card whose worker fails to start leaves the others alone", async () => {
+    const r = rig("claude", { claudeWorkerLimit: 1 });
+    r.handoff.mockRejectedValueOnce(new Error("no worker today"));
+    const record = await answer(r, [1, 2].map((k) => `<card title="c${k}">job ${k}</card>`).join("\n"));
+    await waitFor("both handoffs asked", () => r.handoff.mock.calls.length === 2);
+    await waitFor("the second bound", () => record.workerCards![1]!.taskId);
+    expect(record.workerCards![0]).toMatchObject({ status: "failed", error: "no worker today" });
+    expect(record.workerCards![1]).toMatchObject({ status: "running", taskId: "T1" });
+  });
+
+  it("a later reply's card starts at once too, with the limit already reached by earlier cards", async () => {
+    const r = rig("claude", { claudeWorkerLimit: 2 });
+    let n = 0;
+    r.handoff.mockImplementation(async () => ({ task_id: `T${++n}`, run: 1 }));
+    await answer(r, [1, 2].map((k) => `<card title="a${k}">job</card>`).join("\n"));
+    await waitFor("two handoffs", () => r.handoff.mock.calls.length === 2);
+    await waitFor("both bound", () => n === 2 && r.peek.records.every((line: any) => (line.workerCards ?? []).every((card: any) => card.taskId)));
+    const later = { id: "later", role: "bot", text: "", date: 0, workerCards: [{ id: "11111111-1111-4111-8111-111111111111", title: "b1", prompt: "job", status: "starting", run: 0 }] };
+    r.peek.records.push(later);
+    r.peek.workers.startCards(later);
+    await waitFor("the third handoff", () => r.handoff.mock.calls.length === 3);
+    await waitFor("bound", () => (later.workerCards[0] as { taskId?: string }).taskId);
+    expect(later.workerCards[0]).toMatchObject({ status: "running" });
+    expect(r.logs.filter((line) => /\] warn: /.test(line))).toHaveLength(1);
   });
 
   it("a card in a code fence starts nothing", async () => {
@@ -305,17 +348,35 @@ describe("a card follows its worker", () => {
     expect(record.workerCards![0]!.text).toBeUndefined();
   });
 
-  it("a card whose worker never started when the app went away says so at the next start, and starts nothing", async () => {
+  it("restoring the bot (restoreAtStart) starts a card that has no worker, exactly once", async () => {
     const r = rig();
     const record = await answer(r, '<card title="t">go</card>');
     await waitFor("bound", () => record.workerCards![0]!.taskId);
-    // Simulate the stale state: starting, no worker.
+    // The stored state at the next start: the card was never given a worker.
     record.workerCards![0]!.status = "starting";
     delete record.workerCards![0]!.taskId;
     r.handoff.mockClear();
-    r.peek.workers.endStaleCards();
-    expect(record.workerCards![0]).toMatchObject({ status: "failed", error: expect.stringMatching(/app went away/) });
-    expect(r.handoff).not.toHaveBeenCalled();
+    r.peek.workers.restoreAtStart();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitFor("the card to start", () => record.workerCards![0]!.taskId);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(r.handoff).toHaveBeenCalledTimes(1);
+    expect(record.workerCards![0]).toMatchObject({ status: "running", taskId: "T1" });
+  });
+
+  it("a card whose worker never started when the app went away starts at the next start instead of vanishing", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="t">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    // Simulate the stored state: starting, no worker.
+    record.workerCards![0]!.status = "starting";
+    delete record.workerCards![0]!.taskId;
+    r.handoff.mockClear();
+    r.peek.workers.requeueCards();
+    expect(record.workerCards![0]).toMatchObject({ status: "starting" });
+    await waitFor("the card to start", () => record.workerCards![0]!.taskId);
+    expect(r.handoff).toHaveBeenCalledTimes(1);
+    expect(record.workerCards![0]).toMatchObject({ status: "running", taskId: "T1" });
   });
 });
 

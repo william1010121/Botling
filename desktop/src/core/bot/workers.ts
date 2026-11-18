@@ -6,7 +6,7 @@ import { ClaudeHead } from "../agent/head";
 import type { CodexItem } from "../agent/codex";
 import type { StreamItem } from "../agent/stream";
 import { isWorkerHost, isWorkerType, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "../agent/workers";
-import { CARD_WORKER, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "../agent/claude-workers";
+import { CARD_WORKER, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile, workerLimit } from "../agent/claude-workers";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost } from "../agent-registry";
 import type { BackgroundKind } from "../background-tasks";
 import type { Bot, Status } from "../bot";
@@ -510,15 +510,21 @@ export class BotWorkers {
   }
 
   /**
-   * The cards a reply's `<card>` tags drew (`record.workerCards`) start their workers, each through the `app_handoff` a bot's own tool call takes:
-   * the same worker limit and the same admission. Only a Claude bot's Claude-process workers can be started from here; a card that cannot
-   * start says why on itself. The worker's report reaches this bot as any worker's does.
+   * The cards a reply's `<card>` tags drew (`record.workerCards`) start their workers, each through the `app_handoff` a bot's own tool call takes
+   * and the same admission. Only a Claude bot's Claude-process workers can be started from here; a card that cannot start says why on itself. The
+   * worker's report reaches this bot as any worker's does.
+   *
+   * Every card of a reply starts its worker at once: card workers take no slot of settings.json `claudeWorkerLimit` (they are not counted against it
+   * and never wait for it, see `WorkerAdapter.slotFree`), which stays the limit of the bot's own workers. When more card workers are at work than the
+   * limit is, that is only logged as a warning.
    */
   startCards(record: ChatRecord) {
     for (const card of record.workerCards ?? []) {
       // A second call for the same reply (a redelivery) while the first is still asking the host starts nothing: one card, one worker.
       if (card.status !== "starting" || card.taskId || this.startingCards.has(card.id)) continue;
       this.startingCards.add(card.id);
+      const at = this.cardsAtWork(), limit = workerLimit(this.options.launch?.().claudeWorkerLimit);
+      if (at > limit) this.log(`warn: ${at} card workers are at work at once, above the worker limit of ${limit} (card workers take no slot of it; nothing was held back)`);
       void this.startCard(record, card).finally(() => this.startingCards.delete(card.id));
     }
   }
@@ -526,16 +532,17 @@ export class BotWorkers {
   /** The cards whose worker is being asked for (`startCards`). */
   private readonly startingCards = new Set<string>();
 
-  /** At start: a card whose worker was never started (the app went away first) says so; nothing starts it later. */
-  private endStaleCards() {
-    let changed = false;
-    for (const record of this.records) for (const card of record.workerCards ?? []) {
-      if (card.status !== "starting" || card.taskId) continue;
-      card.status = "failed";
-      card.error = "The app went away before the worker started.";
-      changed = true;
-    }
-    if (changed) this.persist(true);
+  /** Cards at work now: bound to a worker that has not ended, or being started. */
+  private cardsAtWork(): number {
+    let at = 0;
+    for (const line of this.records) for (const card of line.workerCards ?? []) if (card.status === "running" || this.startingCards.has(card.id)) at++;
+    return at;
+  }
+
+  /** At start: a card whose worker was never started (the app went away first) starts now, oldest first, once the bot is up. */
+  requeueCards() {
+    const waiting = this.records.filter((record) => record.workerCards?.some((card) => card.status === "starting" && !card.taskId));
+    if (waiting.length) setTimeout(() => { for (const record of waiting) this.startCards(record); }, 0).unref?.();
   }
 
   private async startCard(record: ChatRecord, card: NonNullable<ChatRecord["workerCards"]>[number]) {
@@ -709,7 +716,7 @@ export class BotWorkers {
   restoreAtStart() {
     // Subagents that were running when the app went away went with their process. App-managed workers are their
     // ledger's: shown as it says (one it still lists at work was cut off), until their core is up.
-    this.endStaleCards();
+    this.requeueCards();
     this.projectLedgerAtStart();
     // A worker its ledger does not have yet (an old journal not imported until its core is up) stopped, as before.
     if (this.subagents.stopRunning(undefined, (subagent) => this.workerViews.has(subagent.id))) this.saveSubagents();

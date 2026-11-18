@@ -191,9 +191,9 @@ export class WorkerCore implements WorkerHost {
     const wanted = this.options.maxRunning?.();
     return wanted === undefined || !Number.isFinite(wanted) || wanted < 1 ? Infinity : Math.floor(wanted);
   }
-  /** Workers at work now (one waiting for a slot is not). */
+  /** Workers at work now (one waiting for a slot is not, nor is one the limit does not apply to: `WorkerAdapter.slotFree`). */
   private get busy(): number {
-    return [...this.records.values()].filter((r) => r.status === "running" && !this.lives.get(r.id)?.waiting).length;
+    return [...this.records.values()].filter((r) => r.status === "running" && !this.lives.get(r.id)?.waiting && !this.adapterOf(r)?.slotFree?.(r)).length;
   }
 
   private signal() {

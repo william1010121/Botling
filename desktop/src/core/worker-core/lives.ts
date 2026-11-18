@@ -191,7 +191,7 @@ export class WorkerLives {
     // Those already waiting go first if the limit was raised since (settings.json is read each time).
     this.startWaiting();
     // Counted before this worker is at work itself.
-    const wait = (adapter.needsSlot?.(r) ?? true) && this.busy >= this.limit;
+    const wait = !adapter.slotFree?.(r) && (adapter.needsSlot?.(r) ?? true) && this.busy >= this.limit;
     if (sameRun) r.segment = (r.segment ?? 0) + 1;
     else { r.run += 1; delete r.segment; }
     Object.assign(r, { status: "running", report: noReport(), runStartedAt: this.now(), endedAt: null });

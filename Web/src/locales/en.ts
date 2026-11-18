@@ -176,7 +176,7 @@ export const en = {
   "subagent.hours": "{h} h {m} min",
   "subagent.underMinute": "under a minute",
   "subagent.you": "you",
-  "card.status.starting": "Starting…",
+  "card.status.starting": "Waiting to start…",
   "card.status.running": "Working…",
   "card.status.done": "Done",
   "card.status.failed": "Failed",
