@@ -31,7 +31,8 @@ export const V3_CHANNEL = 'v3';
 export const v3Tag = version => `v${version}-${V3_CHANNEL}`;
 
 /** Botling 3: a stable 3.x.y version in package.json and the lockfile, and a `v3.x.y-v3` tag. `botlingDevTrial` is not
- * judged here: Botling 3's window never reads it, and electron-builder.v3.config.cjs packs `false` and its own DMG. */
+ * judged here: Botling 3's main is the 2.x main and does read it, from the packed package.json, so
+ * electron-builder.v3.config.cjs packs `false` (and its own DMG) whatever desktop/package.json says. */
 export function checkMetadataV3(pkg, lock, tag) {
   if (!/^3\.\d+\.\d+$/.test(pkg.version)) throw new Error('Expected stable Botling 3 version (3.x.y)');
   if (lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version) throw new Error('Package/lock versions differ');
