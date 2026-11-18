@@ -278,6 +278,44 @@ describe("a <card> from the Antigravity or Codex head of a bot with a Claude hea
     expect(off.handoff).not.toHaveBeenCalled();
   });
 
+  it("a card of a line the Claude head's chat does not hold is not started on a chat that cannot follow it: it fails in plain words and no worker is started", async () => {
+    const r = rig("claude", undefined, undefined, { partner: "agy" });
+    const head = r.peek.partner;
+    const record = { id: "not-in-the-owner-chat", role: "bot", text: "", date: 0, workerCards: [{ id: "99999999-2222-3333-4444-555555555555", title: "t", prompt: "go", status: "starting" }] } as any;
+    expect(r.peek.records.some((line: any) => line.id === record.id)).toBe(false);
+    head.workers.startCards(record);
+    await waitFor("the card to fail", () => record.workerCards[0].status === "failed");
+    expect(record.workerCards[0].error).toBe(CARD_NEEDS_CLAUDE);
+    expect(r.handoff).not.toHaveBeenCalled();
+  });
+
+  it("the card's reply box and redo work from the Claude head's chat for a card its Antigravity head wrote, and the worker is the Claude head's", async () => {
+    const r = rig("claude", undefined, undefined, { partner: "agy" });
+    const record = answerFrom(r.peek.partner, 'Here.\n<card title="Plan compare">Compare the plans.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    const held = r.peek.records.find((line: any) => line.id === record.id);
+    expect(held).toBe(record);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: "Done." }));
+    await waitFor("the card to be done", () => record.workerCards![0]!.status === "done");
+    // The Claude head's workers know the card (the reply box and redo look it up there), and the redo is that head's worker.
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    const handoffs = r.handoff.mock.calls.filter(([tool]) => tool === "app_handoff");
+    expect(handoffs).toHaveLength(2);
+    expect(handoffs[1]![1]).toMatchObject({ model: "opus", group: "Plan compare" });
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", earlier: ["T1"] });
+  });
+
+  it("an Antigravity head's note keeps the inline blocks and their examples its own prompt names, and still offers <card>; the Claude head's note is cards-only", async () => {
+    const launch = { componentsViaCards: true, inlineBlockGuidance: "all" };
+    const r = rig("claude", launch, undefined, { partner: "agy", library });
+    const own = r.peek.componentNote(), theirs = r.peek.partner.componentNote();
+    expect(own).toContain("<card title=");
+    expect(theirs).toContain("<card title=");
+    expect(own).not.toContain("- inline-chart");
+    expect(theirs).toContain("- inline-chart");
+  });
+
   it("a bot with no Claude head cannot draw a card: its note does not offer <card>, a stray one fails in plain words, and no worker is started", async () => {
     const r = rig("agy", { componentsViaCards: true }, undefined, { library });
     expect(r.peek.componentNote()).not.toContain("<card");
