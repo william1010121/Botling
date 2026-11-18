@@ -8,16 +8,20 @@
 \* the answer, or word that it was not answered (appMessage), so it is never left waiting on it.
 \* There is no cap per message of yours (BOT_MENTIONS_PER_USER_LINE is gone): a 4th @ is delivered like the first.
 \* What ends a run of call-ins is the depth limit and your lines: see NoRoundWithoutUser below.
+\* Every bot has a chat, a sub bot's too: a project bot calls in the other project bots and its own sub bots; a sub bot
+\* calls in the project bots (its parent too) and its siblings (the other sub bots of its parent), and the answer is
+\* posted in its own chat. Another bot's sub bot is never called in (Callable, SubOnlyInKin).
 EXTENDS Naturals, Sequences, FiniteSets
 
-CONSTANTS Top,       \* bots with a chat others can be called into (members)
+CONSTANTS Top,       \* project bots (members); every bot, a sub bot too, has a chat
           Sub,       \* sub bots, each under a Top bot
           Parent,    \* [Sub -> Top]
           Bodies,    \* the words an @ can carry
           MaxDepth,  \* MAX_FOLLOW_DEPTH
           MaxAts,    \* bound: @s in one behaviour
           MaxOwn,    \* bound: user lines waiting in one bot
-          BUG        \* "none"; "silent": before 78bf1640; "sub": before 9d7c0bda; "nowake": a failed bot @ handed nothing back
+          BUG        \* "none"; "silent": before 78bf1640; "sub": before 9d7c0bda; "nowake": a failed bot @ handed nothing back;
+             \* "nosibling": before 95276dee, a sub bot's @ to its sibling was refused
 
 None == "none"
 Bots == Top \cup Sub
@@ -29,21 +33,26 @@ Silent == BUG \in {"silent", "sub"}
 
 VARIABLES
   ev,        \* every @ routed, in order: [chat, to, by, body, depth, msg, st, told, woke]
-  pending,   \* [Top -> Seq([ev, st])]: the call-ins a chat lists (Conversations.pending)
-  cur,       \* [Top -> event being answered there, 0 = none]
-  phase,     \* [Top -> {"idle", "wait", "turn"}]: its callee waiting to be free, or answering
-  followUp,  \* [Top -> depth of the hand-back waiting for the chat bot's next reply, 0 = none]
-  recent,    \* [Top -> {<<to, body>>}]: bot @s delivered since the chat's last user line
+  pending,   \* [Bots -> Seq([ev, st])]: the call-ins a chat lists (Conversations.pending)
+  cur,       \* [Bots -> event being answered there, 0 = none]
+  phase,     \* [Bots -> {"idle", "wait", "turn"}]: its callee waiting to be free, or answering
+  followUp,  \* [Bots -> depth of the hand-back waiting for the chat bot's next reply, 0 = none]
+  recent,    \* [Bots -> {<<to, body>>}]: bot @s delivered since the chat's last user line
   own,       \* [Bots -> own turns running or waiting]
   guest,     \* [Bots -> answering a call-in now]
   gone       \* sub bots removed
 
 vars == <<ev, pending, cur, phase, followUp, recent, own, guest, gone>>
 
+\* The sub bots c's chat reaches (kinOf): a project bot's own, a sub bot's siblings. Never another bot's sub bots.
+KinOf(c) == {s \in Sub : s # c /\ (Parent[s] = c \/ (c \in Sub /\ Parent[s] = Parent[c]))}
+Kin(c, t) == t \in KinOf(c)
+\* callable: the project bots but c, and c's kin; a removed sub bot's chat calls in nobody.
 Callable(c) ==
-  IF c \in Top
-  THEN ((Top \ {c}) \cup (IF BUG = "sub" THEN {} ELSE {s \in Sub : Parent[s] = c})) \ gone
-  ELSE {}
+  LET reach == CASE BUG = "sub" -> {}
+                 [] BUG = "nosibling" -> IF c \in Top THEN KinOf(c) ELSE {}
+                 [] OTHER -> KinOf(c)
+  IN IF c \in gone THEN {} ELSE ((Top \ {c}) \cup reach) \ gone
 
 Settle(c, k) == pending' = [pending EXCEPT ![c] = SelectSeq(@, LAMBDA p : p.ev # k)]
 \* Call-in k ends as st; `wake`: the bot that asked is handed a turn on it (woke counts the hand-backs).
@@ -57,24 +66,24 @@ HandBack(c, k, wake) ==
   ELSE UNCHANGED <<followUp, own>>
 
 TypeOK ==
-  /\ \A k \in DOMAIN ev : ev[k].chat \in Top /\ ev[k].to \in Bots /\ ev[k].by \in {"user", "bot"}
+  /\ \A k \in DOMAIN ev : ev[k].chat \in Bots /\ ev[k].to \in Bots /\ ev[k].by \in {"user", "bot"}
        /\ ev[k].body \in Bodies \cup {0} /\ ev[k].depth \in 0..MaxDepth /\ ev[k].msg \in 0..MaxAts
        /\ ev[k].st \in Delivered \cup {"unreachable", "dropped", "merged", "seen"} /\ ev[k].told \in BOOLEAN /\ ev[k].woke \in Nat
-  /\ pending \in [Top -> Seq([ev : 1..MaxAts, st : Open])]
-  /\ cur \in [Top -> 0..MaxAts] /\ phase \in [Top -> {"idle", "wait", "turn"}]
-  /\ followUp \in [Top -> 0..MaxDepth] /\ recent \in [Top -> SUBSET (Bots \X Bodies)]
+  /\ pending \in [Bots -> Seq([ev : 1..MaxAts, st : Open])]
+  /\ cur \in [Bots -> 0..MaxAts] /\ phase \in [Bots -> {"idle", "wait", "turn"}]
+  /\ followUp \in [Bots -> 0..MaxDepth] /\ recent \in [Bots -> SUBSET (Bots \X Bodies)]
   /\ own \in [Bots -> Nat] /\ guest \in [Bots -> BOOLEAN] /\ gone \subseteq Sub
 
 Init ==
-  /\ ev = <<>> /\ pending = [c \in Top |-> <<>>] /\ cur = [c \in Top |-> 0]
-  /\ phase = [c \in Top |-> "idle"] /\ followUp = [c \in Top |-> 0] /\ recent = [c \in Top |-> {}]
+  /\ ev = <<>> /\ pending = [c \in Bots |-> <<>>] /\ cur = [c \in Bots |-> 0]
+  /\ phase = [c \in Bots |-> "idle"] /\ followUp = [c \in Bots |-> 0] /\ recent = [c \in Bots |-> {}]
   /\ own = [b \in Bots |-> 0] /\ guest = [b \in Bots |-> FALSE] /\ gone = {}
 
 \* Your line in c's chat goes to its bot; a bot it names with @ is called in (sendWith, startCallIn).
 UserLine(c, t) ==
   /\ c \notin gone /\ own[c] < MaxOwn /\ t \in Callable(c) \cup {None} /\ (t # None => Len(ev) < MaxAts)
   /\ own' = [own EXCEPT ![c] = @ + 1]
-  /\ recent' = [d \in Top |-> IF d = c THEN {} ELSE recent[d]]
+  /\ recent' = [recent EXCEPT ![c] = {}]
   /\ IF t = None THEN UNCHANGED <<ev, pending>>
      ELSE /\ ev' = Append(ev, [chat |-> c, to |-> t, by |-> "user", body |-> 0, depth |-> 0, msg |-> 0, st |-> "queued", told |-> FALSE, woke |-> 0])
           /\ pending' = [pending EXCEPT ![c] = Append(@, [ev |-> Len(ev) + 1, st |-> "queued"])]
@@ -98,18 +107,18 @@ Route(c, t, b, m) ==
                       /\ recent' = [recent EXCEPT ![c] = @ \cup {<<t, b>>}]
                       /\ pending' = [pending EXCEPT ![c] = Append(@, [ev |-> Len(ev) + 1, st |-> "queued"])]
 
-\* c's bot ends an own turn with a reply that names t (or nobody).
+\* c's bot (a project bot or a sub bot) ends an own turn with a reply that names t (or nobody).
 BotReply(c, t, b) ==
-  /\ c \in Top /\ own[c] > 0 /\ ~guest[c]
+  /\ own[c] > 0 /\ ~guest[c]
   /\ t \in (Bots \ (gone \cup {c})) \cup {None}
   /\ own' = [own EXCEPT ![c] = @ - 1]
   /\ IF t = None THEN followUp' = [followUp EXCEPT ![c] = 0] /\ UNCHANGED <<ev, pending, recent>>
      ELSE Len(ev) < MaxAts /\ Route(c, t, b, Len(ev) + 1)
   /\ UNCHANGED <<cur, phase, guest, gone>>
 
-\* The same reply is heard again (bot-mentions.json keeps what was delivered).
+\* The same reply is heard again (bot-mentions.json keeps what was delivered); a removed sub bot's chat hears none.
 Rehear(k) ==
-  /\ ev[k].by = "bot" /\ ev[k].to \notin gone /\ Len(ev) < MaxAts
+  /\ ev[k].by = "bot" /\ ev[k].to \notin gone /\ ev[k].chat \notin gone /\ Len(ev) < MaxAts
   /\ Route(ev[k].chat, ev[k].to, ev[k].body, ev[k].msg)
   /\ UNCHANGED <<cur, phase, own, guest, gone>>
 
@@ -118,9 +127,9 @@ OwnEnd(b) ==
   /\ own[b] > 0 /\ ~guest[b] /\ own' = [own EXCEPT ![b] = @ - 1]
   /\ UNCHANGED <<ev, pending, cur, phase, followUp, recent, guest, gone>>
 
-\* A sub bot is removed while idle.
+\* A sub bot is removed while idle, its chat with no call-in open (one removed mid call-in in its chat is not modelled).
 Remove(s) ==
-  /\ s \notin gone /\ own[s] = 0 /\ ~guest[s] /\ gone' = gone \cup {s}
+  /\ s \notin gone /\ own[s] = 0 /\ ~guest[s] /\ pending[s] = <<>> /\ cur[s] = 0 /\ gone' = gone \cup {s}
   /\ UNCHANGED <<ev, pending, cur, phase, followUp, recent, own, guest>>
 
 \* c's next call-in has its turn (runCallIn); a callee that can no longer be called is told of (and a bot that asked woken).
@@ -171,21 +180,21 @@ NoAnswer(c) ==
 
 Next ==
   \/ \E c \in Bots, t \in Bots \cup {None} : UserLine(c, t)
-  \/ \E c \in Top, t \in Bots \cup {None}, b \in Bodies : BotReply(c, t, b)
+  \/ \E c \in Bots, t \in Bots \cup {None}, b \in Bodies : BotReply(c, t, b)
   \/ \E k \in DOMAIN ev : Rehear(k)
   \/ \E b \in Bots : OwnEnd(b)
   \/ \E s \in Sub : Remove(s)
-  \/ \E c \in Top : Start(c) \/ Take(c) \/ GiveUp(c) \/ Answer(c) \/ NoAnswer(c)
+  \/ \E c \in Bots : Start(c) \/ Take(c) \/ GiveUp(c) \/ Answer(c) \/ NoAnswer(c)
 
-Fairness == \A c \in Top : WF_vars(Start(c)) /\ WF_vars(Take(c) \/ GiveUp(c)) /\ WF_vars(Answer(c) \/ NoAnswer(c))
+Fairness == \A c \in Bots : WF_vars(Start(c)) /\ WF_vars(Take(c) \/ GiveUp(c)) /\ WF_vars(Answer(c) \/ NoAnswer(c))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
 \* ---- Safety
 \* In one chat only one called-in bot answers at a time.
-OneSpeaker == \A c \in Top : Cardinality({k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st = "answering"}) <= 1
+OneSpeaker == \A c \in Bots : Cardinality({k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st = "answering"}) <= 1
 \* A bot answers in at most one chat at a time, and only while its turn there runs.
-OneTurnEach == \A b \in Bots : Cardinality({c \in Top : phase[c] = "turn" /\ Callee(c) = b}) = IF guest[b] THEN 1 ELSE 0
+OneTurnEach == \A b \in Bots : Cardinality({c \in Bots : phase[c] = "turn" /\ Callee(c) = b}) = IF guest[b] THEN 1 ELSE 0
 \* An @ the app does not answer always leaves a notice.
 NoSilentDrop == \A k \in DOMAIN ev : ev[k].st \in {"unreachable", "dropped", "unheard"} => ev[k].told
 \* A reply is delivered at most once, and a quiet repeat is covered by one delivered.
@@ -200,12 +209,13 @@ HopBound == \A k \in DOMAIN ev : ev[k].depth <= MaxDepth
 \* limit; the reply to that turn routes its @s one level deeper (Route), so a chain of wakes stops at MaxDepth.
 WakeOnce == \A k \in DOMAIN ev : ev[k].woke <= 1
 WakeBelowDepth == \A k \in DOMAIN ev : ev[k].woke > 0 => Asks(k) /\ ev[k].st \in Done
-\* A sub bot is reachable in its parent's chat, and only there.
-SubReachable == \A k \in DOMAIN ev : ev[k].st = "unreachable" => ~(ev[k].to \in Sub /\ Parent[ev[k].to] = ev[k].chat)
-SubOnlyInParent == \A k \in DOMAIN ev : (ev[k].st \in Delivered /\ ev[k].to \in Sub) => Parent[ev[k].to] = ev[k].chat
+\* Only another bot's sub bot is out of reach: a project bot, a chat's own sub bots and a sub bot's siblings never are.
+Reachable == \A k \in DOMAIN ev : ev[k].st = "unreachable" => ev[k].to \in Sub /\ ~Kin(ev[k].chat, ev[k].to)
+\* A sub bot answers only in its parent's chat or a sibling's: never in another bot's chat or its sub bots' chats.
+SubOnlyInKin == \A k \in DOMAIN ev : (ev[k].st \in Delivered /\ ev[k].to \in Sub) => Kin(ev[k].chat, ev[k].to)
 \* The pending list shows exactly the call-ins not answered yet, in turn order, with their state.
 PendingExact ==
-  \A c \in Top :
+  \A c \in Bots :
     /\ {pending[c][i].ev : i \in DOMAIN pending[c]} = {k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st \in Open}
     /\ \A i \in DOMAIN pending[c] : pending[c][i].st = ev[pending[c][i].ev].st
     /\ \A i, j \in DOMAIN pending[c] : i < j => pending[c][i].ev < pending[c][j].ev
@@ -218,12 +228,12 @@ Turns(c) == own[c] + Cardinality({k \in DOMAIN ev : ev[k].chat = c /\ ev[k].st \
 \* an old reply again (Rehear: no turn causes it, a repeat it dropped gets in only after your next line, and
 \* DeliveredOnce lets each reply in at most once).
 NoRoundWithoutUser ==
-  [][\A c \in Top : Turns(c)' <= Turns(c) \/ (\E t \in Bots \cup {None} : UserLine(c, t)) \/ (\E k \in DOMAIN ev : Rehear(k))]_vars
+  [][\A c \in Bots : Turns(c)' <= Turns(c) \/ (\E t \in Bots \cup {None} : UserLine(c, t)) \/ (\E k \in DOMAIN ev : Rehear(k))]_vars
 \* Every turn owed comes back at the last level: a hand-back leaves followUp = MaxDepth - 1 (Route puts a bot's @ one
 \* level below the turn it came from, and only those short of MaxDepth hand back).
 OwedAtLastLevel == \A k \in DOMAIN ev : (ev[k].st \in Open /\ Asks(k)) => ev[k].depth = MaxDepth - 1
 \* ... so a turn spent there (its reply routes at MaxDepth, which hands nothing back) lowers Turns.
-LastLevelSpends == [][\A c \in Top : (followUp[c] = MaxDepth - 1 /\ own'[c] < own[c]) => Turns(c)' < Turns(c)]_vars
+LastLevelSpends == [][\A c \in Bots : (followUp[c] = MaxDepth - 1 /\ own'[c] < own[c]) => Turns(c)' < Turns(c)]_vars
 \* Why call-ins end without you: Turns never grows (NoRoundWithoutUser; an old reply heard again adds one at most once);
 \* a turn spent that keeps Turns has followUp = 0, so no hand-back came since a reply was last routed, and held turns
 \* come back only by a hand-back; after one, the next turn spent lowers Turns (OwedAtLastLevel, LastLevelSpends).
@@ -233,10 +243,10 @@ LastLevelSpends == [][\A c \in Top : (followUp[c] = MaxDepth - 1 /\ own'[c] < ow
 \* ---- Liveness
 \* Every call-in is eventually answered, or not, with a notice.
 CallInEnds == \A k \in 1..MaxAts : (k \in DOMAIN ev /\ ev[k].st \in Open) ~> (k \in DOMAIN ev /\ ev[k].st \in Done)
-PendingEmpties == \A c \in Top : pending[c] # <<>> ~> pending[c] = <<>>
+PendingEmpties == \A c \in Bots : pending[c] # <<>> ~> pending[c] = <<>>
 \* A bot's @ below the depth limit, delivered, always ends with that bot handed a turn: answered or not.
 CallerHearsBack == \A k \in 1..MaxAts : (k \in DOMAIN ev /\ ev[k].st \in Delivered /\ Asks(k)) ~> (k \in DOMAIN ev /\ ev[k].woke > 0)
 
-\* For the cfgs: the sub bot S is C's.
-ParentMC == [s \in Sub |-> "C"]
+\* For the cfgs: the sub bot U is A's, every other one (S, T: siblings) C's.
+ParentMC == [s \in Sub |-> IF s = "U" THEN "A" ELSE "C"]
 ====

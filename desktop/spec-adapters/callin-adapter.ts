@@ -1,5 +1,5 @@
-// spec/driver/callin-driver.ts against the real Core: three project bots and a sub bot under the third,
-// their call-ins run by the real Conversations and bot.groupTurn. Only handing a turn to an agent is left
+// spec/driver/callin-driver.ts against the real Core: three project bots, two sub bots under the third (siblings) and
+// one under the first; every bot's chat, a sub bot's too, has its call-ins run by the real Conversations and bot.groupTurn. Only handing a turn to an agent is left
 // out (deliver), so turns are begun for real and ended here as the model's actions say.
 // groupTiming waits 0 ms for a busy callee: whether it is free is decided the moment its turn comes.
 import { mkdirSync } from "node:fs";
@@ -17,6 +17,8 @@ const BOTS: Record<string, { id: string; name: string; parent?: string }> = {
   B: { id: "5B000000-0000-4000-8000-00000000000B", name: "bravo" },
   C: { id: "5C000000-0000-4000-8000-00000000000C", name: "charlie" },
   S: { id: "5D000000-0000-4000-8000-00000000000D", name: "sierra", parent: "C" },
+  T: { id: "5E000000-0000-4000-8000-00000000000E", name: "tango", parent: "C" },
+  U: { id: "5F000000-0000-4000-8000-00000000000F", name: "uniform", parent: "A" },
 };
 
 /** Lets the promise chains the last action started run to their end. */
@@ -43,7 +45,9 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
   // Turns handed to a chat's bot by the app (appMessage): only call-ins ending do that here.
   const wakes: Record<string, number> = {};
   const byId = new Map(Object.entries(BOTS).map(([key, bot]) => [bot.id, key]));
-  const bot = (key: string) => bots.get(BOTS[key]!.id)!;
+  // Kept from the start: a removed sub bot leaves Core's map, and the view still reads what its chat showed.
+  const started = new Map(Object.keys(BOTS).map((key) => [key, bots.get(BOTS[key]!.id)!]));
+  const bot = (key: string) => started.get(key)!;
   for (const key of Object.keys(BOTS)) {
     const real = bot(key) as any;
     notices[key] = 0;
@@ -68,7 +72,8 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
   };
   const callee = (chat: string) => byId.get(conversations.speakers.get(BOTS[chat]!.id) ?? "") ?? null;
   const top = Object.keys(BOTS).filter((key) => !BOTS[key]!.parent);
-  const per = <T>(f: (key: string) => T) => Object.fromEntries(top.map((key) => [key, f(key)]));
+  const chats = [...top, ...Object.keys(BOTS).filter((key) => BOTS[key]!.parent)];
+  const per = <T>(f: (key: string) => T) => Object.fromEntries(chats.map((key) => [key, f(key)]));
 
   return {
     top,

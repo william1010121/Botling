@@ -380,7 +380,8 @@ export class Conversations {
     if (wake) this.followUps.delete(chat.id);
     const depth = wake && wake.until > Date.now() ? wake.depth : 0;
     const route = (to: string | null, body: string | null, outcome: string) => {
-      if (this.deps.members().some((member) => member.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
+      // A project bot's chat or a sub bot's (spec/models/callin: every bot has a chat).
+      if (this.deps.members().some((member) => member.id === chat.id) || (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
     };
     if (!record.text.includes("@")) { route(null, null, "none"); return; }
     const isSub = (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id);
