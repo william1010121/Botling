@@ -176,35 +176,48 @@ export const CARD_OTHERS_MAX = 20_000;
 export const CARD_CATALOG_MAX = 30_000;
 
 /**
- * What the worker is told in the user message: only this card's own part, the bot's prompt and the card it fills. The rest (how a card
- * worker works, the components) is the same for every card and goes to the system prompt (`cardSystemPrompt`), where it is cached.
+ * What the worker is told in its first message: this card's own part (the bot's prompt and the card it fills) and, given the brief, the components it may pick from
+ * as the library is now (`cardCatalogSection`). How a card worker works is the same for every card and is its system prompt (`cardSystemRules`), where it is cached:
+ * the library is not there, so a component change never rewrites the cached front.
  */
-export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">): string {
-  return `${card.prompt}\n\n(App: Your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it: each reply comes to you, and you change the card. Make it the finished result, not a status note.)`;
+export function cardInstructions(card: Pick<WorkerCardRecord, "title" | "prompt">, brief?: CardBrief): string {
+  return `${card.prompt}\n\n(App: Your final report is drawn in a card titled ${JSON.stringify(card.title)} in the user's chat, who may reply on it: each reply comes to you, and you change the card. Make it the finished result, not a status note.)${brief ? `\n\n${cardCatalogSection(brief)}` : ""}`;
 }
 
 /**
- * What every card worker is told, the same text for every card of a project (so the model's prompt cache serves it from the second card on): how it
- * works, the components it may pick from and the rules it keeps. It is the worker's `--append-system-prompt`, not part of its first message.
+ * What every card worker is told in its system prompt (`--append-system-prompt`): how it works and the rules it keeps, the same bytes for every card and every spawn of a
+ * project (the model's prompt cache serves them from the second card on). Nothing here reads the component library: a component change must never rewrite the front of
+ * a conversation's cache (invariant 5, 2026-11-18). The components it may pick from are in the message that holds its card (`cardCatalogSection`, `cardInstructions`).
  */
-export function cardSystemPrompt(brief: CardBrief): string {
+export function cardSystemRules(scriptsDir: string): string {
+  return `(App: You are a card worker; you gather the data and choose how it is shown. Work like this:
+0. If the card text already holds every number the card needs, do step 1 not at all: run no tool, and answer at once with your words and the <show>.
+1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything. Every script a card command runs must live in ${scriptsDir}/<short-name>/ (a script elsewhere, such as a helper already in the repo, is not run: copy it into that folder, or write it there, and point the command at the copy; arguments such as a row count are fine).
+2. Pick the components that fit exactly (step 4) from the list "Components you may use" in the message that holds your card, after its text. End your report with one <show name="component">JSON as its usage says</show> for each figure the card needs: several in a row when it needs several (for example three bar charts to compare side by side, or a chart and a table), drawn in the order you write them, at most ${CARD_SHOWS_MAX}; one figure is one <show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (a command whose script is outside that folder is rejected and you are told; the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
+3. Only when the card text explicitly asks for a picture (an image, a PNG): draw it with matplotlib, saved in the project (${scriptsDir.replace(/\/card-scripts$/, "")}/artifacts/<name>.png), and end with <show name="inline-report-block">{"type":"image","src":"/full/path.png","alt":"caption"}</show> (a PNG or JPEG file). Never leave a picture only as a Markdown link: a ![caption](file:///full/path.png) in your words is drawn as that image component for you, but the <show> is the rule. Without that explicit ask, never draw a figure yourself.
+4. Use a component only if it fits exactly as its usage defines it. If none does (also when one would fit only by bending a field outside its meaning, such as a progress value above its max, or a chart kind it does not have), do not force one, do not draw the figure yourself and do not name or build anything: end with <component>the chart you want, described: what it must show, the shape of its data, and a short example of that data</component> instead of a <show>, and stop. Maintainer decides what is built (a new component, or a new kind in an existing one), what it is called and where it goes; the app tells you when it is ready (or why not), and then you fill the card. Ask for one at most.
+5. Your words: one or two sentences on what the card shows, in the user's language. A card is not a worker hand-off: no "Files touched" block and no list of files, whatever your other rules say about the end of a report.
+${CARD_CHART_RULE}
+Examples of the JSON of the inline components (the title states the point; for any other kind or type follow its usage in the catalog):
+${INLINE_EXAMPLES})`;
+}
+
+/**
+ * The components a card worker may pick from, as the library is when its card starts: the section after the card's own words in its first message (a redo has it in
+ * its message too). One line each, with each usage in a file (`usageDir`), or each with its usage (no `usageDir`); and the rest of the library in a line each.
+ */
+export function cardCatalogSection(brief: CardBrief): string {
   const catalog = brief.usageDir !== undefined;
   const limit = catalog ? CARD_CATALOG_MAX : CARD_BRIEF_MAX;
   const components = brief.components.length > limit
     ? `${brief.components.slice(0, limit)}\n(…cut: ${catalog ? `ls ${brief.usageDir} lists every component's usage file` : "ask for the rest by name with a note to the owner"})` : brief.components;
-  const usage = catalog ? ` Each line below is one component; its whole usage (data format, options) is the file ${brief.usageDir}/<name>.md. Read the usage file of every component you picked, all in the same turn (one Read each, side by side, never one after the other), before you write its JSON; the examples below need no read for the kinds and types they show.` : "";
-  return `(App: You are a card worker; you gather the data and choose how it is shown. Work like this:
-0. If the card text already holds every number the card needs, do step 1 not at all: run no tool, and answer at once with your words and the <show>.
-1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${brief.scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything. Every script a card command runs must live in ${brief.scriptsDir}/<short-name>/ (a script elsewhere, such as a helper already in the repo, is not run: copy it into that folder, or write it there, and point the command at the copy; arguments such as a row count are fine).
-2. Pick the components that fit exactly (step 4) from the list below.${usage} End your report with one <show name="component">JSON as its usage says</show> for each figure the card needs: several in a row when it needs several (for example three bar charts to compare side by side, or a chart and a table), drawn in the order you write them, at most ${CARD_SHOWS_MAX}; one figure is one <show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${brief.scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (a command whose script is outside that folder is rejected and you are told; the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
-3. Only when the card text explicitly asks for a picture (an image, a PNG): draw it with matplotlib, saved in the project (${brief.scriptsDir.replace(/\/card-scripts$/, "")}/artifacts/<name>.png), and end with <show name="inline-report-block">{"type":"image","src":"/full/path.png","alt":"caption"}</show> (a PNG or JPEG file). Never leave a picture only as a Markdown link: a ![caption](file:///full/path.png) in your words is drawn as that image component for you, but the <show> is the rule. Without that explicit ask, never draw a figure yourself.
-4. Use a component only if it fits exactly as its usage defines it. If none does (also when one would fit only by bending a field outside its meaning, such as a progress value above its max, or a chart kind it does not have), do not force one, do not draw the figure yourself and do not name or build anything: end with <component>the chart you want, described: what it must show, the shape of its data, and a short example of that data</component> instead of a <show>, and stop. Maintainer decides what is built (a new component, or a new kind in an existing one), what it is called and where it goes; the app tells you when it is ready (or why not), and then you fill the card. Ask for one at most.
-5. Your words: one or two sentences on what the card shows, in the user's language. A card is not a worker hand-off: no "Files touched" block and no list of files, whatever your other rules say about the end of a report.
-${CARD_CHART_RULE}
-Examples of the JSON of the inline components (the title states the point; for any other kind or type follow its usage below):
-${INLINE_EXAMPLES}
-Components you may use, ${catalog ? "one line each" : "each with its usage"}:
-${components}${brief.others ? `\nAlso in the library, usage not shown here (end your report with <component name="name">its usage</component> for one of these: the app answers at once with its usage, and you then fill the card; it changes nothing in the library):\n${brief.others}` : ""})`;
+  const usage = catalog ? ` Each line below is one component; its whole usage (data format, options) is the file ${brief.usageDir}/<name>.md. Read the usage file of every component you picked, all in the same turn (one Read each, side by side, never one after the other), before you write its JSON; the examples in your rules need no read for the kinds and types they show.` : "";
+  return `(App: Components you may use, ${catalog ? "one line each" : "each with its usage"}:${usage ? `\n${usage.trim()}` : ""}\n${components}${brief.others ? `\nAlso in the library, usage not shown here (end your report with <component name="name">its usage</component> for one of these: the app answers at once with its usage, and you then fill the card; it changes nothing in the library):\n${brief.others}` : ""})`;
+}
+
+/** Rules and catalog as one text: what a redo worker (no card system prompt of its own) is given in its message. */
+export function cardSystemPrompt(brief: CardBrief): string {
+  return `${cardSystemRules(brief.scriptsDir)}\n${cardCatalogSection(brief)}`;
 }
 
 /**

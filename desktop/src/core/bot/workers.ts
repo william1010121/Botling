@@ -14,7 +14,7 @@ import { COMPONENT_USAGE_TOOL, FETCH_TOOL, parseFetchRequest, type BotToolName, 
 import { isBrowserTool } from "../../browser-bot";
 import { runBrowserTool } from "../browser-tools";
 import { CallInWorkBook, type CallInRelay } from "../call-in-work";
-import { BUILT_INS, GUIDED_BUILT_INS } from "../components/library";
+import { UNLISTED_COMPONENTS } from "../components/library";
 import type { ComponentsContext } from "../components/service";
 import type { Engine } from "../heads";
 import { connectionErrorLine, isConnectionError } from "../network-resume";
@@ -31,7 +31,7 @@ import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
 import type { CardBrief } from "../worker-cards";
-import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, cardSystemPrompt, followWorker, projectCard, rebindCard, takeInvalid, takeRejection } from "../worker-cards";
+import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, cardSystemRules, followWorker, projectCard, rebindCard, takeInvalid, takeRejection } from "../worker-cards";
 import { CARD_USAGE_FILES, CARD_WORKER_EFFORT, CARD_WORKER_MODEL } from "../settings";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
@@ -276,7 +276,7 @@ export class BotWorkers {
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
       rules: () => this.options.orchestrationRules?.(),
       shotCommand: () => this.options.shotCommand?.() ?? null,
-      cardSystem: () => { const brief = this.cardBriefNow(); return brief ? cardSystemPrompt(brief) : null; },
+      cardSystem: () => this.cardSystemNow(),
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
       defaultMachine: () => this.owner.choices().workerMachine,
@@ -324,7 +324,8 @@ export class BotWorkers {
     const known = library.names.filter((each) => !library.pinOnly(each));
     const name = known.find((each) => each === wanted) ?? known.find((each) => each.toLowerCase() === wanted.toLowerCase());
     if (!name) throw new Error(`No component named "${wanted}". The library has: ${known.join(", ")}.`);
-    const yours = this.ownComponents().includes(name) || BUILT_INS.includes(name) || GUIDED_BUILT_INS.includes(name);
+    // The bot's list and the tagged built-ins (`ownComponents`); `choices` is the core's own interaction protocol, whatever a tag says. No other name is kept here.
+    const yours = this.ownComponents().includes(name) || UNLISTED_COMPONENTS.includes(name);
     return {
       name, yours, command: library.command(name), usage: library.catalog([name]),
       ...(yours ? {} : { note: `Not on your list yet: ask Maintainer with <component name="${name}">add it to my list</component> before you show it.` }),
@@ -542,10 +543,10 @@ export class BotWorkers {
       if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new Error("A card needs a Claude bot with app-managed Claude workers; nothing was started.");
       if (this.shuttingDown) throw new Error("The app is stopping; nothing was started.");
       // The card's worker runs on the small model (settings.json `cardWorkerModel`, haiku) at low effort, lean (no plugins, skills or other MCP servers),
-      // and is given every component with its usage in its system prompt (`ClaudeWorkers` `cardSystem`, the same text for every card, so it is cached);
-      // only the card's own prompt is its first message. The symbol marks it a card worker: no JSON from a model can set it.
+      // its rules are its system prompt (`ClaudeWorkers` `cardSystem`, the same bytes for every card, so it is cached); the components it may pick from
+      // (the catalog as the library is now) come with the card's own prompt as its first message. The symbol marks it a card worker: no JSON from a model can set it.
       const model = this.options.launch?.().cardWorkerModel ?? CARD_WORKER_MODEL;
-      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: card.title, instructions: cardInstructions(card), group: card.title, model, effort: CARD_WORKER_EFFORT, [CARD_WORKER]: true }) as { task_id: string; run: number };
+      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: card.title, instructions: cardInstructions(card, this.cardBriefNow() ?? undefined), group: card.title, model, effort: CARD_WORKER_EFFORT, [CARD_WORKER]: true }) as { task_id: string; run: number };
       card.taskId = started.task_id;
       card.status = "running";
       card.run = started.run;
@@ -558,6 +559,15 @@ export class BotWorkers {
       this.log(`card "${card.title}" did not start a worker: ${card.error}`);
     }
     this.changed(record);
+  }
+
+  /**
+   * The system prompt of every card worker process (`ClaudeWorkers` `cardSystem`): the fixed rules only (worker-cards.ts `cardSystemRules`), so its bytes are the same
+   * for every card and every spawn of a project whatever the component library says (invariant 5: a component change never rewrites the cached front). The
+   * components are the first message of a card (`cardInstructions` with the catalog, `startCard`). Null without a component context.
+   */
+  cardSystemNow(): string | null {
+    return this.context ? cardSystemRules(this.host.cards.cardRules().scriptsDir) : null;
   }
 
   /** What a card's worker is given besides its prompt: the catalog with usage files (`CARD_USAGE_FILES`), or, when that cannot be written, every usage up front. */

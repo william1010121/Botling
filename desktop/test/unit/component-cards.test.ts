@@ -14,8 +14,8 @@ import { writeLibrary } from "../fixtures/components";
 
 const FLUX = "6AC64E3A-C7D7-4000-8000-000000000001";
 
-/** A library of the shape `componentKnowledgeFor` reads: names, one line each, a command for `gitlog`, two built-ins and the preview card. */
-function fake(names: string[], builtIn: string[] = ["inline-chart", "inline-report-block"]) {
+/** A library of the shape `componentKnowledgeFor` reads: names, one line each, a command for `gitlog`, three built-ins (the tag), the preview card among them. */
+function fake(names: string[], builtIn: string[] = ["inline-chart", "inline-report-block", "網頁預覽卡片"]) {
   const first: Record<string, string> = { "inline-chart": "Inline chart", "inline-report-block": "Inline report block", "網頁預覽卡片": "Preview card" };
   return {
     names,
@@ -36,13 +36,12 @@ describe("componentKnowledgeFor with the cards", () => {
     expect(k.viaCards).toEqual({ hidden: 4 });
   });
 
-  it("the guidance's built-ins stay whatever the library's tags say: an inline-report-block with no `Built-in: yes` line, the preview card under either name, even off the bot's list", () => {
-    // The shipped library: only inline-chart carries the tag; the preview card is `web-preview`, not the app's 「網頁預覽卡片」.
+  it("only the tag decides what stays in the note: an inline-report-block with no `Built-in: yes` line and an untagged preview card are the card worker's, wherever the bot's list is", () => {
     const names = ["inline-chart", "inline-report-block", "web-preview", "status", "todo"];
     const k = componentKnowledgeFor(fake(names, ["inline-chart"]), ["status"], false, true);
-    expect(k.own.map((entry) => entry.name)).toEqual(["inline-chart", "inline-report-block", "web-preview"]);
-    expect(k.viaCards).toEqual({ hidden: 2 });
-    // The bot's own list changes nothing of what it is told (its cached front stays put).
+    expect(k.own.map((entry) => entry.name)).toEqual(["inline-chart"]);
+    expect(k.viaCards).toEqual({ hidden: 4 });
+    // The bot's own list changes nothing of what it is told (its cached front stays put), a tagged one on or off it is the same.
     expect(componentKnowledgeFor(fake(names, ["inline-chart"]), [], false, true)).toEqual(k);
     expect(componentKnowledgeFor(fake(names, ["inline-chart"]), ["status", "todo", "web-preview"], false, true)).toEqual(k);
   });
@@ -118,11 +117,11 @@ describe("a bot with the cards", () => {
     const folder = tempDir("component-cards-flux");
     mkdirSync(join(folder, ".bot"), { recursive: true });
     writeLibrary(dir);
-    // The two inline blocks are built in (the library's tag), the preview card is the app's own built-in.
+    // The two inline blocks and the preview card are built in by the library's tag.
     const extra: Record<string, string> = library ?? {
       "inline-chart": 'Inline chart: a chart inside the words.\nBuilt-in: yes\nBuilt-in order: 1\nData: {"type": "bar"}',
       "inline-report-block": "Inline report block: a short report inside the words.\nBuilt-in: yes\nBuilt-in order: 2\nData: {}",
-      "網頁預覽卡片": "Preview card: a web page.\nData: {\"url\": \"http://x\"}",
+      "網頁預覽卡片": "Preview card: a web page.\nBuilt-in: yes\nBuilt-in order: 3\nData: {\"url\": \"http://x\"}",
     };
     for (const [name, about] of Object.entries(extra)) {
       const at = join(dir, "plugins", "ccb-components", "components", name);
@@ -279,7 +278,7 @@ describe("a bot with the cards", () => {
       expect(rules.validate!("not-in-the-library", "{not json")).toBeNull();
     } finally { await core.shutdown(); }
   });
-  it("the shipped library (inline-report-block without the Built-in tag, the preview card named web-preview): both stay in the note, and the worker has their usage, though neither is on the bot's list", async () => {
+  it("the library with only inline-chart tagged (inline-report-block without the Built-in tag, the preview card named web-preview): the tag decides, so only inline-chart is built in; the other two are no bot's own until they are tagged or on its list", async () => {
     const shipped = {
       "inline-chart": 'Inline chart: a chart inside the words.\nBuilt-in: yes\nData: {"type": "bar"}',
       "inline-report-block": "Inline report block: a short report inside the words.\nData: {}",
@@ -289,15 +288,14 @@ describe("a bot with the cards", () => {
     try {
       flux.setComponentList(["status"]);
       const note = flux.componentNote();
-      for (const kept of ["- inline-chart (JSON): ", "- inline-report-block (JSON): ", "- web-preview (JSON): "]) expect(note, kept).toContain(kept);
-      expect(note).not.toContain("- status");
+      expect(note).toContain("- inline-chart (JSON): ");
+      for (const left of ["- inline-report-block", "- web-preview", "- status"]) expect(note, left).not.toContain(left);
       const brief = flux.cards.cardBrief();
-      for (const name of ["inline-chart", "inline-report-block", "web-preview", "status"]) expect(brief.components, name).toContain(`- ${name}:`);
-      expect(brief.others).not.toContain("- inline-report-block");
-      // The bot's own lookup says the same: these are its own, not 'ask Maintainer first'; a component off its list still is.
-      expect(flux.workers.componentUsage({ name: "inline-report-block" }, "coordinator")).toMatchObject({ yours: true });
-      expect(flux.workers.componentUsage({ name: "web-preview" }, "coordinator")).toMatchObject({ yours: true });
-      expect(flux.workers.componentUsage({ name: "todo" }, "coordinator")).toMatchObject({ yours: false });
+      for (const name of ["inline-chart", "status"]) expect(brief.components, name).toContain(`- ${name}:`);
+      // The untagged ones are the shelf: a line, no usage up front.
+      expect(brief.others).toContain("- inline-report-block");
+      expect(flux.workers.componentUsage({ name: "inline-chart" }, "coordinator")).toMatchObject({ yours: true });
+      for (const name of ["inline-report-block", "web-preview", "todo"]) expect(flux.workers.componentUsage({ name }, "coordinator")).toMatchObject({ yours: false });
     } finally { await core.shutdown(); }
   });
 
