@@ -15,6 +15,8 @@
     does not count.
   - Over the limit: stop and say so in your report; do not rerun. A run lost to an ssh drop or that returned no
     result does not count.
+  - A `remote-test.sh` call answered from the memo (`remote-test: cached result from …`, nothing was run) does not
+    count toward these limits; only real runs count, and a `--fresh` run is a real run.
 - **No `test:changed`, `tsc` or `npm run typecheck` on the Mac** (the biggest CPU load, and it typechecks). The
   typecheck happens only in the final confirmation above; locally run only `npm run build` (fast). Use
   `remote-test.sh <sha> --typecheck-only` only when the coordinator asks for it.
