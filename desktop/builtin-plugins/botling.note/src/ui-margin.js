@@ -219,6 +219,7 @@ export function install(st, api) {
     const d = {
       rid: newRid(), kind: spec.kind, scope: spec.kind === "cell" ? "cell" : "selection", quote: spec.quote,
       line: spec.line ?? (cell ? Number(cell.dataset.start ?? cell.dataset.a) : 0),
+      fork: cell?.dataset.fork ?? "", cellNode: cell,
       cellKey: cell ? { start: Number(cell.dataset.start ?? cell.dataset.a), end: Number(cell.dataset.end ?? cell.dataset.b) } : null,
       label: typeof spec.label === "function" ? spec.label : cell && typeof api.cellLabel === "function" ? () => api.cellLabel(cell) : () => Promise.resolve(""),
       text: "", sending: false, error: "", el: null,
@@ -226,7 +227,37 @@ export function install(st, api) {
     mg.draft = d;
     d.el = draftCard(d);
     layout();
-    d.el.querySelector("textarea")?.focus();
+    d.el.querySelector("textarea")?.focus({ preventScroll: true });
+    if (typeof d.el.scrollIntoView === "function") d.el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  // The first question sits right under its cell, in the flow of the note (the cells below are pushed down), not in the margin.
+  // render() rebuilds the doc, so layout() puts the box back after its cell every time.
+  function draftCell(d) {
+    if (d.cellNode?.isConnected) return d.cellNode;
+    if (d.cellKey && Number.isFinite(d.cellKey.start)) {
+      const c = cellEl(d.cellKey.start, d.cellKey.end);
+      if (c) return c;
+    }
+    if (d.fork) {
+      const b = [...st.doc.querySelectorAll(".cell-branch")].find((e) => e.dataset.fork === d.fork);
+      if (b) return b;
+    }
+    return elOfLine(lineEls(), d.line)?.closest(".cell") ?? null;
+  }
+  function placeDraft() {
+    const d = mg.draft;
+    if (!d) return;
+    const cell = draftCell(d);
+    if (cell) {
+      d.cellNode = cell;
+      if (cell.nextElementSibling !== d.el) cell.after(d.el);
+    } else if (d.el.parentElement !== st.doc) st.doc.append(d.el);
+  }
+  function markDraft() {
+    const d = mg.draft;
+    if (!d) return;
+    const el = elOfLine(lineEls(), d.line) ?? d.cellNode;
+    if (el) mark("draft", { state: "ok", el, line: d.line, stale: false }, { kind: d.kind, quote: d.quote });
   }
   function closeDraft() {
     if (!mg.draft) return;
@@ -248,7 +279,7 @@ export function install(st, api) {
     return bar;
   }
   function draftCard(d) {
-    const card = h("div", "nm-card nm-draft nm-ui");
+    const card = h("div", "nm-card nm-draft nm-inline nm-ui");
     const body = h("div", "nm-draft-body");
     card.append(body);
     const draw = () => {
@@ -259,7 +290,7 @@ export function install(st, api) {
       const esc = h("kbd", "", "Esc");
       top.append(esc);
       const ta = h("textarea");
-      ta.rows = 3;
+      ta.rows = 2;
       ta.value = d.text;
       ta.setAttribute("aria-label", "提問");
       ta.placeholder = "問這一段…";
@@ -283,8 +314,8 @@ export function install(st, api) {
       const cancel = h("button", "nm-btn nm-ghost", "取消");
       cancel.type = "button";
       cancel.addEventListener("click", closeDraft);
-      const row = h("div", "nm-row");
-      row.append(h("span", "nm-sp"), cancel, go);
+      const row = h("div", "nm-row nm-ask-ctl");
+      row.append(scopeBar(d, draw), h("span", "nm-sp"), cancel, go);
       const hint = h("div", "nm-row nm-ask-hint");
       const small = h("small", "", "回答會掛在右側旁註，不會寫進 Note；bot 也會在對話裡回。");
       const quoteBtn = h("button", "nm-gb", "改為引用到對話");
@@ -295,7 +326,7 @@ export function install(st, api) {
         api.askQuote?.(d.quote, label);
       });
       hint.append(small, h("span", "nm-sp"), quoteBtn);
-      body.append(top, ta, scopeBar(d, draw), row, hint);
+      body.append(top, ta, row, hint);
       if (d.error) body.append(h("div", "nm-err", d.error));
     };
     d.redraw = draw;
@@ -755,8 +786,11 @@ export function install(st, api) {
   }
   function layout() {
     if (st.gone || !on || !st.loaded) return;
-    if (!mg.threads.length && !mg.draft) {
+    placeDraft();
+    if (!mg.threads.length) {
       if (mg.rail) teardownRail();
+      else clearMarks();
+      markDraft();
       if (mg.pop) showPop();
       return;
     }
@@ -788,15 +822,9 @@ export function install(st, api) {
       rec.el.classList.toggle("nm-stale", place.state !== "ok" || place.stale);
       rows.push({ key: t.id, card: rec.el, place, anchor: t.anchor, dashed: !!t.folded });
     }
-    const d = mg.draft;
-    if (d) {
-      const line = elOfLine(els, d.line);
-      const cell = d.cellKey ? cellEl(d.cellKey.start, d.cellKey.end) : null;
-      const el = line ?? cell;
-      rows.push({ key: "draft", card: d.el, place: { state: el ? "ok" : "orphan", el, line: d.line, stale: false }, anchor: { kind: d.kind, quote: d.quote }, draft: true, cell });
-    }
     if (!rows.length) {
       teardownRail();
+      markDraft();
       if (mg.pop) showPop();
       return;
     }
@@ -819,7 +847,7 @@ export function install(st, api) {
       r.x1 = cr ? cr.right - pr.left : 0;
     }
     rows.sort((a, b) => a.y - b.y);
-    // a card to a margin slot; a draft in a narrow frame floats under its cell instead
+    // a card to a margin slot
     const railKids = [];
     if (!wide) {
       const head = h("div", "nm-rail-head");
@@ -827,15 +855,6 @@ export function install(st, api) {
       railKids.push(head);
     }
     for (const r of rows) {
-      if (r.draft && !wide) {
-        r.card.classList.add("nm-float");
-        const cr = (r.cell ?? r.place.el?.closest?.(".cell") ?? r.place.el)?.getBoundingClientRect();
-        r.card.style.top = `${cr ? cr.bottom - pr.top + 6 : 0}px`;
-        r.card.style.left = "0px";
-        if (r.card.parentElement !== page) page.append(r.card);
-        continue;
-      }
-      r.card.classList.remove("nm-float");
       if (!wide) r.card.style.top = "";
       railKids.push(r.card);
     }
@@ -857,8 +876,7 @@ export function install(st, api) {
         const xm = (r.x1 + railLeft) / 2;
         const path = document.createElementNS(SVG, "path");
         path.setAttribute("d", `M${r.x1} ${r.y}H${xm}V${y2}H${railLeft}`);
-        if (r.draft) path.setAttribute("class", "nm-draft");
-        else if (r.dashed) path.setAttribute("class", "nm-dim");
+        if (r.dashed) path.setAttribute("class", "nm-dim");
         const dot = document.createElementNS(SVG, "circle");
         dot.setAttribute("cx", String(railLeft));
         dot.setAttribute("cy", String(y2));
@@ -869,6 +887,7 @@ export function install(st, api) {
       page.style.minHeight = "";
     }
     for (const r of rows) if (r.place.state === "ok" && r.place.el) mark(r.key, r.place, r.anchor);
+    markDraft();
     setFocusKeep();
     if (mg.pop) showPop();
   }

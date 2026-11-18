@@ -70,6 +70,14 @@ export const MARGIN_CSS = `
 .nm-btn[disabled] { opacity: .5; cursor: default; }
 .nm-btn kbd, .nm-win kbd, .nm-draft kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid var(--n-border); border-radius: 4px; padding: 0 4px; color: var(--n-faint); }
 .nm-btn.nm-go kbd { color: #fff; border-color: rgba(255,255,255,.4); }
+.nm-card.nm-draft.nm-inline { position: relative; left: auto; right: auto; overflow: visible; margin: -2px 0 12px 14px; border-style: solid;
+  border-color: color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); border-left: 3px solid var(--n-accent); background: var(--n-pop); animation: nm-drop .16s ease-out; }
+.nm-card.nm-draft.nm-inline::before { content: ""; position: absolute; left: 16px; top: -7px; width: 10px; height: 10px; background: var(--n-pop); transform: rotate(45deg);
+  border-top: 1px solid color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); border-left: 1px solid color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); }
+@keyframes nm-drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.nm-ask-ctl { flex-wrap: wrap; margin-top: 8px; }
+.nm-ask-ctl .nm-scope { margin-top: 0; flex: 0 0 auto; }
+.nm-ask-ctl .nm-scope button { padding: 3px 12px; white-space: nowrap; }
 .nm-draft-body { padding: 10px 12px; }
 .nm-draft-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--n-muted); }
 .nm-draft-top b { color: var(--n-text); }

@@ -57,9 +57,10 @@ is not shown: hidden until that route is shown. Highlight: the CSS Custom Highli
 ## The frame (src/ui-margin.js, src/ui-margin-css.js)
 
 * **Ask**: a selection inside the line being edited, or across lines (the editor's own multi-line selection), shows a small
-  問 Bot button above it; a cell's existing 問 button (and a branch's) opens the box for the whole cell. The box is a
-  dashed card **in the margin** beside the passage (so it never covers the selected text, the flaw of the first draft);
-  scope tabs 選取文字 / 整個 cell / 整份 Note, ⌘↵ sends, Esc closes. In a frame under 760 px wide it floats under the cell.
+  問 Bot button above it; a cell's existing 問 button (and a branch's) opens the box for the whole cell. The box (first question) is a
+  card **right under the passage's cell, in the flow of the note** (the cells below move down; nothing in the margin until
+  an answer exists; `placeDraft()` puts it back after every render); scope tabs 選取文字 / 整個 cell / 整份 Note on one row
+  with 取消 / 送出, ⌘↵ sends, Esc closes. The answer then appears as a card in the margin (narrow frame: under the note).
 * **Answering…**: the card shows a spinner and "bot 還在回答…", with 不等了 (drops the question; a late reply stays in the chat).
 * **Read**: question, answer as small Markdown (paragraphs, lists, code, links through the note's link opener), time,
   "不會寫進 Note"; fold/unfold (kept), 複製, 刪除 (two presses), 存成 cell (the only way an answer enters the note: a new
