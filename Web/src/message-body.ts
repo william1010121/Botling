@@ -409,7 +409,7 @@ function componentView(message: MessageView, display: DisplayView, index: number
   if (display.status === "empty" && !display.command) return null;
   // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
   const element = display.command || display.status
-    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components, botId), { lazy: true })
+    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components, botId), { lazy: true, heightKey: `${index === 0 ? message.id : `${message.id}/show-${index}`}/${display.name}` })
     : drawComponent(message, display, index, components, botId);
   // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
   if (!element || element.classList.contains("unknown-component")) return element;

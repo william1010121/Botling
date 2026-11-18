@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
-import { componentElement, componentPage, keepFrames, liveCardCount, offscreenRecheck, refreshDueCards } from "../src/components";
+import { componentElement, componentPage, keepFrames, liveCardCount, offscreenRecheck, redrawWait, refreshDueCards } from "../src/components";
 import { messageElement } from "../src/messages";
 import type { ChatState, ComponentInfo, DisplayView, MessageView } from "../src/types";
 
@@ -126,6 +126,9 @@ describe("a frame that takes live data", () => {
     expect(newest.srcdoc).toContain(`{"cpu":90}`);
     expect(frame.isConnected).toBe(true);
     newest.dispatchEvent(new Event("load"));
+    paints.paint();
+    expect(frame.isConnected).toBe(true);
+    say(newest, { ccb: "ready", height: 90 });
     expect(frame.isConnected).toBe(true);
     paints.paint();
     expect([...row.querySelectorAll(".component-frame")]).toEqual([newest]);
@@ -139,6 +142,217 @@ describe("a frame that takes live data", () => {
 });
 
 
+
+describe("a card given a new page keeps its old picture until the new one is ready", () => {
+  const v2: Record<string, ComponentInfo> = { cpu: { template: "<pre>v2</pre>", version: 2, working: false, updated: false, hasPrevious: false } };
+  const still = (overrides: Partial<DisplayView> = {}) => card({ every: null, ...overrides });
+  const framesOf = (row: HTMLElement) => [...row.querySelectorAll<HTMLIFrameElement>(".component-frame")];
+  const incomingOf = (row: HTMLElement) => row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+  const ready = (frame: HTMLIFrameElement, height: number) => say(frame, { ccb: "ready", height });
+  afterEach(() => vi.useRealTimers());
+
+  /** A card on the page whose frame measured 120px. */
+  function shownCard(display = still(), info = components): { row: HTMLElement; frame: HTMLIFrameElement } {
+    const row = messageElement(message([display]), info);
+    document.body.append(row);
+    const frame = framesOf(row)[0];
+    say(frame, { ccb: "size", height: 120 });
+    return { row, frame };
+  }
+  /** Brings the row up to a redraw with `display` and `info`, as the chat does. */
+  const redraw = (row: HTMLElement, display: DisplayView, info = components) => keepFrames(row, messageElement(message([display]), info));
+
+  const changes: [string, DisplayView, DisplayView, Record<string, ComponentInfo>][] = [
+    ["its template and version change", still(), still(), v2],
+    ["its picture map changes", still({ images: { "/a.png": "ccb-preview:1" } }), still({ images: { "/a.png": "ccb-preview:2" } }), components],
+    ["only its data changes", still(), still({ data: `{"cpu":50}` }), components],
+  ];
+  for (const [what, from, to, info] of changes) {
+    it(`when ${what}: the old frame stays, as tall as it was, until the new page says it is ready`, () => {
+      const paints = holdPaints();
+      const { row, frame } = shownCard(from);
+      const page = frame.srcdoc;
+      expect(redraw(row, to, info)).toBe(row);
+      const next = incomingOf(row);
+      expect(next).not.toBeNull();
+      expect(framesOf(row)).toEqual([frame, next]);
+      expect(frame.srcdoc).toBe(page);
+      // The empty page a frame starts with loads (a `load` event); the new page measures; the clock runs: none of it is ready.
+      next.dispatchEvent(new Event("load"));
+      say(next, { ccb: "size", height: 40 });
+      paints.paint();
+      expect(framesOf(row)).toEqual([frame, next]);
+      expect(frame.style.height).toBe("120px");
+      expect(next.style.getPropertyValue("height")).toBe("120px");
+      // Ready: painted, decoded, sized. Not before the window paints once more.
+      ready(next, 40);
+      expect(framesOf(row)).toEqual([frame, next]);
+      paints.paint();
+      expect(framesOf(row)).toEqual([next]);
+      expect(next.classList.contains("incoming")).toBe(false);
+      expect(next.style.position).toBe("");
+      expect(next.style.height).toBe("40px");
+      expect(next.getAttribute("aria-hidden")).toBeNull();
+    });
+  }
+
+  it("does not show a page that is slow: past the old two seconds it waits, and past its wait it is given up, the old picture staying and the next redraw drawing it again", () => {
+    const paints = holdPaints();
+    // Only the clock: the held animation frames stay the test's own.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { row, frame } = shownCard();
+    // Two pages asked for one after the other (the first replaced); both given up together.
+    redraw(row, still({ data: `{"cpu":20}` }));
+    redraw(row, still(), v2);
+    const next = incomingOf(row);
+    vi.advanceTimersByTime(2500);
+    paints.paint();
+    expect(framesOf(row)).toEqual([frame, next]);
+    expect(frame.style.height).toBe("120px");
+    vi.advanceTimersByTime(redrawWait);
+    expect(framesOf(row)).toEqual([frame]);
+    expect(frame.isConnected).toBe(true);
+    // Its late word is nobody's now.
+    ready(next, 40);
+    paints.paint();
+    expect(framesOf(row)).toEqual([frame]);
+    expect(frame.style.height).toBe("120px");
+    // The frame is still what it was drawn from before either, so a redraw with the first of them asks for its page again.
+    redraw(row, still({ data: `{"cpu":20}` }));
+    const again = incomingOf(row);
+    expect(again.srcdoc).toContain(`{"cpu":20}`);
+    expect(again).not.toBe(next);
+    ready(again, 60);
+    paints.paint();
+    expect(framesOf(row)).toEqual([again]);
+  });
+
+  it("a frame that takes live data is not sent data while a new page is being drawn behind it, which that data replaces", () => {
+    const paints = holdPaints();
+    const { row, frame } = shownCard();
+    const posts: unknown[] = [];
+    vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation((data: unknown) => { posts.push(data); });
+    say(frame, { ccb: "live" });
+    // Its page changes: drawn behind it (live data cannot carry a new template).
+    redraw(row, still(), v2);
+    const next = incomingOf(row);
+    // The template is back, with new data: the shown frame is not told it (it is about to be replaced), a page with it is drawn instead.
+    redraw(row, still({ data: `{"cpu":80}` }));
+    expect(posts).toEqual([]);
+    expect(next.isConnected).toBe(false);
+    const latest = incomingOf(row);
+    expect(latest.srcdoc).toContain(`{"cpu":80}`);
+    ready(latest, 120);
+    paints.paint();
+    expect(framesOf(row)).toEqual([latest]);
+  });
+
+  it("success A, then a failure, then success B: one frame on screen all along, never shorter, the failure said where the bar says it", () => {
+    const paints = holdPaints();
+    const { row, frame } = shownCard();
+    const heights: number[] = [];
+    const check = () => {
+      const onScreen = framesOf(row).filter((one) => !one.classList.contains("incoming"));
+      expect(onScreen).toHaveLength(1);
+      expect(row.querySelector(".command-error, .command-waiting")).toBeNull();
+      heights.push(parseFloat(onScreen[0].style.height));
+      return onScreen[0];
+    };
+    expect(check()).toBe(frame);
+    const srcdoc = frame.srcdoc;
+    // Failed: the core keeps the last data, so the same drawing stays and the bar says why.
+    redraw(row, still({ status: "failed", error: "The command failed (exit code 2).", ranAt: "10:43" }));
+    expect(check()).toBe(frame);
+    expect(frame.srcdoc).toBe(srcdoc);
+    expect(framesOf(row)).toEqual([frame]);
+    const note = row.querySelector<HTMLElement>(".command-when.failed")!;
+    expect(note.textContent).toContain("Failed");
+    expect(note.title).toBe("The command failed (exit code 2).");
+    // Running again with the data still there, then new data: behind the old drawing.
+    redraw(row, still({ status: "running", data: `{"cpu":10}` }));
+    expect(check()).toBe(frame);
+    redraw(row, still({ data: `{"cpu":50}` }));
+    expect(check()).toBe(frame);
+    expect(row.querySelector(".command-when.failed")).toBeNull();
+    const next = incomingOf(row);
+    ready(next, 120);
+    paints.paint();
+    expect(framesOf(row)).toEqual([next]);
+    expect(next.srcdoc).toContain(`{"cpu":50}`);
+    expect(check()).toBe(next);
+    expect(Math.min(...heights)).toBe(120);
+  });
+
+  it("a failure with no data to keep is still the error card", () => {
+    const row = messageElement(message([still({ status: "failed", data: "null", error: "boom" })]), components);
+    expect(row.querySelector(".command-error")?.textContent).toContain("boom");
+    expect(framesOf(row)).toEqual([]);
+  });
+
+  it("A, B, then C, with B's page late: B is dropped, its late words change nothing, and C is shown once it is ready", () => {
+    const paints = holdPaints();
+    const { row, frame } = shownCard();
+    redraw(row, still({ data: `{"cpu":20}` }));
+    const b = incomingOf(row);
+    redraw(row, still({ data: `{"cpu":30}` }));
+    const c = incomingOf(row);
+    expect(b.isConnected).toBe(false);
+    expect(framesOf(row)).toEqual([frame, c]);
+    // B was ready before it was dropped; its reply comes in after C was asked for.
+    ready(b, 200);
+    say(b, { ccb: "size", height: 200 });
+    paints.paint();
+    expect(framesOf(row)).toEqual([frame, c]);
+    expect(frame.style.height).toBe("120px");
+    // C ready first, then B again: the picture is C's and stays.
+    ready(c, 130);
+    paints.paint();
+    ready(b, 200);
+    paints.paint();
+    expect(framesOf(row)).toEqual([c]);
+    expect(c.srcdoc).toContain(`{"cpu":30}`);
+    expect(c.style.height).toBe("130px");
+  });
+
+  it("a drawing behind the shown frame writes neither the visible height nor the remembered one", () => {
+    const paints = holdPaints();
+    const { row, frame } = shownCard();
+    redraw(row, still(), v2);
+    const next = incomingOf(row);
+    say(next, { ccb: "size", height: 300 });
+    expect(frame.style.height).toBe("120px");
+    // A card drawn anew meanwhile starts at what the shown one has, not at what the preparing one measured.
+    expect(framesOf(messageElement(message([still()]), components))[0].style.height).toBe("120px");
+    ready(next, 300);
+    paints.paint();
+    expect(framesOf(messageElement(message([still()]), components))[0].style.height).toBe("300px");
+  });
+
+  it("a frame's first drawing takes the place of a waiting box that was as tall as the card was last time", () => {
+    shownCard();
+    const waiting = messageElement(message([still({ status: "running", data: "null" })]), components);
+    expect(waiting.querySelector<HTMLElement>(".command-waiting")!.style.minHeight).toBe("120px");
+    const unseen = messageElement({ ...message([still({ status: "running", data: "null" })]), id: "never-drawn" }, components);
+    expect(unseen.querySelector<HTMLElement>(".command-waiting")!.style.minHeight).toBe("");
+    // Its data comes: no frame to keep, and the new one starts at the remembered height.
+    const done = messageElement(message([still()]), components);
+    expect(framesOf(done)[0].style.height).toBe("120px");
+  });
+
+  it("a ready that comes from a frame nobody is waiting for changes nothing", () => {
+    const { frame } = shownCard();
+    ready(frame, 50);
+    expect(frame.style.height).toBe("120px");
+  });
+
+  it("a page made for a frame that is handed over to says when it is ready; any other page is what it was", () => {
+    const page = componentPage("<p>x</p>", "null", {}, "2x2", "chat", false, false, true);
+    expect(page).toContain("ccb: 'ready'");
+    expect(componentPage("<p>x</p>", "null")).not.toContain("ccb: 'ready'");
+    const { frame } = shownCard();
+    expect(frame.srcdoc).toContain("ccb: 'ready'");
+  });
+});
 
 describe("a card that refreshes by itself", () => {
   let hidden = false;

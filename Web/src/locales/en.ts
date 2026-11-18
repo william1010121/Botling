@@ -269,6 +269,7 @@ export const en = {
   "command.allow": "Allow and run",
   "command.remembered": "Remembered for this command in this project.",
   "command.detailLine": "and, for details when you open one, with the {values} filled in:",
+  "command.failedKept": "Failed, showing the last result",
   "command.failed": "The command failed",
   "command.nothing": "Nothing to show",
   "command.runningFirst": "Running the command…",
