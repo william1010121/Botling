@@ -224,7 +224,20 @@ interface Proc {
    * and the Monitor's wake turn goes on in the same run. The run ends with its next report once no Monitor lives, or when
    * the Monitor runs past its 50-minute cap, or its process ends.
    */
-  monitorHold?: { result: Extract<StreamItem, { kind: "result" }>; timer?: ReturnType<typeof setTimeout>; /** A turn is under way since that report (the Monitor's wake turn, or a steered one): its result ends the run, not the timer. */ turn?: boolean };
+  monitorHold?: {
+    result: Extract<StreamItem, { kind: "result" }>; timer?: ReturnType<typeof setTimeout>;
+    /** A turn is under way since that report (the Monitor's wake turn, or a steered one): its result ends the run, not the timer. */
+    turn?: boolean;
+    /** What the timer waits for: the oldest live Monitor's cap, or the grace for a wake turn. */
+    on?: "cap" | "grace";
+    /** The oldest Monitor's cap ran out while a turn was under way (the model's MonExpire): the report has been let go, only that turn's result is awaited. No Monitor, old or new, holds it again. */
+    capped?: boolean;
+  };
+  /**
+   * The text of a good report that a later failure would otherwise take with it (a failed wake turn, or an API retry
+   * that waits): carried to the run's end, where it goes out with the report that follows or with the failure.
+   */
+  carried?: string;
   /** Its head once the app closed its input (`finish`): nothing more can be written to it; it ends after its background work. */
   finishing?: ClaudeWorkerHead;
   finishingSince?: number;
@@ -241,6 +254,9 @@ function clearHold(proc: Proc) {
   if (proc.monitorHold?.timer) clearTimeout(proc.monitorHold.timer);
   proc.monitorHold = undefined;
 }
+
+/** What a run's failure says of the good report it would have taken with it (the core puts the error first, then this). */
+const earlierReportText = (text: string) => `Its earlier report, held back for its Monitor:\n\n${text}`;
 
 /** No try waits any more (the run ended, was stopped, or other words go on with it). */
 function clearApiRetry(proc: Proc) {
@@ -346,14 +362,14 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (proc.head?.running && proc.finishing === proc.head) {
       // Its input is closed (it went to sleep) but it lives on until its background work ends: words written now are
       // lost. They wait, shown as waiting, and go into a new process on its session once this one has ended.
-      Object.assign(proc, { run: undefined, record: r, opening: { run: run.run, base: null }, pendingResult: undefined });
+      Object.assign(proc, { run: undefined, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined });
       proc.held = { run, record: r, words: [words], since: Date.now() };
       run.emit({ type: "session", conversationId: sessionId });
       run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
       return;
     }
     if (proc.head?.running) {
-      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined });
+      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined });
       proc.stream.newRun();
       proc.queued.clear();
       run.emit({ type: "session", conversationId: sessionId });
@@ -409,7 +425,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     };
     const head: ClaudeWorkerHead = machine ? remote!.head(machine, { id: r.id, name: r.name }, config.cwd, config, handlers) : this.factory(config, handlers);
     head.start();
-    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, finishing: undefined, finishingSince: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, carried: undefined, finishing: undefined, finishingSince: undefined });
     proc.background.clear();
     proc.monitorCalls?.clear();
     proc.stream.newProcess();
@@ -458,22 +474,31 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private monitorChanged(proc: Proc) {
     const hold = proc.monitorHold, run = proc.run;
     if (!hold || !run) return;
+    // The oldest Monitor's cap has run out: the report is let go (only the turn under way is awaited); a Monitor that
+    // lives or starts now does not hold it again, and its row does not say "Monitor running" for it.
+    if (hold.capped) return;
     const live = this.liveMonitors(proc)[0];
-    // A Monitor lives: its row says so, and the report goes out at the latest when the cap runs out. None lives: the
-    // Monitor's wake turn is on its way; if it never starts, the report goes out after the grace.
-    this.armHold(proc, run, live ? Math.max(0, live.since + MONITOR_HOLD_MS - Date.now()) : monitorWakeGraceMs());
+    // A Monitor lives: its row says so, and the report goes out at the latest when the oldest one's cap runs out. None
+    // lives: the Monitor's wake turn is on its way; if it never starts, the report goes out after the grace.
+    this.armHold(proc, run, live ? "cap" : "grace", live ? Math.max(0, live.since + MONITOR_HOLD_MS - Date.now()) : monitorWakeGraceMs());
     run.emit({ type: "waitingOn", on: live ? { kind: "monitorRunning", title: live.title, since: live.since, queued: 0 } : null });
   }
 
   /** The held report goes out when `wait` is over, unless a turn is under way by then: that turn's own result ends the run. */
-  private armHold(proc: Proc, run: RunHandle, wait: number) {
+  private armHold(proc: Proc, run: RunHandle, on: "cap" | "grace", wait: number) {
     const hold = proc.monitorHold;
     if (!hold) return;
     if (hold.timer) clearTimeout(hold.timer);
+    hold.on = on;
     hold.timer = setTimeout(() => {
       const held = proc.monitorHold;
       if (proc.run !== run || !held) return;
-      if (held.turn && proc.head?.running && !this.closed) { this.armHold(proc, run, monitorWakeGraceMs()); return; }
+      if (held.turn && proc.head?.running && !this.closed) {
+        // The cap ran out under a turn: the grace, and that turn's result ends the run whatever Monitors live by then.
+        if (held.on === "cap") held.capped = true;
+        this.armHold(proc, run, "grace", monitorWakeGraceMs());
+        return;
+      }
       this.end(proc, run, held.result, true);
     }, wait);
     hold.timer.unref?.();
@@ -569,16 +594,21 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private end(proc: Proc, run: RunHandle, result: Extract<StreamItem, { kind: "result" }>, release = false) {
     if (proc.run !== run) return;
     const head = proc.head;
-    // A report kept back for its Monitor goes out with this one (the words of both, once).
-    const before = proc.monitorHold?.result;
-    if (result.ok && before?.ok && before !== result && before.text && before.text !== result.text) result = { ...result, text: result.text ? `${before.text}\n\n${result.text}` : before.text };
-    // Its Monitor still lives: the turn's report waits for it (an error ends the run at once).
-    if (result.ok && !release && head?.running && proc.finishing !== head && !this.closed && this.liveMonitors(proc).length) {
+    // A good report kept back for its Monitor (or carried over an API retry) goes out with this one (the words of both, once).
+    const held = proc.monitorHold?.result;
+    const earlier = held?.text || proc.carried;
+    if (result.ok && earlier && held !== result && earlier !== result.text) result = { ...result, text: result.text ? `${earlier}\n\n${result.text}` : earlier };
+    if (result.ok) proc.carried = undefined;
+    // Its Monitor still lives: the turn's report waits for it (an error ends the run at once). Not once the oldest
+    // Monitor's cap has let the report go: a newer Monitor does not hold it again.
+    if (result.ok && !release && head?.running && proc.finishing !== head && !this.closed && !proc.monitorHold?.capped && this.liveMonitors(proc).length) {
       this.holdForMonitor(proc, result);
       return;
     }
     if (proc.monitorHold) { clearHold(proc); run.emit({ type: "waitingOn", on: null }); }
     let error = result.ok ? null : result.error || result.text || null;
+    // A failure never takes a good report with it: it goes out with the failure (the core joins them), or after the retry.
+    const kept = result.ok ? undefined : earlier;
     if (!result.ok && result.apiPassing) {
       // An API error that passes (a Cloudflare block, an overload): the same session goes on after a wait, the run
       // stays at work. Only once every try failed does it end, in plain words.
@@ -586,6 +616,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       const attempt = (proc.apiRetries ?? 0) + 1;
       if (attempt <= delays.length && head?.running && proc.finishing !== head) {
         proc.apiRetries = attempt;
+        proc.carried = kept;
         proc.queued.clear();
         const delay = delays[attempt - 1]!;
         run.emit({ type: "waitingOn", on: { kind: "apiRetry", title: apiRetryText(attempt, delays.length, delay), since: Date.now(), queued: 0 } });
@@ -602,12 +633,13 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       error = apiGaveUpText(delays.length, error ?? "");
     }
     proc.run = undefined;
+    proc.carried = undefined;
     proc.queued.clear();
     proc.apiRetries = 0;
     clearApiRetry(proc);
     if (head?.running) this.keepAlive(proc, head);
     run.emit({ type: "end", end: {
-      how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : null, error, detail: result.subtype,
+      how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : kept ? earlierReportText(kept) : null, error, detail: result.subtype,
     } });
   }
 
@@ -648,8 +680,10 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // Its process ended while its report waited for a Monitor: the report is good, the Monitor ended with the process.
     if (proc.monitorHold) { this.end(proc, run, proc.monitorHold.result, true); return; }
     proc.run = undefined;
+    const carried = proc.carried;
+    proc.carried = undefined;
     run.emit({ type: "end", end: {
-      how: "exited", finalText: null, detail: exit.signal ?? `exit ${exit.code}`,
+      how: "exited", finalText: carried ? earlierReportText(carried) : null, detail: exit.signal ?? `exit ${exit.code}`,
       error: `The worker's process ended before its report${exit.code !== null ? ` (exit ${exit.code})` : ""}.${exit.stderr ? `\n${exit.stderr.slice(-2_000)}` : ""}`,
     } });
   }
@@ -660,6 +694,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (!proc) return { cleaned: true };
     proc.run = undefined;
     proc.held = undefined;
+    proc.carried = undefined;
     proc.queued.clear();
     clearApiRetry(proc);
     clearHold(proc);
@@ -714,7 +749,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
       clearApiRetry(proc);
       clearHold(proc);
-      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined });
+      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined, carried: undefined });
       const tree = proc.tree ?? proc.head;
       proc.head = undefined;
       return tree?.terminate(1_500);
