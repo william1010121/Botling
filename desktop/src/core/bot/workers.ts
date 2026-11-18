@@ -521,7 +521,7 @@ export class BotWorkers {
    * and never wait for it, see `WorkerAdapter.slotFree`), which stays the limit of the bot's own workers. When more card workers are at work than the
    * limit is, that is only logged as a warning.
    */
-  startCards(record: ChatRecord) {
+  startCards(record: ChatRecord): void {
     // A card from an Antigravity or Codex head is drawn by the chat's Claude head's workers, as one from the Claude head is (`cardHome`).
     const home = this.cardHome(record);
     if (home) return home.workers.startCards(home.record);
