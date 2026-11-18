@@ -72,8 +72,10 @@ Before you say "done" (mistakes found in reviews since 2026-11-15; answer each i
    (L-006)
 8. UI and retries: a double tap, a retry, Back or Review never sends twice (in-flight guard in a
    ref; a retry reuses the same request id and choice); a duplicate reply is dropped. (L-007)
-9. Authority at use: re-check grants, hashes, membership and cached state where they are used
-   (each chunk, crash restart, hot swap, revoke, after every await). (L-008)
+9. Authority at use: a check that decides whether an action may go ahead (a grant, a code hash,
+   membership, a switch, the target still existing) is made again where the action happens (each
+   chunk, crash restart, hot swap, revoke), after every await between the check and the action.
+   (L-008, CS-02)
 10. Fail closed: a check that throws, a null / unknown / missing value, missing config, a timeout
     or a failed send refuses; never 500, "allowed" or a skipped check. (L-009)
 11. Tests: every guard has a test that fails when it is removed; the implementing worker only writes
