@@ -52,6 +52,9 @@ function holdPaints(): { paint: () => void } {
   return { paint: () => { while (queue.length) queue.shift()!(0); } };
 }
 
+/** The frames of `root` that are still drawing behind another. (Not a selector: jsdom's `querySelector` answers a stale element once the class has moved from one frame to the next.) */
+const incomingFrames = (root: ParentNode): HTMLIFrameElement[] => [...root.querySelectorAll<HTMLIFrameElement>(".component-frame")].filter((frame) => frame.classList.contains("incoming"));
+
 const say = (frame: HTMLIFrameElement, data: unknown) => window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
 
 beforeEach(() => {
@@ -113,7 +116,7 @@ describe("a frame that takes live data", () => {
     // Not reloaded, not emptied: the old drawing is what shows until the new one is ready.
     expect(frame.isConnected).toBe(true);
     expect(frame.srcdoc).toBe(page);
-    const next = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    const next = incomingFrames(row)[0];
     expect(next.srcdoc).toContain(`{"cpu":80}`);
     // The same data again (its command ran and printed the same): nothing more to draw.
     keepFrames(row, messageElement(message([card({ data: `{"cpu":80}` })]), components));
@@ -123,7 +126,7 @@ describe("a frame that takes live data", () => {
     keepFrames(row, messageElement(message([card({ data: `{"cpu":90}` })]), components));
     keepFrames(row, messageElement(message([card({ data: `{"cpu":95}` })]), components));
     expect(next.isConnected).toBe(true);
-    expect(row.querySelectorAll(".component-frame.incoming")).toHaveLength(1);
+    expect(incomingFrames(row)).toHaveLength(1);
     expect(frame.isConnected).toBe(true);
     next.dispatchEvent(new Event("load"));
     paints.paint();
@@ -134,7 +137,7 @@ describe("a frame that takes live data", () => {
     // It took the place; only the newest of what came meanwhile is drawn now, behind it.
     expect(frame.isConnected).toBe(false);
     expect(next.classList.contains("incoming")).toBe(false);
-    const newest = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    const newest = incomingFrames(row)[0];
     expect(newest.srcdoc).toContain(`{"cpu":95}`);
     say(newest, { ccb: "ready", height: 90 });
     paints.paint();
@@ -154,7 +157,7 @@ describe("a card given a new page keeps its old picture until the new one is rea
   const v2: Record<string, ComponentInfo> = { cpu: { template: "<pre>v2</pre>", version: 2, working: false, updated: false, hasPrevious: false } };
   const still = (overrides: Partial<DisplayView> = {}) => card({ every: null, ...overrides });
   const framesOf = (row: HTMLElement) => [...row.querySelectorAll<HTMLIFrameElement>(".component-frame")];
-  const incomingOf = (row: HTMLElement) => row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+  const incomingOf = (row: HTMLElement) => incomingFrames(row)[0];
   const ready = (frame: HTMLIFrameElement, height: number) => say(frame, { ccb: "ready", height });
   afterEach(() => vi.useRealTimers());
 
