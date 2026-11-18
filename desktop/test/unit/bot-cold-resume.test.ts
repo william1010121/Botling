@@ -324,4 +324,124 @@ describe("a cold cache is never reused, on every path a new turn takes", () => {
     expect(fixture.heads[0].config.resume).toBe(true);
     expect(fixture.heads[0].config.sessionId).toBe(id);
   });
+
+  /** A cold claude head still running, and a user turn handed straight to `begin` (what `send` ends in), so no gate of `send` is in the way. */
+  async function coldRunning() {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    at(CACHE_TTL_MS / MIN + 1);
+    const turn = r.peek.newTurn("user", "a cold one", null);
+    return { r, turn };
+  }
+
+  it("while the bot shuts down, a cold running head is left alone (no new head starts)", async () => {
+    const { r, turn } = await coldRunning();
+    r.peek.shuttingDown = true;
+    r.peek.begin(turn);
+    await waitFor("the turn to reach the same head", () => fixture.heads[0].sent.length === 2);
+    expect(fixture.heads.length).toBe(1);
+    expect(fixture.heads[0].running).toBe(true);
+  });
+
+  it("while it tidies, a cold running head serves a turn that is not a tidy one (kept: tidying is set by the sleep, not by the turn's origin)", async () => {
+    const { r, turn } = await coldRunning();
+    r.peek.headRun.tidyStart();
+    r.peek.begin(turn);
+    await waitFor("the turn to reach the same head", () => fixture.heads[0].sent.length === 2);
+    expect(fixture.heads.length).toBe(1);
+    expect(fixture.heads[0].running).toBe(true);
+  });
+
+  it("a turn whose head is the cold head ends it without failing: the new session's head is the turn's head, and it was sent", async () => {
+    const { r, turn } = await coldRunning();
+    const cold = fixture.heads[0];
+    // The cold head is the turn's head and is handed in as `given`; its exit is slow (the turn must not read it as its own failure).
+    turn.head = cold;
+    let exitDone!: () => void;
+    cold.exited = new Promise<void>((resolve) => { exitDone = resolve; });
+    const finish = cold.finish.bind(cold);
+    cold.finish = () => { finish(); setTimeout(exitDone, 20); };
+    r.peek.begin(turn, cold);
+    await waitFor("the turn to reach a new head", () => fixture.heads[1]?.sent.length === 1);
+    expect(turn.open).toBe(true);
+    expect(turn.head).toBe(fixture.heads[1]);
+    expect(turn.sent).toBe(true);
+    expect(cold.sent.length).toBe(1);
+    expect(fixture.heads[1].config.resume).toBe(false);
+  });
+
+  it("the clock reaches head.json at most once a minute, and again after it (or when the clock goes back)", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    const save = vi.spyOn(r.peek.store, "saveHead");
+    r.peek.headRun.modelCalled();
+    at(0.1); r.peek.headRun.modelCalled();
+    at(0.9); r.peek.headRun.modelCalled();
+    expect(save).toHaveBeenCalledTimes(1);
+    at(1); r.peek.headRun.modelCalled();
+    expect(save).toHaveBeenCalledTimes(2);
+    at(1.5); r.peek.headRun.modelCalled();
+    expect(save).toHaveBeenCalledTimes(2);
+    at(0.5); r.peek.headRun.modelCalled();
+    expect(save).toHaveBeenCalledTimes(3);
+    expect(r.peek.store.loadHead()?.lastModelAt).toBe(T0 + 0.5 * MIN);
+  });
+
+  it("a session resumed after a lost network keeps its model clock", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    r.peek.headRun.sessionResumed("11111111-1111-4111-8111-111111111111");
+    expect(r.peek.session).toMatchObject({ sessionId: "11111111-1111-4111-8111-111111111111", started: true });
+    expect(r.peek.headRun.lastModelAt).toBe(T0);
+  });
+
+  it("a new session starts with no model clock, in memory and in head.json", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    expect(r.peek.store.loadHead()?.lastModelAt).toBe(T0);
+    r.peek.newSession();
+    expect(r.peek.headRun.lastModelAt).toBeNull();
+    r.peek.store.saveHead(r.peek.session);
+    expect(r.peek.store.loadHead()).not.toHaveProperty("lastModelAt");
+  });
+
+  describe("cacheCold", () => {
+    async function old() {
+      clock();
+      const r = rig();
+      await answered(r);
+      r.peek.headRun.modelCalled();
+      at(WARM_WINDOW_MS / MIN + 1);
+      return r;
+    }
+    it("past the warm window of a started, briefed claude session: cold (and warm just inside it)", async () => {
+      const r = await old();
+      expect(r.peek.headRun.cacheCold()).toBe(true);
+      at(WARM_WINDOW_MS / MIN - 1);
+      expect(r.peek.headRun.cacheCold()).toBe(false);
+    });
+    it("while the next head is a new session's first (briefing due): not cold, it is new anyway", async () => {
+      const r = await old();
+      r.peek.briefing = true;
+      expect(r.peek.headRun.cacheCold()).toBe(false);
+    });
+    it("a session claude has not written yet: not cold, there is nothing to resume", async () => {
+      const r = await old();
+      r.peek.session.started = false;
+      expect(r.peek.headRun.cacheCold()).toBe(false);
+    });
+    it("handed over: warm until the real TTL, cold after it", async () => {
+      const r = await old();
+      expect(r.peek.headRun.cacheCold(true)).toBe(false);
+      at(CACHE_TTL_MS / MIN + 1);
+      expect(r.peek.headRun.cacheCold(true)).toBe(true);
+    });
+  });
 });

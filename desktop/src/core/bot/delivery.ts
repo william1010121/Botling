@@ -112,11 +112,13 @@ export class BotDelivery {
       const cold = this.head;
       if (cold?.running && this.host.headRun.cacheCold()) {
         this.log(`its prompt cache is cold and its process still runs: ending it, so this message starts a new session`);
-        if (turn.head === cold) { turn.head = null; turn.sent = false; }
+        // Given as the turn's head (or already its head): its exit below must not fail the turn.
+        if (turn.head === cold) turn.head = null;
         cold.finish();
         const exited = await Promise.race([cold.exited.then(() => true), sleep(5_000).then(() => false)]);
         if (!exited) await cold.terminate(1_000);
         if (this.turn !== turn || !turn.open) return;
+        // `given` was that head: gone now, so the new session's head (ensureHead) serves the turn.
         given = undefined;
       }
     }

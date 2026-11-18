@@ -318,8 +318,8 @@ export class BotHead {
     }
     this.host.delivery.forgetQueuedNote();
     this.freshSessionPending = false;
+    // A new object: the old session's model clock (`lastModelAt`) stays behind with it.
     this.session = { sessionId: randomUUID(), started: false };
-    this.lastModelAt = null;
     this.briefing = true;
     this.host.recordsBook.forgetReactions();
     this.host.cards.forgetBriefed();
