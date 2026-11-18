@@ -253,10 +253,18 @@ export function agoWords(ms: number): string {
   return t("tasks.agoDays", { n: Math.round(hours / 24) });
 }
 
+/** How far off a routine's next run is, rounded the way the Routines panel says it: "in a moment", "in 6 min", "in 21 h", "in 3 d". */
+export function awayWords(ms: number): string {
+  if (ms < 45_000) return t("tasks.awayMoment");
+  if (ms < 3_600_000) return t("tasks.inMinutes", { m: Math.round(ms / 60_000) });
+  if (ms < 2 * 86_400_000) return t("tasks.inHours", { h: Math.round(ms / 3_600_000) });
+  return t("tasks.inDaysShort", { n: Math.round(ms / 86_400_000) });
+}
+
 /** A routine's line time: when it runs next, then how far off ("Tomorrow 09:00 · in 21 h"); its cadence is the name's neighbour. */
 function routineWords(item: { fires: number | null; schedule: string | null; recurring: boolean }, now: number): string {
   const next = item.fires != null && item.fires > now ? item.fires : item.recurring ? nextCronFire(item.schedule ?? "", now) : item.fires;
-  return next != null ? (next <= now ? t("tasks.dueNow") : `${dayWords(next, now)} · ${until(next - now)}`) : t("status.waiting");
+  return next != null ? (next <= now ? t("tasks.dueNow") : `${dayWords(next, now)} · ${awayWords(next - now)}`) : t("status.waiting");
 }
 
 type Running = { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean; routine?: boolean };

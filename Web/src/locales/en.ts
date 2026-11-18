@@ -57,6 +57,8 @@ export const en = {
   "tasks.inMinutes": "in {m} min",
   "tasks.inHoursMinutes": "in {h} h {m} min",
   "tasks.inHours": "in {h} h",
+  "tasks.inDaysShort": "in {n} d",
+  "tasks.awayMoment": "in a moment",
   "tasks.inDays": ["in {n} day", "in {n} days"],
   "tasks.weekdays": "Sun,Mon,Tue,Wed,Thu,Fri,Sat",
   "tasks.listSeparator": ", ",

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setLanguage } from "../../../Web/src/i18n";
 import { messageElement } from "../../../Web/src/messages";
 import { cadence, clock, cronWords, distance, lastLine } from "../../../Web/src/routine-words";
-import { agoWords, dayWords, describeCron, resetTaskChips, setTaskClock, tickTaskChips } from "../../../Web/src/tasks";
+import { agoWords, awayWords, dayWords, describeCron, resetTaskChips, setTaskClock, tickTaskChips } from "../../../Web/src/tasks";
 import type { MessageView, TaskChipView } from "../../../Web/src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -32,6 +32,8 @@ describe("time words", () => {
     const now = at(8, 12);
     for (const when of [at(8, 18), at(9, 9), at(12, 10, 30), at(10, 7)]) expect(dayWords(when, now)).toBe(clock(when, now).replace(/^Nov (\d+), /, "11/$1 "));
     expect(distance(now + 21 * 3_600_000, now)).toBe("in 21 h");
+    // How far off a routine's next run is: the chip rounds as the panel does ("in 21 h", never "in 20 h 30 min"; "in 2 d", not "in 2 days")
+    for (const gap of [30_000, 6 * 60_000, 20.5 * 3_600_000, 47 * 3_600_000, 52 * 3_600_000, 5 * 86_400_000]) expect(awayWords(gap), String(gap)).toBe(distance(now + gap, now));
     expect(agoWords(4 * 60_000)).toBe("4 min ago");
     expect(agoWords(30 * 3_600_000)).toBe("30 h ago");
   });

@@ -56,6 +56,8 @@ export const zhHant: Dictionary = {
   "tasks.inMinutes": "{m} 分後",
   "tasks.inHoursMinutes": "{h} 小時 {m} 分後",
   "tasks.inHours": "{h} 小時後",
+  "tasks.inDaysShort": "{n} 天後",
+  "tasks.awayMoment": "即將",
   "tasks.inDays": "{n} 天後",
   "tasks.weekdays": "日,一,二,三,四,五,六",
   "tasks.listSeparator": "、",
