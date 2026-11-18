@@ -9,6 +9,7 @@ import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } fr
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
+import { validateCardShow } from "../card-validate";
 import { headWritesCards, inlineBlocksFor } from "../inline-blocks";
 import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
@@ -230,10 +231,10 @@ export class BotCards {
     });
   }
 
-  /** What a card's report is checked against: the folder its scripts may live in, and the components that fill themselves from a Command:. */
+  /** What a card's report is checked against: the folder its scripts may live in, the components that fill themselves from a Command:, and each component's JSON (`validateCardShow`). */
   cardRules(): CardRules {
     const library = this.context?.library;
-    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name) };
+    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name), validate: validateCardShow };
   }
 
   /** A component of a card as a `Display` (its command checked again: a chat.json that was edited gets no command it should not). */

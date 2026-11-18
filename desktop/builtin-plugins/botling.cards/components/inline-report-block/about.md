@@ -23,7 +23,7 @@ Supported `type`s, with one example each (the whole JSON goes inside `<show>`):
   `{"type":"proscons","title":"快，但要多一個服務","pros":["啟動快","好測試"],"cons":["多一個程序"],"verdict":"值得。"}`
 - `checklist` (`items`: `{label, status, note?}`; shows "n / m 完成" and a status bar):
   `{"type":"checklist","title":"4 項已過 2 項","items":[{"label":"安裝","status":"done"},{"label":"同步 bot 清單","status":"blocked","note":"等 API"}]}`
-- `progress` (1–8 bars; `{label, value, max?, unit?, status?}`; without `max` the value is a percent):
+- `progress` (1–8 bars; `{label, value, max?, unit?, status?}`; without `max` the value is a percent, so at most 100; with `max`, `value` must be ≤ `max`: a bar shows a part of a whole, never a value above its total, so a number above its total is another kind of figure, not a progress bar):
   `{"type":"progress","items":[{"label":"Rust 後端指令","value":34,"max":52,"status":"active"},{"label":"卡片搬移","value":23,"max":23,"status":"done","unit":"張"}]}`
 - `timeline`: an event log (items without `end`): `{"type":"timeline","title":"21:10 改版後出現","items":[{"start":"21:10","label":"上線","status":"done"},{"start":"21:40","label":"使用者回報","status":"blocked","text":"只看到 Main"}]}`; or a gantt (items with `end`, `YYYY-MM-DD`; optional `lane`, and `today` on the block): `{"type":"timeline","today":"2026-11-20","items":[{"label":"設計","start":"2026-11-10","end":"2026-11-18","status":"done","lane":"A"},{"label":"上線","start":"2026-12-01","status":"pending","lane":"A"}]}`
 - `roadmap` (2–4 columns; items `{label, status?, note?}`):

@@ -127,10 +127,14 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     r.desk.requestComponentChange("secret", "show me", "Main bot", r.bot, [], "TASK1");
     expect(r.told[1]![1]).toContain('"secret" is not available for a card');
     expect(r.told[1]![1]).not.toContain("echo hi");
+    // Not available: another component that fits exactly, or a description for Maintainer; never a picture of its own.
+    expect(r.told[1]![1]).not.toContain("matplotlib");
+    expect(r.told[1]![1]).toContain("<component>the chart you want, described");
+    expect(r.told[1]![1]).toContain("Do not draw it yourself.");
     expect(r.logs.some((line) => line.includes("no Maintainer"))).toBe(false);
   });
 
-  it("a new component: the ask carries the worker's task id, whether the bot has a full list or none at all; Maintainer is told so, and what it declines reaches the worker", () => {
+  it("a component name the worker picked itself is no name for Maintainer: the ask is the chart's description (a hint only), the task id still rides on it, whether the bot has a full list or none at all; what Maintainer declines reaches the worker without a picture to draw", () => {
     // A list at the limit, and a bot with no list at all: neither stops the ask or turns it into 'ask the user which to remove'.
     for (const [list, own] of [[Array.from({ length: 20 }, (_, i) => `c${i}`), Array.from({ length: 20 }, (_, i) => `c${i}`)], [null, []]] as const) {
       const r = cardRig(list as string[] | null, own as string[]);
@@ -139,15 +143,23 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK2");
       expect(handedTo).toHaveLength(1);
       const handed = handedTo[0]!;
-      expect(handed).toContain('wants a new component "weather"');
-      expect(handed).toContain("A card worker of Main bot asks for this");
+      expect(handed).not.toContain('wants a new component "weather"');
+      expect(handed).toContain("describes without naming a component: the weather");
+      expect(handed).toContain('The worker called it "weather": a hint only, not the name to give it.');
+      expect(handed).toContain("named no component and chose nothing");
       expect(handed).not.toContain("Add or build nothing");
       const key = /component-declined id="([0-9a-f]{8})"/.exec(handed)![1]!;
       r.desk.decline(key, "No data source.");
       expect(r.told).toHaveLength(1);
       expect(r.told[0]![0]).toBe("TASK2");
-      expect(r.told[0]![1]).toContain('did not add the component "weather"');
+      // The worker never named it for Maintainer: it is "the chart you described", never the placeholder or its own word; no picture of its own to draw, and no forcing.
+      expect(r.told[0]![1]).toContain("did not add a component for the chart you described.");
+      expect(r.told[0]![1]).not.toContain("chart-request-");
       expect(r.told[0]![1]).toContain("No data source.");
+      expect(r.told[0]![1]).toContain("say plainly in one or two sentences that no fitting component exists");
+      expect(r.told[0]![1]).toContain("Do not draw it yourself, do not force a component to fit, and do not ask again.");
+      expect(r.told[0]![1]).not.toContain("matplotlib");
+      expect(r.sent).toContain("notice: Maintainer did not add a component for a card: No data source.");
       expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
     }
   });
@@ -262,18 +274,26 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(r.told).toEqual([]);
   });
 
-  it("a new component that lands in the library goes to its worker (its usage), on no list, even when the bot's list is full; a second ask of the same worker for it is one ask", () => {
+  it("a library that gains the name the worker picked does not answer it; Maintainer's <give-component id> does (its usage goes to the worker, on no list, even when the bot's list is full); a second description of the same card is one ask", () => {
     const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
     const r = cardRig(full, full);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
     r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, [], "TASK3");
     r.desk.requestComponentChange("weather", "the weather again", "Main bot", r.bot, [], "TASK3");
     r.make("weather", "A weather card.\nData: JSON {\"temp\": 1}\n");
     r.library.rescan();
     r.desk.deliverAsked();
     r.desk.deliverAsked();
+    // A component that happens to carry the worker's own word is not "what it asked for": Maintainer decides, and says so.
+    expect(r.told).toEqual([]);
+    const key = /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo[1]!)![1]!;
+    r.desk.changeList(true, "weather", "Main bot", key);
+    r.desk.changeList(true, "weather", "Main bot", key);
     expect(r.told).toHaveLength(1);
     expect(r.told[0]![0]).toBe("TASK3");
-    expect(r.told[0]![1]).toContain('The component "weather" is ready');
+    expect(r.told[0]![1]).toContain('The component "weather" is ready.');
+    expect(r.told[0]![1]).not.toContain("in place of");
     expect(r.told[0]![1]).toContain("A weather card.");
     expect(r.list()).toEqual(full);
     expect(r.sent).toEqual(["notice: Maintainer added weather for a card of Main bot."]);

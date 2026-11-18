@@ -206,6 +206,19 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
     for (const word of ["numbers against a baseline", "a comparison or options", "a chart", "progress by group", "a timeline", "ONE <card>", "several side by side"]) expect(CARD_WHEN_RULE).toContain(word);
     expect(CARD_WHEN_RULE).toMatch(/never a markdown table, a long list or a report page/);
   });
+  it("the head only wishes for a figure: the <card> rule asks for the kind of figure, its shape, one unit and target per figure and the numbers; it names no component; and it no longer says the result reaches the head", () => {
+    expect(CARD_TAG_RULE).not.toContain("Its result also reaches you");
+    expect(CARD_TAG_RULE).toContain("Its result does not come back to you: don't wait for it or repeat it.");
+    expect(CARD_TAG_RULE).toContain("the figure you wish for, and where its data is");
+    expect(CARD_TAG_RULE).toContain("the kind of figure you want if you have one in mind (a Gantt chart, a heatmap, bars against a target, any chart)");
+    expect(CARD_TAG_RULE).toContain("what is compared with what, what each row or point shows");
+    expect(CARD_TAG_RULE).toContain("one unit and its target per figure (numbers in different units are separate figures)");
+    expect(CARD_TAG_RULE).toContain("and the numbers themselves when you have them");
+    expect(CARD_TAG_RULE).toContain("Name no component or field of one, and give no colours or styling.");
+    expect(CARD_WHEN_RULE).toContain("wishing for the figure as the <card> rule says");
+    // No component, block type or chart kind of the library is named to the head: it wishes, the card worker maps the wish.
+    for (const text of [CARD_TAG_RULE, CARD_WHEN_RULE]) expect(text).not.toMatch(/inline-chart|inline-report-block|waterfall|dumbbell|kpi|<show name/);
+  });
   it("is much shorter than the guidance it replaced (head prompt tokens down by about 700)", () => {
     const after = head("claude", true);
     expect(after.replace(CARD_WHEN_RULE, () => INLINE_BLOCK_GUIDANCE).length - after.length).toBeGreaterThan(1_500);
@@ -233,6 +246,10 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
     expect(text).toContain(CARD_CHART_RULE);
     expect(text).toContain(INLINE_EXAMPLES);
     expect(text.split(INLINE_EXAMPLES).length).toBe(2);
+    // The card worker has no exit that draws the figure itself; the head's own guidance (a head that cannot write <card>) keeps the matplotlib exit as it was.
+    expect(CARD_CHART_RULE).not.toContain("otherwise draw it with Python matplotlib");
+    expect(CARD_CHART_RULE).toContain("do not draw the figure yourself");
+    expect(INLINE_BLOCK_GUIDANCE).toContain("otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path)");
     // The guidance and the worker's examples are one text: a change is made once.
     expect(INLINE_BLOCK_GUIDANCE.endsWith(INLINE_EXAMPLES)).toBe(true);
   });
