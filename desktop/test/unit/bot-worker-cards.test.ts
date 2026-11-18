@@ -316,6 +316,22 @@ describe("a card follows its worker", () => {
     expect(record.workerCards![0]!.text).toBeUndefined();
   });
 
+  it("restoring the bot (restoreAtStart) starts a card that has no worker, exactly once", async () => {
+    const r = rig();
+    const record = await answer(r, '<card title="t">go</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    // The stored state at the next start: the card was never given a worker.
+    record.workerCards![0]!.status = "starting";
+    delete record.workerCards![0]!.taskId;
+    r.handoff.mockClear();
+    r.peek.workers.restoreAtStart();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitFor("the card to start", () => record.workerCards![0]!.taskId);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(r.handoff).toHaveBeenCalledTimes(1);
+    expect(record.workerCards![0]).toMatchObject({ status: "running", taskId: "T1" });
+  });
+
   it("a card whose worker never started when the app went away starts at the next start instead of vanishing", async () => {
     const r = rig();
     const record = await answer(r, '<card title="t">go</card>');

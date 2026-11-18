@@ -66,4 +66,18 @@ describe("the Claude worker limit", () => {
     h.result(h.heads[5]!, "A done.");
     expect(h.heads).toHaveLength(8);
   });
+
+  it("a card's worker started when the bot's own workers already fill every slot spawns its process at once, with no waiting line", async () => {
+    const h = open(2);
+    await h.workers.tool("app_handoff", { instructions: "A", name: "A" });
+    await h.workers.tool("app_handoff", { instructions: "B", name: "B" });
+    expect(h.heads).toHaveLength(2);
+    const card: any = await h.workers.tool("app_handoff", { instructions: "card", name: "card", [CARD_WORKER]: true });
+    expect(h.heads).toHaveLength(3);
+    expect(h.items.some((item) => item.kind === "subagentText" && item.parent === card.task_id && /Waiting for a free worker slot/.test(String(item.text)))).toBe(false);
+    // The control: a third worker of the bot's own, started the same way, does wait.
+    const own: any = await h.workers.tool("app_handoff", { instructions: "C", name: "C" });
+    expect(h.heads).toHaveLength(3);
+    expect(h.items).toContainEqual(expect.objectContaining({ kind: "subagentText", parent: own.task_id, text: expect.stringMatching(/Waiting for a free worker slot/) }));
+  });
 });
