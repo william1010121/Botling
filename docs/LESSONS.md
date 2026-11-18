@@ -59,13 +59,12 @@ Three kinds of mistakes, one category per evidence line:
   also compare dev:ino, or fold the `/System/Volumes/Data` prefix as `realPath()` in `import/run.ts` does, before a path
   becomes a key or a hash.
 - Tags: fs, import, test
-- Status: open · days 2 of 3 (2026-11-15, 2026-11-17)
+- Status: open · days 1 of 3 (2026-11-15)
 - Evidence:
   - 2026-11-15 | rework | `M6-05-review.md` #1 #2 (a target spelled in another case lands inside the 2.x folder; the same bug flagged in M6-01d's `run.ts`) | fix `0a836552`
   - 2026-11-15 | rework | `M6-01d-review.md` first round #1, then re-review #1 #2 (after fix rounds `c9212f98` and `865bec8d`, a folder was still compared as a string with the real path, and a firmlink spelling got a second `sourceHash`) | fix `6c507df0`, merge `76cb33b5`
   - 2026-11-15 | thin-check | `M5-07b-review.md` R2 (`.PARTIAL/` on a case-insensitive disk: success reported, files lost) | fix `3ed7e622`
   - 2026-11-15 | rework | `M5-07a-review.md` re-review T1 (a test compared the asked path with the stored real path; passed only with a temp folder that has no symlink) | fix `6867ce4a`
-  - 2026-11-17 | thin-check | (no review file; commit message) `realFolder` cut the first letter of the part of a path that does not exist yet under `/`; found only by a later probe | fix `f04de7ff`
 
 ## L-002 · Symlink-safe file access: stage beside, `O_NOFOLLOW`, dev:ino, one rename
 - Rule: a write into a folder someone else can change stages next to the target (same parent), opens with
@@ -237,7 +236,10 @@ Three kinds of mistakes, one category per evidence line:
   result and the diff; the mutation batch (L-010) is not repeated unless the coordinator asks for one more run.
 - Why: fixes brought new findings or were only half done, so cards needed a second or third review.
 - Tags: test
-- Status: proposed → CS-05 (days 4: 2026-11-15, 2026-11-16, 2026-11-17, 2026-11-18)
+- Status: open · days 4 (2026-11-15, 2026-11-16, 2026-11-17, 2026-11-18); CS-05 proposal dropped at the second review
+  (2026-11-18): 8 of the 9 reworked fixes already carried tests, so "a probe per fix" would not have prevented them.
+  The repeated mistake is a fix that is wrong or half done although tested; it needs a narrower rule before it is
+  proposed again.
 - Evidence:
   - 2026-11-15 | rework | `M5-04a-review.md` re-review N1 (introduced by the F3 fix in `358dbdc6`) | fix in merge `e2f4ba62`
   - 2026-11-15 | rework | `M5-14b-review.md` re-review R1 (the F2 fix `291f0d84` passed its test only because the tier sent equalled the rows' tier) | fix `b8f48dda`
@@ -397,3 +399,6 @@ Three kinds of mistakes, one category per evidence line:
   review found crash-cut workers stayed "running" (2026-11-18, fix `97bdfe17`, from `1a7135ac`). A second case makes it a lesson.
 - A fix for a failing assertion that deletes it instead of finding the cause (`f984deeb`, 2026-11-17; the assertion
   guarded L-019). Recorded under L-019; a second deleted assertion makes it a lesson of its own.
+- Rebuilding a path from its nearest existing ancestor cut a character: `realFolder` dropped the first letter of a
+  missing part under `/` (2026-11-17, fix `f04de7ff`; moved off L-001 at the second review, since resolving with
+  `realpathSync.native` would not have prevented it). A second off-by-one in path joining makes it a lesson.
