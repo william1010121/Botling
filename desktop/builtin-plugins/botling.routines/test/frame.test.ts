@@ -5,7 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop } from "../../../test/helpers";
-import { operationsFor, whenLine } from "../src/routines-text";
+import { cadence, distance, groupOf, nextRun, operationsFor, standing, zoneName } from "../src/routines-text";
 import { frameSource } from "../src/source";
 
 it("a routine's buttons follow its state: Pause while it will run, Resume while paused, Cancel until it is over", () => {
@@ -16,12 +16,34 @@ it("a routine's buttons follow its state: Pause while it will run, Resume while 
   for (const over of ["fired", "cancelled", "delivery_uncertain"]) expect(operationsFor(over)).toEqual([]);
 });
 
-it("says when a routine runs: its schedule, a zone other than the system's, its state with the underscore spelled out, the next time", () => {
-  const base = { id: "R", kind: "recurring" as const, task: "t", title: "t", schedule: "Weekdays 09:00", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", status: "pending", next: null };
-  expect(whenLine(base)).toBe("Weekdays 09:00 · Asia/Taipei · pending");
-  expect(whenLine({ ...base, timezone: "system_local", status: "delivery_uncertain" })).toBe("Weekdays 09:00 · delivery uncertain");
-  const at = "2026-11-03T01:00:00.000Z";
-  expect(whenLine({ ...base, kind: "once", schedule: at, next: at })).toBe(`${new Date(at).toLocaleString()} · Asia/Taipei · pending · next ${new Date(at).toLocaleString()}`);
+it("says when a routine runs: the app's phrase or a cron line in words, a zone other than the system's, how far the next run is", () => {
+  const base = { id: "R", kind: "recurring" as const, task: "t", title: "t", schedule: "Every weekday 09:00", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", status: "pending", next: null };
+  expect(cadence(base)).toBe("Every weekday 09:00");
+  expect(zoneName(base)).toBe("Taipei");
+  expect(zoneName({ ...base, timezone: "system_local" })).toBeNull();
+  expect(cadence({ ...base, schedule: "*/10 * * * *" })).toBe("Every 10 min");
+  expect(cadence({ ...base, schedule: "0 9 * * 1-5" })).toBe("Every weekday 09:00");
+  expect(cadence({ ...base, schedule: "5 4 1 * *" })).toBe("Monthly on day 1, 04:05");
+  expect(cadence({ ...base, schedule: "1 2 3 4 5" })).toBe("1 2 3 4 5");
+  expect(cadence({ ...base, kind: "once" })).toBe("One time");
+  const now = Date.parse("2026-11-03T01:00:00.000Z");
+  expect(distance(now + 6 * 60_000, now)).toBe("in 6 min");
+  expect(distance(now - 4 * 60_000, now)).toBe("4 min ago");
+  expect(distance(now + 21 * 3_600_000, now)).toBe("in 21 h");
+  expect(nextRun(base, now)).toBeNull();
+  expect(nextRun({ ...base, next: new Date(now + 3_600_000).toISOString() }, now)?.away).toBe("in 1 h");
+});
+
+it("groups a routine by where it stands, and names its standing", () => {
+  const base = { id: "R", kind: "recurring" as const, task: "t", title: "t", schedule: "Every day 09:00", cron: null, timezone: "system_local", status: "pending", next: null };
+  expect(groupOf(base)).toBe("active");
+  expect(groupOf({ ...base, status: "paused" })).toBe("paused");
+  expect(groupOf({ ...base, status: "fired" })).toBe("done");
+  expect(groupOf({ ...base, status: "cancelled" })).toBe("done");
+  expect(groupOf({ ...base, status: "delivery_uncertain" })).toBe("attention");
+  expect(groupOf({ ...base, watch: { command: "c", state: "failing", lastRun: null, exit: 1, timedOut: false } })).toBe("attention");
+  expect(standing({ ...base, status: "delivery_uncertain" }).word).toBe("Not confirmed");
+  expect(standing(base)).toEqual({ word: "Scheduled", tone: "ok" });
 });
 
 it("reads and changes through the program part, for the bot of the frame", async () => {
@@ -60,9 +82,10 @@ it("the shipped ui.js registers the view and draws the list, pausing and a refus
   await vi.waitFor(() => expect(root.querySelectorAll("li")).toHaveLength(3));
   expect(calls[0]).toEqual(["list", { botId: "B1" }]);
   const rows = [...root.querySelectorAll("li")];
-  expect(rows.map((row) => row.getAttribute("data-status"))).toEqual(["pending", "paused", "fired"]);
+  expect(rows.map((row) => row.getAttribute("data-status"))).toEqual(["pending", "paused", "fired"]); // running, paused, finished
   expect(rows.map((row) => [...row.querySelectorAll("button")].map((button) => button.textContent))).toEqual([["Pause", "Cancel"], ["Resume", "Cancel"], []]);
-  expect(rows[0]!.querySelector(".routine-when")!.textContent).toBe("Every day 08:15 · pending");
+  expect(rows[0]!.querySelector(".routine-cadence")!.textContent).toBe("Every day 08:15");
+  expect(rows[0]!.querySelector(".routine-state")!.textContent).toBe("Scheduled");
   expect(document.head.querySelector("style")?.textContent).toContain("--ground");
   expect(document.head.querySelector("style")?.textContent).toContain(".routine-buttons");
 
@@ -70,7 +93,11 @@ it("the shipped ui.js registers the view and draws the list, pausing and a refus
   await vi.waitFor(() => expect(root.querySelector("li")!.getAttribute("data-status")).toBe("paused"));
   expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
 
+  // Cancel asks once more; "Yes, cancel" sends it
   (root.querySelectorAll("li")[1]!.querySelectorAll("button")[1] as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(root.querySelector(".routine-confirm")).not.toBeNull());
+  expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
+  (root.querySelector(".routine-confirm .danger") as HTMLButtonElement).click();
   await vi.waitFor(() => expect(root.querySelector(".routines-problem")?.textContent).toBe("Not now"));
   expect(root.querySelectorAll("li")).toHaveLength(3);
 
@@ -91,11 +118,13 @@ it("an empty list says so, and the core's own problem is shown above it", async 
 });
 
 it("a watch shows its command and how its last run went", async () => {
-  const { watchLine } = await import("../src/routines-text");
+  const { watchResult } = await import("../src/routines-text");
   const base = { id: "W", kind: "legacy" as const, task: "Disk: !./check.sh", title: "Disk", schedule: "*/10 * * * *", cron: "*/10 * * * *", timezone: "system_local", status: "enabled", next: null };
-  expect(watchLine(base)).toBeNull();
-  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "never", lastRun: null, exit: null, timedOut: false } })).toBe("Watch: ./check.sh · not run yet");
+  const now = Date.parse("2026-11-11T02:30:00.000Z");
   const ran = "2026-11-11T02:20:00.000Z";
-  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: 3, timedOut: false } })).toBe(`Watch: ./check.sh · failing (exit 3) · last run ${new Date(ran).toLocaleString()}`);
-  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: null, timedOut: true } })).toContain("failing (timed out)");
+  expect(watchResult(base, now)).toBeNull();
+  expect(watchResult({ ...base, watch: { command: "./check.sh", state: "never", lastRun: null, exit: null, timedOut: false } }, now)).toEqual({ word: "Not run yet", detail: "", tone: "off" });
+  expect(watchResult({ ...base, watch: { command: "./check.sh", state: "ok", lastRun: ran, exit: 0, timedOut: false } }, now)).toEqual({ word: "Last run OK", detail: "10 min ago", tone: "ok" });
+  expect(watchResult({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: 3, timedOut: false } }, now)).toEqual({ word: "Last run failed", detail: "exit 3 · 10 min ago", tone: "bad" });
+  expect(watchResult({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: null, timedOut: true } }, now)?.detail).toContain("timed out");
 });
