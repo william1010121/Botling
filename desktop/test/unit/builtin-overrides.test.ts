@@ -210,6 +210,16 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
     expect(existsSync(dir)).toBe(true);
   });
 
+  it("a stamp that points outside the overrides folder is ignored even when the folder it names hashes as the stamp says", () => {
+    const { registry, push, shipped, stamp } = setup();
+    push();
+    const body = JSON.parse(readFileSync(stamp(), "utf8")) as Record<string, unknown>;
+    // the build's own folder is a plain plugin folder of this user: only the stamp's folder rule keeps it from being "the pushed copy"
+    const own = join(shipped, "botling.catchup");
+    writeFileSync(stamp(), JSON.stringify({ ...body, dir: "../builtin/botling.catchup", folderHash: folderHash(own) }));
+    expect(registry().plugin("botling.catchup")!.pushed).toBeUndefined();
+  });
+
   it("a stamp that is too big, or of another version, or with a wrong field, is ignored", () => {
     const { registry, push, shipped, stamp } = setup();
     push();
