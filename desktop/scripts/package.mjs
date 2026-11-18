@@ -10,7 +10,7 @@
 // When the development work drive is mounted (BOTLING_DEV_WORK_DIR, else /Volumes/My-SSD/botling-work;
 // core/app-swap.ts's devWorkRoot) they go to its cache/ instead; unmounted, beside the checkout as before.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -21,7 +21,19 @@ export function resolveBuilderConfigPath(args = [], root = desktop) {
   return join(root, filename);
 }
 
+/** A Botling 3 release build (BOTLING_RELEASE_BUILD=1, which the release workflow sets) must be told its version:
+ * without BOTLING_V3_VERSION the v3 config stamps 3.0.0-beta.1, and one that differs from package.json would publish
+ * a feed that no tag names. Throws; does nothing for 2.x or for a developer's local build. */
+export function assertV3ReleaseVersion(args, env, packageVersion) {
+  if (!args.includes("--v3") || env.BOTLING_RELEASE_BUILD !== "1") return;
+  if (!/^3\.\d+\.\d+$/.test(packageVersion)) throw new Error(`A Botling 3 release needs a stable 3.x.y package version, got ${packageVersion}`);
+  if (env.BOTLING_V3_VERSION !== packageVersion) {
+    throw new Error(`A Botling 3 release build needs BOTLING_V3_VERSION=${packageVersion} (the package.json version); got ${env.BOTLING_V3_VERSION ?? "nothing"}, which would stamp the app with the config's default`);
+  }
+}
+
 export async function runPackage(args = process.argv.slice(2)) {
+  assertV3ReleaseVersion(args, process.env, JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).version);
   const workDrive = (() => {
     const dir = process.env.BOTLING_DEV_WORK_DIR?.trim() || "/Volumes/My-SSD/botling-work";
     const volume = /^\/Volumes\/[^/]+/.exec(dir)?.[0];

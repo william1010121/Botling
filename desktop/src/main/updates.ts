@@ -84,16 +84,17 @@ export interface UpdaterOptions {
   now?: () => number;
 }
 
-/** The release page for a version (always one of this repository's own). */
-export const releaseUrl = (version: string) => `${RELEASE_PAGE}tag/v${version}`;
+/** The release page for a version (always one of this repository's own). A Botling 3 release's tag ends in its update
+ * channel (`v3.2.2-v3`: electron-updater only takes a tag whose pre-release part is the channel), its version does not. */
+export const releaseUrl = (version: string, channel?: string) => `${RELEASE_PAGE}tag/v${version}${channel && UPDATE_CHANNELS.has(channel) ? `-${channel}` : ""}`;
 
 /** A release as the Settings page and the update notice show it. */
-export function releaseView(info: UpdateInfoLike): ReleaseView {
+export function releaseView(info: UpdateInfoLike, channel?: string): ReleaseView {
   const asset = info.files?.[0]?.url ?? info.path ?? null;
   return {
     version: info.version.slice(0, 100),
     name: (info.releaseName?.trim() || `Botling ${info.version}`).slice(0, 400),
-    url: releaseUrl(info.version),
+    url: releaseUrl(info.version, channel),
     publishedAt: info.releaseDate ? String(info.releaseDate).slice(0, 100) : null,
     asset: asset ? asset.slice(0, 400) : null,
   };
@@ -148,7 +149,7 @@ export class Updater {
         const result = await this.options.updater.checkForUpdates();
         const available = !!result && result.isUpdateAvailable !== false;
         const info = result?.updateInfo;
-        const newer = available && info && this.stillNewer({ version: info.version }) ? releaseView(info) : null;
+        const newer = available && info && this.stillNewer({ version: info.version }) ? releaseView(info, this.options.channel) : null;
         this.error = null;
         this.options.save({ checkedAt: (this.options.now ?? Date.now)(), newer });
       } catch (failure) {

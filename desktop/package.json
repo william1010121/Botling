@@ -33,6 +33,7 @@
     "test:record": "node build.mjs && vitest run --config test/record/vitest.config.mts",
     "dist:mac": "node scripts/package.mjs --mac",
     "dist:dir": "node scripts/package.mjs --dir",
+    "dist:mac:v3": "node scripts/package.mjs --v3 --mac",
     "dist:win": "node scripts/package.mjs --win",
     "dist:linux": "node scripts/package.mjs --linux",
     "dist:agent": "node scripts/agent-release.mjs dist/agent",

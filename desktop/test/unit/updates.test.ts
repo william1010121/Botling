@@ -2,7 +2,7 @@
 // default, at most every 6 hours, Check now always), the download and the restart. electron-updater itself is
 // replaced by a stand-in; no network, no real install.
 import { describe, expect, it } from "vitest";
-import { CHECK_EVERY_MS, Updater, compareVersions, updateChannel, parseVersion, releaseView, type UpdateInfoLike, type UpdaterLike } from "../../src/main/updates";
+import { CHECK_EVERY_MS, Updater, compareVersions, updateChannel, parseVersion, releaseUrl, releaseView, type UpdateInfoLike, type UpdaterLike } from "../../src/main/updates";
 
 const page = (version: string) => `https://github.com/william1010121/Botling/releases/tag/v${version}`;
 const info = (version: string, extra: Partial<UpdateInfoLike> = {}): UpdateInfoLike => ({ version, releaseName: `Botling ${version}`, releaseDate: "2026-10-01T00:00:00Z", files: [{ url: `Botling-2-${version}-mac-arm64.zip` }], ...extra });
@@ -23,6 +23,33 @@ describe("releaseView", () => {
   it("is the release's page (always this repository's), name, date and download", () => {
     expect(releaseView(info("2.1.0"))).toEqual({ version: "2.1.0", name: "Botling 2.1.0", url: page("2.1.0"), publishedAt: "2026-10-01T00:00:00Z", asset: "Botling-2-2.1.0-mac-arm64.zip" });
     expect(releaseView(info("2.1.0", { releaseName: null, files: [], releaseDate: undefined }))).toMatchObject({ name: "Botling 2.1.0", asset: null, publishedAt: null });
+  });
+});
+
+describe("a Botling 3 release page (the tag ends in the update channel)", () => {
+  it("releaseUrl names tag v<version>-v3 for channel v3 and any other channel name changes nothing", () => {
+    expect(releaseUrl("3.2.2", "v3")).toBe(`${page("3.2.2")}-v3`);
+    expect(releaseUrl("3.2.2")).toBe(page("3.2.2"));
+    expect(releaseUrl("3.2.2", "beta")).toBe(page("3.2.2"));
+    expect(releaseUrl("3.2.2", "../x")).toBe(page("3.2.2"));
+    expect(releaseView(info("3.2.2"), "v3").url).toBe(`${page("3.2.2")}-v3`);
+    expect(releaseView(info("2.1.0")).url).toBe(page("2.1.0"));
+  });
+  it("a v3 check saves and opens the -v3 tag's page; a 2.x check keeps v<version>", async () => {
+    const run = async (channel: string | undefined, current: string, version: string) => {
+      let saved: { checkedAt: number; newer: any } | null = null;
+      const fake: UpdaterLike = {
+        autoDownload: true, autoInstallOnAppQuit: true, allowPrerelease: false, allowDowngrade: true, channel: null,
+        checkForUpdates: async () => ({ isUpdateAvailable: true, updateInfo: info(version) }),
+        downloadUpdate: async () => [], quitAndInstall: () => {}, on: (() => {}) as UpdaterLike["on"],
+      };
+      const updater = new Updater({ current, channel, updater: fake, enabled: async () => true, unavailable: () => null, load: () => saved, save: (state) => { saved = state; }, now: () => 1 });
+      await updater.check(true);
+      return updater.releasePage();
+    };
+    expect(await run("v3", "3.2.1", "3.2.2")).toBe(`${page("3.2.2")}-v3`);
+    expect(await run(undefined, "2.6.0", "2.6.1")).toBe(page("2.6.1"));
+    expect(await run("beta", "2.6.0", "2.6.1")).toBe(page("2.6.1"));
   });
 });
 

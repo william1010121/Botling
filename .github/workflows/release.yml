@@ -1,8 +1,16 @@
-name: Electron 2 release candidate
+name: Electron release candidate
 
-# Builds the assets and, in the final `publish` job, attaches them to the GitHub release for the tag and publishes it
-# as Latest. To publish an existing tag from a previous successful run without rebuilding, dispatch this workflow
-# with `tag` and `run_id` (the build jobs are skipped and that run's artifacts are used).
+# Two lines share this workflow; the `plan` job decides which from the tag (desktop/scripts/release-check.mjs):
+#  - Botling 2, tag `v2.*`: macOS, Windows and Linux; the `publish` job publishes the release as Latest.
+#  - Botling 3, tag `v3.x.y-v3`: macOS only, packaged with the v3 config (`npm run dist:mac:v3`, BOTLING_V3_VERSION
+#    from package.json). The `-v3` suffix is the update channel: Botling 3 follows channel `v3`, and electron-updater
+#    only takes a release whose tag ends in it; it reads `v3-mac.yml`. A `v3.x.y` tag without the suffix stops the run.
+#    The v3 release is a pre-release, never Latest (2.x installs read the Latest release's latest-mac.yml and would
+#    show an update error on a v3 one), and stays a DRAFT: publish it by hand after a look
+#    (`gh release edit <tag> --draft=false --prerelease --latest=false`).
+# The final `publish` job attaches the assets to the GitHub release for the tag. To publish an existing tag from a
+# previous successful run without rebuilding, dispatch this workflow with `tag` and `run_id` (the build jobs are
+# skipped and that run's artifacts are used).
 #
 # macOS is signed with a Developer ID certificate and notarized by electron-builder, from the repository secrets
 # CSC_LINK, CSC_KEY_PASSWORD, APPLE_API_KEY (the .p8 text), APPLE_API_KEY_ID and APPLE_API_ISSUER. A tag build
@@ -12,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to publish (e.g. v2.1.0). Requires run_id.'
+        description: 'Existing tag to publish (e.g. v2.1.0 or v3.2.2-v3). Requires run_id.'
         required: false
         default: ''
       run_id:
@@ -20,7 +28,7 @@ on:
         required: false
         default: ''
   push:
-    tags: ['v2.*']
+    tags: ['v2.*', 'v3.*']
 
 permissions:
   contents: read
@@ -30,7 +38,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    # Which line this run builds (see the header). Runs the scripts of the ref the workflow runs from, so a dispatch
+    # that publishes an old tag still has them.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      track: ${{ steps.plan.outputs.track }}
+      version: ${{ steps.plan.outputs.version }}
+      release_flags: ${{ steps.plan.outputs.release_flags }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: plan
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: node desktop/scripts/release-check.mjs --print-plan "$TAG" | tee -a "$GITHUB_OUTPUT"
+
   candidate:
+    needs: plan
     if: ${{ inputs.run_id == '' }}
     runs-on: macos-26
     timeout-minutes: 75
@@ -39,6 +66,7 @@ jobs:
         working-directory: desktop
     env:
       BOTLING_RELEASE_BUILD: '1'
+      TRACK: ${{ needs.plan.outputs.track }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,10 +82,18 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
+          # Botling 3: a stable 3.x.y version and a v3.x.y-v3 tag (botlingDevTrial is the 2.x trial marker; the
+          # v3 config packs false whatever package.json says).
           # A dev-trial build (botlingDevTrial true, like v2.0.1) keeps the "Botling 2 Dev Trial"
           # profile: only the tag is checked. A build with botlingDevTrial false is a stable
           # production release and gets the full gate.
-          if [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
+          if [ "$TRACK" = v3 ]; then
+            if [ "$REF_TYPE" = tag ]; then
+              node scripts/release-check.mjs --track v3 --tag "$REF_NAME"
+            else
+              node scripts/release-check.mjs --track v3
+            fi
+          elif [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
             echo "TRIAL_BUILD=1" >> "$GITHUB_ENV"
             VERSION=$(node -p 'require("./package.json").version')
             if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$VERSION" ]; then echo "Tag must match desktop/package.json"; exit 1; fi
@@ -107,27 +143,45 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           if [ "$SIGNED_BUILD" = 1 ]; then export APPLE_API_KEY="$APPLE_API_KEY_FILE"; else unset CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER; fi
-          npm run dist:mac
+          if [ "$TRACK" = v3 ]; then
+            # package.mjs refuses a v3 release build whose BOTLING_V3_VERSION is not package.json's version.
+            BOTLING_V3_VERSION=$(node -p 'require("./package.json").version') npm run dist:mac:v3
+          else
+            npm run dist:mac
+          fi
       - name: Verify the signature, notarization and Gatekeeper on the shipped ZIP
         if: ${{ env.SIGNED_BUILD == '1' }}
         run: |
           VERSION=$(node -p 'require("./package.json").version')
           rm -rf "$RUNNER_TEMP/verify" && mkdir "$RUNNER_TEMP/verify"
-          ditto -x -k "dist/Botling-2-$VERSION-mac-arm64.zip" "$RUNNER_TEMP/verify"
-          APP="$RUNNER_TEMP/verify/Botling 2.app"
+          if [ "$TRACK" = v3 ]; then
+            ditto -x -k "dist/v3/Botling-3-$VERSION-mac-arm64.zip" "$RUNNER_TEMP/verify"
+            APP="$RUNNER_TEMP/verify/Botling 3.app"
+          else
+            ditto -x -k "dist/Botling-2-$VERSION-mac-arm64.zip" "$RUNNER_TEMP/verify"
+            APP="$RUNNER_TEMP/verify/Botling 2.app"
+          fi
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dvv "$APP" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier=FR6FXUQLQH|flags=.*runtime"
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose=4 "$APP"
       - name: Check the installers and the update feed
-        run: node scripts/release-check.mjs --artifacts dist --platform mac
+        run: |
+          if [ "$TRACK" = v3 ]; then
+            node scripts/release-check.mjs --track v3 --artifacts dist/v3 --platform mac
+          else
+            node scripts/release-check.mjs --artifacts dist --platform mac
+          fi
       - name: Build the botling-agent assets from the bundle this app ships (remote workers over the relay)
+        # Botling 2 only: the install script downloads from the tag `v<version>`, which a v3 tag (`v3.x.y-v3`) is not.
         # The agent's SHA-256 is the one Botling sends with each install line and upgrade, so it must be this build's
         # out/agent/botling-agent.cjs, the file inside the app.
+        if: ${{ env.TRACK == 'v2' }}
         run: |
           node scripts/agent-release.mjs dist
           sh -n dist/botling-agent-install.sh
       - name: Record source and checksums
+        if: ${{ env.TRACK == 'v2' }}
         run: |
           VERSION=$(node -p 'require("./package.json").version')
           git rev-parse HEAD > dist/SOURCE_COMMIT.txt
@@ -136,6 +190,7 @@ jobs:
           shasum -a 256 $FILES > SHA256SUMS.txt
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
+        if: ${{ env.TRACK == 'v2' }}
         with:
           name: Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64-candidate
           if-no-files-found: error
@@ -149,9 +204,30 @@ jobs:
             desktop/dist/botling-agent-${{ env.RELEASE_VERSION }}.cjs
             desktop/dist/botling-agent-install.sh
             desktop/dist/SHA256SUMS-agent.txt
+      - name: Record source and checksums (Botling 3)
+        if: ${{ env.TRACK == 'v3' }}
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          git rev-parse HEAD > dist/v3/SOURCE_COMMIT.txt
+          cd dist/v3
+          shasum -a 256 "Botling-3-$VERSION-mac-arm64.zip" "Botling-3-$VERSION-mac-arm64.dmg" v3-mac.yml > SHA256SUMS.txt
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        if: ${{ env.TRACK == 'v3' }}
+        with:
+          name: Botling-3-${{ env.RELEASE_VERSION }}-mac-arm64-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/v3/Botling-3-${{ env.RELEASE_VERSION }}-mac-arm64.zip
+            desktop/dist/v3/Botling-3-${{ env.RELEASE_VERSION }}-mac-arm64.dmg
+            desktop/dist/v3/v3-mac.yml
+            desktop/dist/v3/SHA256SUMS.txt
+            desktop/dist/v3/SOURCE_COMMIT.txt
 
   windows:
-    if: ${{ inputs.run_id == '' }}
+    needs: plan
+    if: ${{ inputs.run_id == '' && needs.plan.outputs.track == 'v2' }}
     # Windows x64: NSIS installer (updates itself through electron-updater). Unsigned. Not run on real hardware.
     runs-on: windows-latest
     timeout-minutes: 40
@@ -197,7 +273,8 @@ jobs:
             desktop/dist/SOURCE_COMMIT-win.txt
 
   linux:
-    if: ${{ inputs.run_id == '' }}
+    needs: plan
+    if: ${{ inputs.run_id == '' && needs.plan.outputs.track == 'v2' }}
     # Linux: AppImage (updates itself through electron-updater) and deb (cannot; it opens the release page).
     # Unsigned. Not run on real hardware.
     runs-on: ubuntu-24.04
@@ -245,7 +322,7 @@ jobs:
   publish:
     # Attaches the artifacts to the release for the tag and publishes it as Latest. Runs for a tag push, or for a
     # dispatch with tag + run_id. A plain branch dispatch only builds.
-    needs: [candidate, windows, linux]
+    needs: [plan, candidate, windows, linux]
     if: >-
       ${{ !cancelled() && !failure() &&
       (github.ref_type == 'tag' || (inputs.tag != '' && inputs.run_id != '')) }}
@@ -258,6 +335,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+      TRACK: ${{ needs.plan.outputs.track }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      RELEASE_FLAGS: ${{ needs.plan.outputs.release_flags }}
       SOURCE_RUN: ${{ inputs.run_id || github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -272,22 +352,44 @@ jobs:
           ls -la "$RUNNER_TEMP/assets"
       - name: Check the assets match the tag
         run: |
-          VERSION="${TAG#v}"
-          for f in "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.dmg" latest-mac.yml latest-linux.yml latest.yml "botling-agent-$VERSION.cjs" botling-agent-install.sh SHA256SUMS-agent.txt; do
+          if [ "$TRACK" = v3 ]; then
+            # A v3 release carries no Windows or Linux build and no botling-agent assets, and must not carry a 2.x feed.
+            FILES="Botling-3-$VERSION-mac-arm64.zip Botling-3-$VERSION-mac-arm64.dmg v3-mac.yml SHA256SUMS.txt"
+            for f in latest-mac.yml latest-linux.yml latest.yml; do
+              [ ! -e "$RUNNER_TEMP/assets/$f" ] || { echo "::error::A v3 release must not hold $f (2.x installs read it)"; exit 1; }
+            done
+          else
+            FILES="Botling-2-$VERSION-mac-arm64.zip Botling-2-$VERSION-mac-arm64.dmg latest-mac.yml latest-linux.yml latest.yml botling-agent-$VERSION.cjs botling-agent-install.sh SHA256SUMS-agent.txt"
+          fi
+          for f in $FILES; do
             [ -f "$RUNNER_TEMP/assets/$f" ] || { echo "::error::Missing asset $f for $TAG"; exit 1; }
           done
-      - name: Create or update the release, upload the assets and publish it as Latest
+      - name: Create or update the release and upload the assets (v2 as Latest, v3 as a pre-release draft)
         run: |
           SHA=$(git rev-parse HEAD)
+          if [ "$TRACK" = v3 ]; then
+            TITLE="Botling $VERSION"
+            SIGNING="The macOS (Apple silicon) build is Developer ID signed and notarized. This is Botling 3: Botling 3 installs update from it; Botling 2 is not affected."
+          else
+            TITLE="Botling $TAG"
+            SIGNING="macOS (Apple silicon) builds are Developer ID signed and notarized. Linux and Windows builds are unsigned."
+          fi
           {
-            awk -v v="${TAG#v}" '$0 ~ "^## " v "$" {f=1; next} /^## /{f=0} f' CHANGELOG.md
+            awk -v v="$VERSION" '$0 ~ "^## " v "$" {f=1; next} /^## /{f=0} f' CHANGELOG.md
             echo
-            echo "Built from commit ${SHA:0:7} by the release workflow. macOS (Apple silicon) builds are Developer ID signed and notarized. Linux and Windows builds are unsigned."
+            echo "Built from commit ${SHA:0:7} by the release workflow. $SIGNING"
           } > "$RUNNER_TEMP/notes.md"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Botling $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create "$TAG" --verify-tag --draft --title "Botling $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --verify-tag --draft --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
           fi
           gh release upload "$TAG" "$RUNNER_TEMP"/assets/* --clobber
-          gh release edit "$TAG" --draft=false --latest
+          # The flags come from the plan job (release-check.mjs releaseFlags): 2.x goes public as Latest; 3.x stays a pre-release draft.
+          gh release edit "$TAG" $RELEASE_FLAGS
+      - name: Check a v3 release is a pre-release and not GitHub's Latest
+        if: ${{ env.TRACK == 'v3' }}
+        run: |
+          gh release view "$TAG" --json tagName,isPrerelease,isDraft > "$RUNNER_TEMP/view.json"
+          LATEST=$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          node desktop/scripts/release-check.mjs --published v3 --tag "$TAG" --release "$RUNNER_TEMP/view.json" --latest-tag "$LATEST"
