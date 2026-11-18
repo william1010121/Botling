@@ -34,10 +34,11 @@ The existing cached runtime is under `desktop/.cache/agy-acp-dev/server/`.
 For this isolated development checkout, run `node scripts/build-agy-file-helper.mjs`
 from desktop/. It uses the existing Apple clang 21.0.0 to build only the small
 `src/core/agent/agy-file-helper.c` adapter into that same runtime directory; this
-is not an app build/install. The reproduced arm64 helper SHA256 is
-`1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403`.
-The adapter pins that digest with no override. A different compiler output needs
-separate review/pinning, never bypassing verification. Runtime/helper must be
+is not an app build/install. There is no pinned digest any more: a build compiles the
+helper itself and ships it as data (`out/core/agy-file-helper.base64`); the runtime
+accepts an installed helper only when it is byte for byte that shipped one
+(`src/core/agent/agy-helper-trust.ts`), so run `npm run build` after rebuilding the
+helper by hand. Runtime/helper must be
 outside the agent workspace, with a canonical non-symlink helper path. Use
 `BOTLING_AGY_ACP_PATH=/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/server/agy_acp_server.par`
 for a separately authorized development core launch targeting another workspace.

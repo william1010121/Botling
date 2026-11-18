@@ -1,2 +1,6 @@
-export function pickHelper(compiled: Buffer, pinned: Buffer | null, pin: string | undefined): { bytes: Buffer; how: "compiled" | "pinned" } | null;
-export function packageAgyHelper(root: string): void;
+export interface PackageAgyHelperOptions {
+  platform?: string; arch?: string;
+  compile?: (root: string, file: string) => unknown;
+  verify?: (file: string) => unknown;
+}
+export function packageAgyHelper(root: string, options?: PackageAgyHelperOptions): void;

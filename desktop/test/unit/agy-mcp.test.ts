@@ -6,11 +6,12 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {gunzipSync} from 'node:zlib';
+import {useShippedHelperDir} from '../../src/core/agent/agy-helper-trust';
 import {AgyMcpBridge,verifyAgyFileHelper,AGY_LOCAL_TOOLS,AGY_OUTPUT_CAP,capHeadTail,sliceFileText} from '../../src/core/agent/agy-mcp';
 // Exact approved macOS arm64 Botling file helper, built from agy-file-helper.c with
 // scripts/build-agy-file-helper.mjs (Apple clang 21.0.0). Gzip preserves all signed
-// Mach-O bytes; the production verifier pins SHA256
-// 1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403.
+// Mach-O bytes; the production verifier accepts a helper that is byte for byte the one
+// shipped with the build (agy-helper-trust.ts), so the fixture is shipped in a temp folder here.
 // Inline because this test must run from a clean checkout without a developer cache,
 // compiler-dependent output, downloads, an ACP server, or a live Google profile.
 const helperBytes = gunzipSync(Buffer.from(
@@ -51,9 +52,10 @@ beforeAll(()=>{
  fixtureRoot=realpathSync(mkdtempSync(join(tmpdir(),'botling-agy-helper-fixture-')));
  helperPath=join(fixtureRoot,'botling-agy-file-helper');
  writeFileSync(helperPath,helperBytes,{mode:0o700});
+ const shipped=join(fixtureRoot,'shipped');mkdirSync(shipped);writeFileSync(join(shipped,'agy-file-helper.base64'),helperBytes.toString('base64'));useShippedHelperDir(shipped);
  const workspace=join(fixtureRoot,'verification-workspace');mkdirSync(workspace);
  // Neither verification nor the real bridge is mocked. Fail if fixture bytes or
- // signatures differ; never repin production to accommodate a test artifact.
+ // signatures differ; the shipped copy is these same bytes.
  verifyAgyFileHelper(helperPath,workspace);
  execFileSync('/usr/bin/codesign',['--verify','--strict',helperPath],{stdio:'pipe',timeout:10_000});
 });

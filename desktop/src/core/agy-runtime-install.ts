@@ -2,11 +2,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { chmodSync, existsSync, mkdirSync, lstatSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, lstatSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { validateAgyRuntimePath } from './agy-runtime-settings';
-import { AGY_FILE_HELPER_SHA } from './agent/agy-mcp';
+import { shippedHelperBytes } from './agent/agy-helper-trust';
 
 export const AGY_ARCHIVE_URL = 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.3-darwin-arm64.zip';
 export const AGY_ARCHIVE_SHA = 'c57db0a9b8b712daa9c3c17cdb990a61842ea569f279e8bd79d7aa85a303b20b';
@@ -52,12 +52,8 @@ async function extractArchive(archive: string, folder: string) {
   }
 }
 function packagedHelper() {
-  // Stored as data in app.asar: packaging/signing must not rewrite the pinned Mach-O bytes.
-  let bytes: Buffer;
-  try { bytes = Buffer.from(readFileSync(join(__dirname, 'agy-file-helper.base64'), 'utf8'), 'base64'); }
-  catch { throw Error('Bundled Botling helper is missing. Install a complete Botling build that includes Antigravity support.'); }
-  if (createHash('sha256').update(bytes).digest('hex') !== AGY_FILE_HELPER_SHA) throw Error('Bundled Botling helper hash mismatch. Install a complete trusted Botling build.');
-  return bytes;
+  // Stored as data in app.asar: packaging/signing must not rewrite the Mach-O bytes. It is what this build compiled (agy-helper-trust.ts).
+  return shippedHelperBytes();
 }
 interface InstallOptions {
   destination?: string; platform?: string; arch?: string;
