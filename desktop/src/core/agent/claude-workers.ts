@@ -414,7 +414,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       specGuard: { writers: r.engineData.pluginStarted === true ? [] : this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
       systemPrompt: [claudeWorkerPolicy(this.options.rules?.(), r.engineData.pluginStarted === true && (!def?.tools || def.tools.includes("Bash")) ? this.options.shotCommand?.() ?? null : null), def?.prompt ?? "", cardSystem ?? ""].filter(Boolean).join("\n\n"),
-      disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
+      // Monitor is off for workers (2026-11-18, the user): a `tail -f` Monitor never exits, so the run sat at "Monitor running". Also under a definition's own tools list.
+      disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop", "Monitor"])],
       ...(def?.tools ? { tools: def.tools } : card ? { tools: CARD_WORKER_TOOLS } : {}),
       ...(card ? { lean: true } : {}),
       ...(extra.length ? { addDirs: [...new Set([...(base.addDirs ?? []), ...extra])] } : {}),
