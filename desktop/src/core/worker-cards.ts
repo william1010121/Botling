@@ -5,7 +5,7 @@
 // Kept in the reply's chat record (`ChatRecord.workerCards`, chat.json), so a card survives a restart: the worker's ledger is
 // projected onto it again when the bot starts (`BotWorkers.projectWorker`), a run that was at work shows as interrupted, and a
 // reply on it resumes the worker. Nothing here starts a worker: bot/workers.ts does, through the same `app_handoff` a bot's own
-// tool call takes (same limits, same admission), on the card worker's model (settings.json `cardWorkerModel`, haiku). The worker is
+// tool call takes (same admission, but no slot of the worker limit: `WorkerAdapter.slotFree`), on the card worker's model (settings.json `cardWorkerModel`, haiku). The worker is
 // given every component with its usage and picks one; its report is untrusted (it may carry web text): only its words and components
 // with their own JSON are drawn, a `command` only when it runs a script under .bot/card-scripts (and the user allows it as for any
 // card), and the one request it may make is a component for Maintainer (`wants`, passed on once by bot/workers.ts).
@@ -17,7 +17,7 @@ import { parseReply, type CardRequest } from "./reply";
 import type { ChatRecord } from "./store/records";
 import { chipStatus, type WorkerLedgerRecord } from "./worker-core";
 
-/** The most cards of one chat line read back from chat.json (a sanity bound, not a limit on replies: every `<card>` of a reply is kept and runs, in line). */
+/** The most cards of one chat line read back from chat.json (a sanity bound, not a limit on replies: every `<card>` of a reply is kept and starts a worker). */
 const CARDS_READ_MAX = 1_000;
 /** The words of a report kept on a card (the worker's ledger keeps the whole report). */
 export const CARD_TEXT_MAX = 100_000;
