@@ -224,6 +224,8 @@ export interface PluginsOptions {
   hostScript: string;
   /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
   builtIns?: string | null;
+  /** Whether the app's developer mode is on (Settings): a pushed copy of a built-in plugin (overrides.ts) runs only then; unset: never. */
+  developerMode?: () => boolean;
   sealer: Sealer | null;
   /** Botling 3 binds each sealed secret blob to plugin/key (M6-06 F3); 2.x leaves it unset. */
   boundSecrets?: boolean;

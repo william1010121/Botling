@@ -99,7 +99,7 @@ export class Plugins {
     const { dataDir, world } = options;
     this.markedTabs = new MarkedTabs(dataDir);
     this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer, options.boundSecrets ? { bound: true } : undefined);
-    this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
+    this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null, options.builtIns ? join(dataDir, "builtin-overrides") : null, options.developerMode ?? (() => false));
     this.dataRoot = join(dataDir, "plugin-data");
     this.snapshotRoot = join(dataDir, "plugin-snapshots");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
@@ -110,6 +110,7 @@ export class Plugins {
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
     this.registry.onNameWarning = (_plugin, warning) => world.log(warning);
+    this.registry.onPushedNote = (text) => world.log(text);
     this.registry.onSkipped = (plugin, skipped) => world.log(`plugin ${plugin}: skipped ${skipped.length} contribution(s) this Botling does not know or cannot read (the rest loads): ${skipped.join("; ")}`);
     // The registry's first scan ran before this was set: say what it skipped too.
     for (const plugin of this.registry.plugins) if (plugin.skipped?.length) this.registry.onSkipped(plugin.manifest.name, plugin.skipped);

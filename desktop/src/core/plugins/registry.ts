@@ -21,6 +21,7 @@ import { swiftPrettyJSON } from "../swift-json";
 import { listInspectQueries, runInspect, type InspectContext, type InspectResult } from "./introspect";
 import { libraryCopyWins } from "./versions";
 import { folderHash } from "./catalog";
+import { PushedCopies } from "./overrides";
 
 /** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
 export interface WebSpec {
@@ -50,6 +51,11 @@ export interface InstalledPlugin {
    * catalog update of the built-in whose files still hash to what the catalog check recorded (`revisions`): it keeps the built-in's rights.
    */
   replacesBuiltIn?: string;
+  /**
+   * A built-in plugin running from a newer build pushed into the core's `builtin-overrides` (overrides.ts) instead of the build's own
+   * folder: the shipped copy's version and when it was pushed. It is still `builtIn`, with the shipped plugin's rights.
+   */
+  pushed?: { shippedVersion: string; pushedAt: number };
   /** A built-in plugin running while the library holds an older copy (or one with a version that is not a semver), ignored: that copy. */
   ignoredLibraryCopy?: { folder: string; version: string };
   enabled: boolean;
@@ -183,8 +189,21 @@ export class PluginRegistry {
   /** The plugin kernel holding each enabled plugin's contributions (kernel step 1; kernel-list.ts). */
   readonly contributionKernel = new ContributionKernel();
 
-  /** `builtIns`: the folder of the plugins shipped with the app (none in some tests). */
-  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null) {
+  /** The newer builds of shipped plugins pushed into `overrides` (none: the shipped copies always run). */
+  private readonly pushedCopies: PushedCopies | null;
+
+  /** Why a pushed copy of a built-in plugin was ignored or dropped (overrides.ts): said in the log. What the first scan found is said when this is set. */
+  set onPushedNote(say: (text: string) => void) { this.pushedNote = say; for (const text of this.startupNotes.splice(0)) say(text); }
+  private pushedNote: (text: string) => void = () => {};
+  private startupNotes: string[] = [];
+
+  /**
+   * `builtIns`: the folder of the plugins shipped with the app (none in some tests). `overrides`: where newer builds of them may be pushed
+   * (`<core data>/builtin-overrides`, overrides.ts; none: nothing is looked at). `developerMode`: a pushed copy runs only while this says
+   * true (the app's developer mode); the default says false.
+   */
+  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null, overrides: string | null = null, developerMode: () => boolean = () => false) {
+    this.pushedCopies = overrides && builtIns ? new PushedCopies(overrides, (text) => { if (this.scanned) this.pushedNote(text); else this.startupNotes.push(text); }, developerMode) : null;
     this.state = readState(stateFile);
     this.rescan();
   }
@@ -572,8 +591,19 @@ export class PluginRegistry {
       if (!root) continue;
       try { folders.push(...readdirSync(root).filter((name) => !name.startsWith(".")).sort().map((name) => ({ name, folder: join(root, name), builtIn }))); } catch { /* no library yet */ }
     }
-    for (const { name, folder, builtIn } of folders) {
-      if (!existsSync(join(folder, "package.json"))) continue;
+    for (const { name, folder: shippedFolder, builtIn } of folders) {
+      if (!existsSync(join(shippedFolder, "package.json"))) continue;
+      // A newer build of a shipped plugin pushed into the overrides folder runs in its place (overrides.ts); every other folder is read as it is.
+      let folder = shippedFolder;
+      let pushed: InstalledPlugin["pushed"];
+      if (builtIn && this.pushedCopies) {
+        // The shipped manifest is read only when a stamp is there (the plugin check walks the folder: not at every scan for every plugin).
+        const copy = this.pushedCopies.find(name, shippedFolder, () => {
+          const shipped = loadPlugin(shippedFolder, "builtIn");
+          return shipped.ok && shipped.manifest.name === name ? shipped.manifest.version : null;
+        });
+        if (copy) { folder = copy.folder; pushed = { shippedVersion: copy.shippedVersion, pushedAt: copy.pushedAt }; }
+      }
       // The folder it is read from decides the name rule, never the name the manifest claims.
       const loaded = loadPlugin(folder, builtIn ? "builtIn" : "library");
       if (loaded.ok) {
@@ -599,6 +629,7 @@ export class PluginRegistry {
         found.set(manifest.name, {
           manifest, folder, builtIn: builtIn || revision, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
           installedFrom: builtIn ? null : this.state.installed?.[manifest.name] ?? null,
+          ...(pushed ? { pushed } : {}),
           ...(!builtIn && shipped?.builtIn ? { replacesBuiltIn: shipped.manifest.version } : {}),
           ...(skipped.length ? { skipped } : {}),
         });
