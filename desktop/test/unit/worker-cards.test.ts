@@ -257,7 +257,8 @@ describe("what a card worker is told: its own card in its message, the fixed rul
   it("an over-long usage list is cut, with a note", () => {
     const text = cardSystemPrompt({ ...brief, components: "x".repeat(CARD_BRIEF_MAX + 5_000) });
     expect(text).toContain("…cut");
-    expect(text.length).toBeLessThan(CARD_BRIEF_MAX + 5_000);
+    // The list is cut to the cap; the fixed rules around it stay whole.
+    expect(text.length).toBeLessThan(CARD_BRIEF_MAX + cardSystemPrompt({ ...brief, components: "" }).length + 200);
   });
 });
 
