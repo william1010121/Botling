@@ -14,13 +14,17 @@ import { readStylesCss, stylesCssPath } from "./helpers/styles-css";
 // stylesheet lists it here by its exact text: parts 01-04 are pinned to the cut (an edit that is not listed, a moved
 // rule or a changed byte fails), and a new section is pinned by its own hash. To add CSS, add its entry; never loosen a hash.
 const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
-const RAW_BEFORE = "48a8c99006c9a80a70cc9640e050d913379eb0e83def29ce4a3388cb3ec5ae05";
-const BUILT_BEFORE = "796903e54d635ae3fff71ed930de4f7edbe2038b9f7cdd07e9cf311cdf44686d";
-/** The sections the cut made, in the order the app builds them, with the sha256 of each file at the cut (096c6c0c). */
+// Re-recorded for 3.2.0: sections 01-03 changed on purpose after the cut (the Plugins page as list and detail d757d2a0..b482790a,
+// --on-orange 696cc026, the Routines panel c21357a2 and the routine dots 843a2249), and these snapshot values and the three sections'
+// hashes below were taken from this test's failure message. From here a section is pinned by its bytes as of 3.2.0; the listed
+// additions still come off first.
+const RAW_BEFORE = "5f292728ea3717566266d4ada2a69cd30c346ddafec3e1bf11b867b918809aa8";
+const BUILT_BEFORE = "e4f5ce80ba2b604337adb36c6485db6783ad1af3ed1a5e3bd25c723bf2bdd4ae";
+/** The sections the cut made, in the order the app builds them, with the sha256 of each file (at the cut 096c6c0c; 01-03 re-recorded for 3.2.0, see RAW_BEFORE). */
 const CUT = {
-  "01-app-chrome-and-settings.css": "556298987da197f0b365721afb10f45cf50b53594d2fc0eb756bfec51eba113c",
-  "02-new-bot-and-right-panel.css": "3234b16d342271982dcbcd0cf1705b15238ac93b2466c4cd7642d325113d37e2",
-  "03-plugin-block-and-navigation.css": "defecdd8acfcbd1d1d356bca7f1fb4d881135859c4ce7cbcb2abfe1ac0266a90",
+  "01-app-chrome-and-settings.css": "7a2bf8dfeab721a484831cffa7f79e676c6b3efd42203dd56ad28fcef4da163a",
+  "02-new-bot-and-right-panel.css": "b4064a7df8d2fb6ebc4b5c8b16d312cf9eb7626716e84eb0e219903138d077a2",
+  "03-plugin-block-and-navigation.css": "1329e384f97f0b842ca2566209665afda60ee7cddd25d28f2a489791f86afd69",
   "04-browser-pane-floating-chat-and-storage.css": "85e794ef92c71cc3ae1f5e8ba59c9c818414a0f631498d0e02c09e4196e3491b",
 };
 /** Text added to a cut section after the cut: exact lines, each once, inside that file (removing them gives the cut's bytes back). */

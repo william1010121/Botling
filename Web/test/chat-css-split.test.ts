@@ -7,13 +7,14 @@ import { inlineTokens } from "../kit/build.mjs";
 import { chatCssPath, readChatCss } from "./helpers/chat-css";
 
 // Web/src/chat.css is cut into Web/src/chat/NN-*.css (M7-S80). The page's stylesheet must not change by accident: the
-// hashes are of the stylesheet's bytes (raw, and with tokens.css put in as the app builds do), last taken at the card-style-1b
-// change (card without a box or title, toolbar in the corner). They are a snapshot: an
+// hashes are of the stylesheet's bytes (raw, and with tokens.css put in as the app builds do), last taken for 3.2.0 (the card styles
+// since card-style-1b: a failed run keeps its picture with a notice, a card's new page waits behind the old one, and the Note's
+// card hand-over). They are a snapshot: an
 // edit to any chat CSS file changes them on purpose, and the same commit takes the new values from this test's failure
 // message. The cut itself (only imports in chat.css, one section per import, none over 800 lines) is the third test.
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
-const RAW_BEFORE = "f358de3351fd0596e194be07d657160592a2b376c65a9af4d7bec2e46dd4da41";
-const BUILT_BEFORE = "442bb12dffc5941fc7e1135203efc5885b635a94b129e7169ffa7523d9934e91";
+const RAW_BEFORE = "aa42ca064ed3dbe5a58e12452c6a12c5b9989605f225de7fc2e2cc34d077a524";
+const BUILT_BEFORE = "b654fd8c6523a980736f5391e90f97bd1a66c7f0d6f3f7fccaedae77c6b79d29";
 
 describe("chat.css cut into sections", () => {
   it("builds to the snapshot bytes (tokens.css put in, as the app builds do)", () => {

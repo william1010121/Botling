@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseReply, saysNothing } from "../../src/core/reply";
+import { CARD_TAG_RULE } from "../../src/core/card-rule";
 import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, REMOVE_BOT_RULE, routinesRule, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
 import { tempDir, until } from "../helpers";
 import { CoreHarness } from "../core-harness";
@@ -38,11 +39,16 @@ describe("the line bots are told", () => {
       const plain = botPrompts({ profile: profile(role) });
       const system = desktopPrompts(plain, profile(role)).system;
       expect(plain.system).not.toContain("<whiteboard");
-      expect(system).toContain(`</show> to your reply.\n${WHITEBOARD_PICTURE_LINE}\n`);
+      // Right after the <show> line come the card-scripts line (0589b74b: every bot but the main bot has it) and then the picture line.
+      const at = system.indexOf(`\n${WHITEBOARD_PICTURE_LINE}\n`);
+      expect(at).toBeGreaterThan(0);
+      expect(system.slice(0, at)).toMatch(/<\/show> to your reply\.\n  Preprocess scripts you write for your own cards go in \.bot\/card-scripts\/[^\n]*$/);
     }
     const main = botPrompts({ profile: profile("main") });
     // The main bot gets no picture line; its desktop changes are removing bots through the app (<remove-bot>) and a script waking it.
+    // With claudeWorkers off (the 4th argument) a <card> would only fail, so its rule goes too.
     expect(desktopPrompts(main, profile("main"), "claude", false).system).toBe(`${main.system
+      .replace(`\n${CARD_TAG_RULE}`, "")
       .replace(/^- Routines support [^\n]*\n(?:  [^\n]*\n)*?  Claude may edit this legacy file[^\n]*$/m, () => routinesRule("/tmp/p/routines.cron"))
       .replace("To remove or rename a bot, tell the user to right-click it in the left column.", "To rename a bot, tell the user to right-click it in the left column; to remove one, use <remove-bot> (below).")}\n${REMOVE_BOT_RULE}`);
     expect(WHITEBOARD_PICTURE_LINE).toContain('<whiteboard name="component name" size="1x1">JSON</whiteboard>');

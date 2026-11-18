@@ -726,7 +726,9 @@ describe("messages", () => {
     const message0 = sent[0] as { type: string; taskID: string; text: string };
     expect(message0).toMatchObject({ type: "cardSend", taskID: "T9" });
     expect(message0.text).toMatch(/NEW component/);
-    expect(message0.text).toContain("<component name=");
+    // The worker only describes the chart in <component>…</component>; it does not name it (Maintainer decides, 88d7ced0).
+    expect(message0.text).toContain("<component>your description</component>");
+    expect(message0.text).not.toContain("<component name=");
     expect(message0.text).toMatch(/Wait until/);
     expect(message0.text).toContain("My suggestion: one bar per week");
     // Without a suggestion, the request alone.

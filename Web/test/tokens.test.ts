@@ -37,7 +37,11 @@ const adoptedTokens = {
   "--notice": { dark: "#16161A", light: "#F0F0F3" }, "--border": { dark: "#2E2E35", light: "#DADADF" },
   "--raised": { dark: "#2C2C33", light: "#FFFFFF" }, "--link": { dark: "#8DB5FF", light: "#2F6FE0" },
   "--orange-line": { dark: "#6B4A1F", light: "#E8C79A" }, "--orange-text": { dark: "#F7C27F", light: "#9A5B00" },
+  // Text on an --orange fill (696cc026): set in the shell's own stylesheet, dark on the dark look, white on the light look.
+  "--on-orange": { dark: "#1A1206", light: "#fff" },
 };
+// Shell tokens the chat page reads now though it did not before: the worker card's running dot (86708251) is --orange, set once in tokens.css.
+const chatAdoptedTokens = { "--orange": { dark: "#F2A64A", light: "#B26A00" } };
 // The light look (Botling 2's Settings → Appearance → App) moved the shell's and chat's remaining
 // hard-coded colours onto tokens; each dark value is the colour that was written there before.
 const lightLookTokens = {
@@ -91,7 +95,8 @@ describe("tokens.css", () => {
     const light = rootVars(css, ':root[data-theme="light"]');
     for (const [name, value] of Object.entries(chatLightBefore)) expect(light[name], name).toBe(value);
     // Tokens the chat did not have before are ones it never reads.
-    for (const name of Object.keys(vars)) if (!(name in chatBefore) && !(name in lightLookTokens)) expect(used(own).has(name), name).toBe(false);
+    for (const name of Object.keys(vars)) if (!(name in chatBefore) && !(name in lightLookTokens) && !(name in chatAdoptedTokens)) expect(used(own).has(name), name).toBe(false);
+    for (const [name, { dark, light: lightValue }] of Object.entries(chatAdoptedTokens)) { expect(vars[name], name).toBe(dark); expect(light[name], name).toBe(lightValue); expect(used(own).has(name), name).toBe(true); }
     for (const [name, { dark, light: lightValue }] of Object.entries(lightLookTokens)) { expect(vars[name], name).toBe(dark); expect(light[name], name).toBe(lightValue); }
     // Each colour is set once, in tokens.css.
     for (const name of Object.keys(rootVars(tokens))) expect(rootVars(own)[name], name).toBeUndefined();
