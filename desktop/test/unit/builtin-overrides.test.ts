@@ -154,18 +154,21 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
     expect(registry().plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
   });
 
-  it("a file changed after the copy was taken (the same scan state kept) is noticed at the next scan, also when its size did not change", () => {
+  it("a file changed after the copy was taken (the same scan state kept) is noticed at the next scan, also when its size did not change", async () => {
     const { registry, push, overrides, shipped } = setup();
     const made = push();
     const plugins = registry();
     expect(plugins.plugin("botling.catchup")!.pushed).toBeDefined();
     const file = join(overrides, made.dir, "dist", "web.js");
     const same = readFileSync(file, "utf8");
+    // file times of a fast disk move in steps of a few ms: wait so the change shows in the stat signature, as a real edit would
+    await new Promise((done) => setTimeout(done, 50));
     writeFileSync(file, same.replace("pushed", "tamper"));
     expect(same.length).toBe(readFileSync(file, "utf8").length);
     plugins.rescan(true);
     expect(plugins.plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
     // put the text back: it is the pushed one again, and runs again
+    await new Promise((done) => setTimeout(done, 50));
     writeFileSync(file, same);
     plugins.rescan(true);
     expect(plugins.plugin("botling.catchup")!.pushed).toBeDefined();
