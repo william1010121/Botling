@@ -30,7 +30,8 @@ function afterPaint(work: () => void): void {
  * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads waits behind it (only
  * the newest waits) and is drawn once `next` has taken the place, or been given up: a page slower than the refresh still gets shown.
  * A page that says it is ready with no height (an empty card) takes the place and the shell keeps the height it has. A page given up
- * once is, for the same data, drawn again without waiting for its pictures to decode (`ccbBuild(true)`): never the same wait forever.
+ * once makes every page after it (of any data) skip waiting for pictures to decode (`ccbBuild(true)`) until one takes the place: never
+ * the same wait every round. The frame that takes the place is a new one, so it waits in full again.
  */
 export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   // One still on its way (its page has not said it is ready, and it is still in the page) is not thrown away for a newer one: a
@@ -45,8 +46,8 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   flying?.remove();
   shown.ccbQueued = undefined;
   let page = next.ccbPending;
-  // Given up once for this very data: not waited for again as long (its pictures may be what never decodes).
-  if (shown.ccbGaveUp !== undefined && shown.ccbGaveUp === next.ccbDrawn && next.ccbBuild) page = next.ccbBuild(true);
+  // A page of this frame was given up: its pictures may be what never decodes, so no page waits for them (whatever the data) until one takes the place.
+  if (shown.ccbGaveUp && next.ccbBuild) page = next.ccbBuild(true);
   next.ccbPending = null;
   next.classList.remove("pending");
   next.classList.add("incoming");
@@ -116,7 +117,7 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
       shown.ccbData = shown.ccbShownDrawn.data;
       shown.ccbShownDrawn = undefined;
     }
-    shown.ccbGaveUp = next.ccbDrawn;
+    shown.ccbGaveUp = true;
     const queued = shown.ccbQueued;
     shown.ccbQueued = undefined;
     next.remove();

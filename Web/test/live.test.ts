@@ -249,13 +249,12 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(framesOf(row)).toEqual([again]);
   });
 
-  it("a page given up once is asked for again, for the same data, without waiting for its pictures; other data waits for them as before", () => {
+  it("after a page was given up, every page after it (any data) skips waiting for pictures, until one takes the place; then the wait is in full again", () => {
     const paints = holdPaints();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { row, frame } = shownCard();
     redraw(row, still({ data: `{"cpu":20}` }));
-    const first = incomingOf(row);
-    expect(first.srcdoc).toContain("image.decode");
+    expect(incomingOf(row).srcdoc).toContain("image.decode");
     vi.advanceTimersByTime(redrawWait);
     expect(framesOf(row)).toEqual([frame]);
     // The same data again: its page no longer waits for pictures to decode (the one that never did), and it takes the place.
@@ -264,12 +263,35 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(quick.srcdoc).toContain(`{"cpu":20}`);
     expect(quick.srcdoc).toContain("ccb: 'ready'");
     expect(quick.srcdoc).not.toContain("image.decode");
-    ready(quick, 70);
-    paints.paint();
-    expect(framesOf(row)).toEqual([quick]);
-    // Other data, on a frame that gave up on something else, is waited for in full.
+    // Gave up again (a picture still stuck is not what it waits for, but a page may fail some other way): other data is quick too.
+    vi.advanceTimersByTime(redrawWait);
+    expect(framesOf(row)).toEqual([frame]);
     redraw(row, still({ data: `{"cpu":30}` }));
+    const other = incomingOf(row);
+    expect(other.srcdoc).toContain(`{"cpu":30}`);
+    expect(other.srcdoc).not.toContain("image.decode");
+    ready(other, 70);
+    paints.paint();
+    expect(framesOf(row)).toEqual([other]);
+    // One took the place: the next redraw waits for pictures in full again.
+    redraw(row, still({ data: `{"cpu":40}` }));
     expect(incomingOf(row).srcdoc).toContain("image.decode");
+  });
+
+  it("a page waiting behind one that is given up is drawn without waiting for pictures too", () => {
+    const paints = holdPaints();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { row, frame } = shownCard();
+    redraw(row, still({ data: `{"cpu":20}` }));
+    redraw(row, still({ data: `{"cpu":30}` }));
+    vi.advanceTimersByTime(redrawWait);
+    const second = incomingOf(row);
+    expect(second.srcdoc).toContain(`{"cpu":30}`);
+    expect(second.srcdoc).not.toContain("image.decode");
+    ready(second, 70);
+    paints.paint();
+    expect(framesOf(row)).toEqual([second]);
+    expect(frame.isConnected).toBe(false);
   });
 
   it("a page that says it is ready with no height (an empty card) takes the place and the shell keeps the height it has", () => {
