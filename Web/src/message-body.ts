@@ -145,22 +145,30 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
   root.dataset.card = card.id;
   const head = document.createElement("div");
   head.className = "worker-card-head";
+  // The state is a dot before the title (its words are for the dot's label and, for a state that needs saying, beside the title).
+  const dot = document.createElement("span");
+  dot.className = "worker-card-dot";
+  dot.setAttribute("role", "img");
   const title = document.createElement("span");
   title.className = "worker-card-title";
   title.textContent = card.title;
   const status = document.createElement("span");
   status.className = "worker-card-status";
   status.textContent = t(CARD_STATUS_KEYS[card.status]);
-  head.append(title);
-  // Which model the card is on, once it was redone by another one.
+  dot.setAttribute("aria-label", status.textContent);
+  head.append(dot, title);
+  // Which model the card is on, once it was redone by another one (a small tag that stays beside the title).
   if (card.model) head.append(modelTag(card.model));
+  head.append(status);
   // "Redo with Opus": a finished card whose first worker is still the card worker; its words go to the core, which starts the Opus worker and binds the card to it.
+  // It shows beside the title with the other tools, while the pointer is over the card.
   if (card.taskId && !card.model && card.status !== "starting" && card.status !== "running") head.append(redoButton(card.id, card.taskId));
   // "Make a new component": the same small box as "make it a visual report" on a reply; its words go to the card's worker as any reply on the card does.
+  // It shows beside the title while the pointer is over the card.
   if (card.taskId) head.append(newComponentButton(card.taskId));
-  head.append(status);
   root.append(head);
   const hasDisplays = !!card.displays?.length;
+  let notes: HTMLElement | null = null;
   if (card.text || hasDisplays || card.warning) {
     // The report is drawn as a reply is. The component keeps the id `<line>:card-<n>` (its command and answers are found by it).
     const draw = (text: string, displays: DisplayView[] | null): HTMLElement => {
@@ -184,7 +192,7 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
       warning.textContent = card.warning;
       root.append(warning);
     }
-    if (card.text && hasDisplays) root.append(cardNotes(card.id, () => draw(card.text!, null)));
+    if (card.text && hasDisplays) notes = cardNotes(card.id, () => draw(card.text!, null));
   } else if (card.status === "starting" || card.status === "running") {
     const wait = document.createElement("div");
     wait.className = "worker-card-wait";
@@ -203,6 +211,10 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     error.textContent = card.error;
     root.append(error);
   }
+  // One quiet line under the report: "Show notes" and "Reply" (the reply box opens from it, and stays open for a draft).
+  const foot = document.createElement("div");
+  foot.className = "worker-card-foot";
+  if (notes) foot.append(notes);
   const taskId = card.taskId;
   if (taskId) {
     const form = document.createElement("form");
@@ -215,6 +227,18 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     const send = document.createElement("button");
     send.type = "submit";
     send.textContent = t("card.send");
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "steps-toggle worker-card-reply-toggle";
+    toggle.innerHTML = `${replyIcon}<span>${escapeHTML(t("card.replyOpen"))}</span>`;
+    const setOpen = (open: boolean, focus = false) => {
+      form.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      foot.classList.toggle("replying", open);
+      if (open) openReplies.add(card.id);
+      else openReplies.delete(card.id);
+      if (open && focus) input.focus();
+    };
     const shut = () => { const closed = cardSending.has(card.id); input.disabled = closed; send.disabled = closed || !input.value.trim(); };
     input.addEventListener("input", () => { if (input.value) cardDrafts.set(card.id, input.value); else cardDrafts.delete(card.id); shut(); });
     form.addEventListener("submit", (event) => {
@@ -226,14 +250,21 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
       cardDrafts.delete(card.id);
       input.value = "";
       shut();
+      setOpen(false);
       setTimeout(() => { cardSending.delete(card.id); shut(); }, 1_500);
     });
-    // Enter while the IME is composing picks a character, it does not send.
-    input.addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault(); });
+    // Enter while the IME is composing picks a character, it does not send. Escape on an empty box puts it away.
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+      else if (event.key === "Escape" && !input.value) { setOpen(false); toggle.focus(); }
+    });
+    toggle.addEventListener("click", () => setOpen(form.hidden, true));
     shut();
     form.append(input, send);
-    root.append(form);
+    foot.append(toggle, form);
+    setOpen(!!input.value || openReplies.has(card.id));
   }
+  if (foot.childElementCount) root.append(foot);
   return root;
 }
 
@@ -277,6 +308,8 @@ function redoButton(cardID: string, taskId: string): HTMLElement {
   return button;
 }
 
+const replyIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v4"/></svg>`;
+
 function newComponentButton(taskId: string): HTMLElement {
   const button = document.createElement("button");
   button.type = "button";
@@ -295,6 +328,9 @@ function newComponentButton(taskId: string): HTMLElement {
   });
   return button;
 }
+
+/** Cards whose reply box the user opened (a redraw, as the worker moves on, keeps it open). */
+const openReplies = new Set<string>();
 
 /** Cards whose folded words the user opened (a redraw, as the worker moves on, keeps them open). */
 const openNotes = new Set<string>();
