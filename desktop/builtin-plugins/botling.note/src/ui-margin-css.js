@@ -1,13 +1,13 @@
 // botling.note, margin comments (旁註): the stylesheet. The same tokens as the rest of the note (--n-*), so light / dark follow the app.
-// Layout: with a comment (or an ask box) the page gets `nm-on` and room on its right; the cards sit in `.nm-rail` (absolute, tops set
+// Layout: with a comment the page gets `nm-on` and room on its right; the cards sit in `.nm-rail` (absolute, tops set
 // by ui-margin.js so they line up with their passage and never overlap) and thin elbow lines in `.nm-links` join them to the text.
-// A frame narrower than 760 px has no margin: the cards sit under the note and the ask box under the cell.
+// A frame narrower than 760 px has no margin: the cards sit under the note. The ask box is not a margin card: it sits in the flow
+// of the note right under its cell (`.nm-inline`), in any width, and makes no room on the right.
 export const MARGIN_CSS = `
 .note-page.nm-on { padding-right: 372px; }
 .nm-links { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 1; }
 .nm-links path { fill: none; stroke: var(--n-accent); stroke-width: 1; }
 .nm-links path.nm-dim { stroke: var(--n-faint); stroke-dasharray: 3 3; }
-.nm-links path.nm-draft { stroke-dasharray: 4 3; }
 .nm-links circle { fill: var(--n-accent); }
 .nm-rail { position: absolute; top: 0; right: 0; width: 340px; pointer-events: none; z-index: 2; }
 .nm-rail.nm-narrow { position: static; width: auto; margin: 22px 0 0; display: flex; flex-direction: column; gap: 10px; }
@@ -25,8 +25,6 @@ export const MARGIN_CSS = `
 .nm-head b { color: var(--n-text); font-weight: 600; }
 .nm-head .nm-sum { display: none; color: var(--n-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .nm-sp { flex: 1; }
-.nm-ask-hint { flex-wrap: wrap; align-items: center; }
-.nm-ask-hint small { flex: 1 1 140px; min-width: 0; }
 .nm-card.nm-folded .nm-head { border-bottom: 0; cursor: pointer; }
 .nm-card.nm-folded .nm-head .nm-sum { display: inline; }
 .nm-card.nm-folded .nm-head .nm-full { display: none; }
@@ -70,6 +68,15 @@ export const MARGIN_CSS = `
 .nm-btn[disabled] { opacity: .5; cursor: default; }
 .nm-btn kbd, .nm-win kbd, .nm-draft kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid var(--n-border); border-radius: 4px; padding: 0 4px; color: var(--n-faint); }
 .nm-btn.nm-go kbd { color: #fff; border-color: rgba(255,255,255,.4); }
+.nm-card.nm-draft.nm-inline { position: relative; left: auto; right: auto; overflow: visible; margin: -2px 0 12px 14px; border-style: solid;
+  border-color: color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); border-left: 3px solid var(--n-accent); background: var(--n-pop); }
+.nm-card.nm-draft.nm-inline.nm-enter { animation: nm-drop .16s ease-out; }
+.nm-card.nm-draft.nm-inline::before { content: ""; position: absolute; left: 16px; top: -7px; width: 10px; height: 10px; background: var(--n-pop); transform: rotate(45deg);
+  border-top: 1px solid color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); border-left: 1px solid color-mix(in srgb, var(--n-accent) 50%, var(--n-border)); }
+@keyframes nm-drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.nm-ask-ctl { flex-wrap: wrap; margin-top: 8px; }
+.nm-ask-ctl .nm-scope { margin-top: 0; flex: 0 0 auto; }
+.nm-ask-ctl .nm-scope button { padding: 3px 12px; white-space: nowrap; }
 .nm-draft-body { padding: 10px 12px; }
 .nm-draft-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--n-muted); }
 .nm-draft-top b { color: var(--n-text); }
@@ -85,8 +92,6 @@ export const MARGIN_CSS = `
 .nm-err { color: var(--n-error); font-size: 12px; margin-top: 8px; }
 .nm-pop { position: absolute; z-index: 6; display: flex; align-items: center; background: var(--n-pop); border: 1px solid var(--n-border); border-radius: 9px; padding: 3px; box-shadow: var(--n-shadow); font-size: 12px; white-space: nowrap; }
 .nm-pop button { display: flex; gap: 6px; align-items: center; font: inherit; border: 0; border-radius: 6px; background: var(--n-accent); color: #fff; font-weight: 600; padding: 4px 10px; cursor: pointer; }
-.nm-float { position: absolute; z-index: 7; width: min(470px, calc(100% - 20px)); }
-.nm-float.nm-card { position: absolute; }
 .nm-hl { background: color-mix(in srgb, var(--n-accent) 14%, transparent); box-shadow: -6px 0 0 color-mix(in srgb, var(--n-accent) 14%, transparent), 6px 0 0 color-mix(in srgb, var(--n-accent) 14%, transparent); border-radius: 2px; }
 .nm-cellhl { box-shadow: 0 0 0 1px color-mix(in srgb, var(--n-accent) 45%, transparent); }
 .nm-hl.nm-focus, .nm-cellhl.nm-focus { background: color-mix(in srgb, var(--n-accent) 24%, transparent); }

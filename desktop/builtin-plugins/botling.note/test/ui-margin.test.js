@@ -120,9 +120,11 @@ describe("margin comments on the Note page", () => {
     await settle();
     const draft = q(env, ".nm-draft");
     expect(draft).not.toBeNull();
-    expect(draft.closest(".note-doc")).toBeNull(); // the box is not inside the text it is about
+    expect(draft.previousElementSibling).toBe(qa(env, ".cell")[0]); // the box sits right under its cell, in the flow (the cells below move down), not inside the cell
+    expect(draft.closest(".cell")).toBeNull();
+    expect(q(env, ".nm-rail")).toBeNull(); // no margin column is made for a box alone
     expect(draft.querySelector(".nm-qc").textContent).toContain("Old check");
-    expect(draft.textContent).toContain("不會寫進 Note");
+    expect(draft.textContent).not.toContain("不會寫進 Note"); // no explanatory line at the bottom of the box
     expect(byText(draft, ".nm-scope button", "整個 cell").classList.contains("nm-on")).toBe(true);
     type(draft.querySelector("textarea"), "為什麼標籤一樣？");
     click(draft.querySelector(".nm-go"));
