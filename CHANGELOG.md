@@ -4,6 +4,12 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 3.2.2
+
+- **The Note side note floats over the page and no longer eats the right column.** Opening a note in the margin used to push the page aside and take the whole right column; it now floats over the page at the right edge, so the Note keeps its width.
+- **The side note's Close button is no longer hidden under the status bar.** Close sat under the status bar at the bottom of the window and could not be pressed; it now stays inside the visible area.
+- **Cards written by the Antigravity / Codex head now draw.** A bot whose head runs on Antigravity or Codex could write a `<card>` that never drew; its cards now draw through the owner's Claude workers, like cards from a Claude head.
+
 ## 3.2.1
 
 - **Switching a bot to Antigravity no longer shows the false "orchestration rules plugin did not answer in time" notice.** The Antigravity runtime check no longer re-hashes the binary on every message.
