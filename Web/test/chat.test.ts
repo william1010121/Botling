@@ -5,7 +5,7 @@ import { readChatCss } from "./helpers/chat-css";
 import { Composer } from "../src/composer";
 import { setLanguage } from "../src/i18n";
 import { regatherText } from "../src/regather";
-import { feedback, messageElement, messageMenu, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
+import { feedback, messageElement, messageMenu, openReportBox, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -832,6 +832,97 @@ describe("messages", () => {
     expect(css).toMatch(/\.worker-card-tools > :not\(\.worker-card-model\)[^{]*\{ opacity: 0; pointer-events: none;/);
     expect(css).toMatch(/\.row \.worker-card-tools \.worker-card-new[^{]*\{ opacity: 0;/);
     expect(css).toMatch(/@media \(hover: none\) \{\s*\.worker-card-tools \{[^}]*\}\s*\.worker-card-tools > \*[^{]*\{ opacity: 1;/);
+    // Put-away parts really go: `display: flex` on the reply box and the notes would otherwise beat the hidden attribute.
+    expect(css).toMatch(/\.worker-card-reply\[hidden\] \{ display: none; \}/);
+    expect(css).toMatch(/\.worker-card-notes > \.worker-card-body\[hidden\] \{ display: none; \}/);
+  });
+
+  it("the Reply toggle never puts away a box that holds a draft; it only puts the cursor back in it", () => {
+    const row = messageElement(message({ id: "m81", workerCards: [{ id: "c15", title: "Prices", status: "done", run: 1, taskId: "T11", at: null, text: "x" }] }), {});
+    document.body.append(row);
+    const root = row.querySelector<HTMLElement>(".worker-card")!;
+    const form = row.querySelector<HTMLFormElement>(".worker-card-reply")!;
+    const toggle = row.querySelector<HTMLButtonElement>(".worker-card-reply-toggle")!;
+    const input = form.querySelector("input")!;
+    toggle.click();
+    input.value = "keep this";
+    input.dispatchEvent(new Event("input"));
+    toggle.click();
+    expect(form.hidden).toBe(false);
+    expect(root.classList.contains("replying")).toBe(true);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    // Without a draft the same press puts it away.
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    toggle.click();
+    expect(form.hidden).toBe(true);
+  });
+
+  it("several cards in one reply each have their own toolbar, data and reply box (nothing is shared, nothing doubled)", () => {
+    const mk = (id: string, title: string, text: string, taskId: string) => ({ id, title, status: "done" as const, run: 1, taskId, at: null, text });
+    const row = messageElement(message({ id: "m82", workerCards: [mk("c16", "One", "first data", "T12"), mk("c17", "Two", "second data", "T13")] }), {});
+    document.body.append(row);
+    const roots = [...row.querySelectorAll<HTMLElement>(".worker-card")];
+    expect(roots.map((el) => el.dataset.card)).toEqual(["c16", "c17"]);
+    for (const root of roots) {
+      expect(root.querySelectorAll(":scope > .worker-card-tools")).toHaveLength(1);
+      expect(root.querySelectorAll(":scope > .worker-card-reply")).toHaveLength(1);
+      expect(root.querySelector(".worker-card-title")).toBeNull();
+    }
+    expect(roots[0].textContent).toContain("first data");
+    expect(roots[0].textContent).not.toContain("second data");
+    // Opening the first card's reply or box does not touch the second.
+    roots[0].querySelector<HTMLButtonElement>(".worker-card-reply-toggle")!.click();
+    expect(roots[0].classList.contains("replying")).toBe(true);
+    expect(roots[1].classList.contains("replying")).toBe(false);
+    roots[0].querySelector<HTMLButtonElement>(".worker-card-redo")!.click();
+    expect(roots[0].classList.contains("tools-open")).toBe(true);
+    expect(roots[1].classList.contains("tools-open")).toBe(false);
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+  });
+
+  it("the toolbar can be reached by keyboard: a labelled toolbar of real buttons, none taken out of the tab order", () => {
+    const row = messageElement(message({ id: "m83", workerCards: [{ id: "c18", title: "Prices", status: "done", run: 1, taskId: "T14", at: null, text: "x" }] }), {});
+    const tools = row.querySelector<HTMLElement>(".worker-card-tools")!;
+    expect(tools.getAttribute("role")).toBe("toolbar");
+    expect(tools.getAttribute("aria-label")).toBe("Prices");
+    const buttons = [...tools.querySelectorAll<HTMLElement>("button")];
+    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    for (const button of buttons) {
+      expect(button.getAttribute("tabindex")).toBeNull();
+      expect(button.hidden).toBe(false);
+    }
+  });
+
+  it("openReportBox: a second box puts the first away and runs its onClose once; a press outside, or Send, runs it once; a box without onClose works as before", async () => {
+    const anchor = document.createElement("button");
+    document.body.append(anchor);
+    const closed: string[] = [];
+    const spec = (name: string) => ({ question: name, placeholder: "", pictures: false, send: () => closed.push(`send ${name}`), onClose: () => closed.push(`close ${name}`) });
+    openReportBox(anchor, spec("a"));
+    openReportBox(anchor, spec("b"));
+    expect(document.querySelectorAll(".report")).toHaveLength(1);
+    expect(closed).toEqual(["close a"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Send: the box is gone and onClose ran before the words went.
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+    expect(closed).toEqual(["close a", "close b", "send b"]);
+    // The old press-outside listener is gone: a press now closes nothing twice.
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(closed).toEqual(["close a", "close b", "send b"]);
+    // A box with no onClose (Report problem, make it a visual report, ...) still goes away on a press outside, and a press inside keeps it.
+    openReportBox(anchor, { question: "c", placeholder: "", pictures: false, send: () => undefined });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.querySelector(".report textarea")!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".report")).not.toBeNull();
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(document.querySelector(".report")).toBeNull();
+    // One placed and shut before the listener was added (setTimeout 0) leaves no listener behind.
+    openReportBox(anchor, spec("d"));
+    document.querySelector<HTMLButtonElement>(".report .send")!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(closed).toEqual(["close a", "close b", "send b", "close d", "send d"]);
   });
 
   it("no new-component button on a card that has no worker yet, nor on an ordinary reply", () => {

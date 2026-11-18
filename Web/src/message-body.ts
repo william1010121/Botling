@@ -251,7 +251,8 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
       if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) event.preventDefault();
       else if (event.key === "Escape" && !input.value) { setOpen(false); toggle.focus(); }
     });
-    toggle.addEventListener("click", () => setOpen(form.hidden, true));
+    // A draft in the box is never put away by the toggle (it would hide words the user wrote): pressing Reply again just puts the cursor back.
+    toggle.addEventListener("click", () => setOpen(form.hidden || !!input.value, true));
     shut();
     form.append(input, send);
     reply = form;
