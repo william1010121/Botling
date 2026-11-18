@@ -244,8 +244,8 @@ window.addEventListener("message", (event) => {
     const before = frame.getBoundingClientRect();
     settleHeight(frame, message.height);
     keepReading(frame, before, message.height);
-  } else if (message.ccb === "ready" && typeof message.height === "number" && message.height > 0) {
-    // A page handed over to says it is painted, its pictures decoded, and how tall it is: only a frame behind the shown one waits for it.
+  } else if (message.ccb === "ready" && typeof message.height === "number" && Number.isFinite(message.height) && message.height >= 0) {
+    // A page handed over to says it is painted and its pictures decoded, and how tall it is (0: nothing in it): only a frame behind the shown one waits for it.
     frame.ccbReady?.(message.height);
   } else if (message.ccb === "hover") {
     // The pointer is over the component: its Board tile (or opened pin) shows its controls.
@@ -370,7 +370,7 @@ export function componentElement(
   const page = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave, true);
   // Built with tokens, it takes later changes live; built without, a first set rebuilds it (`applyTokens`). It is rebuilt from what it shows now.
   frame.ccbTokens = componentTokensCss() !== "";
-  frame.ccbBuild = () => componentPage(info.template, frame.ccbData ?? data, frame.ccbImages ?? {}, frame.ccbSize ?? drawnSize, surface, fill, !!onSave, true);
+  frame.ccbBuild = (quick) => componentPage(info.template, frame.ccbData ?? data, frame.ccbImages ?? {}, frame.ccbSize ?? drawnSize, surface, fill, !!onSave, quick ? "quick" : true);
   if (lazy && whenNear(frame, () => buildFrame(frame))) {
     // A placeholder until it comes near, as tall as it will be (or a guess, kept from then on).
     frame.ccbPending = page;

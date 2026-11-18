@@ -70,14 +70,14 @@ import type { ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
  * README.md there): its text right after the ccb runtime, in <head>, and `<html data-theme="dark">`
  * for its tokens. A template without that meta gets exactly the page it got before the kit.
  */
-export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false, reportReady = false): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false, reportReady: boolean | "quick" = false): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
   const kit = kitScript(template);
   // The tokens plugins push (component-tokens.ts): none, and the page is what it was before they existed.
   const tokenCss = componentTokensCss();
   const tokens = tokenCss ? `<style id="ccb-tokens">${tokenCss}</style><script>${tokenListenerScript}</script>` : "";
   // A page a frame hands over to (component-live.ts `drawBehind`) says when it is ready; any other page is what it was.
-  const ready = reportReady ? readyScript : "";
+  const ready = reportReady ? readyScript(reportReady !== "quick") : "";
   return `<!doctype html><html${kit ? ` data-theme="${kitTheme}"` : ""} data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
 #ccb-root{container-type:inline-size;container-name:ccb}
@@ -284,10 +284,11 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
 
 /**
  * What a page that is handed over to (a new drawing behind the one on screen) says once it can take that one's place:
- * the page has loaded (never the empty page a frame starts with), its fonts and pictures are decoded, it has been
- * painted twice, and it has a size. `{ccb: "ready", height}`, once. The parent shows it only then.
+ * the page has loaded (never the empty page a frame starts with), its fonts and (unless `waitImages` is false: a page asked
+ * for again after one that never got ready) its pictures are decoded, and it has been painted twice. `{ccb: "ready", height}`,
+ * once; the height is 0 for a page with nothing in it, and the parent then keeps the height it has.
  */
-const readyScript = `<script>
+const readyScript = (waitImages: boolean) => `<script>
 (() => {
   let sent = false;
   const root = document.getElementById('ccb-root');
@@ -300,19 +301,12 @@ const readyScript = `<script>
   });
   const settle = async () => {
     try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch (error) {}
-    try { await Promise.all([...document.images].map((image) => (image.decode ? image.decode().catch(() => {}) : null))); } catch (error) {}
+${waitImages ? `    try { await Promise.all([...document.images].map((image) => (image.decode ? image.decode().catch(() => {}) : null))); } catch (error) {}
+` : ""}    await frame();
     await frame();
-    await frame();
-    // Not measured yet: look again a moment later (never says it is ready with no size).
-    for (let tries = 0; !sent && tries < 50; tries++) {
-      const height = Math.ceil(root.getBoundingClientRect().height);
-      if (height > 0) {
-        sent = true;
-        parent.postMessage({ccb: 'ready', height}, '*');
-      } else {
-        await frame();
-      }
-    }
+    if (sent) return;
+    sent = true;
+    parent.postMessage({ccb: 'ready', height: Math.max(0, Math.ceil(root.getBoundingClientRect().height))}, '*');
   };
   if (document.readyState === 'complete') settle();
   else window.addEventListener('load', settle);
@@ -468,7 +462,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbReady?: ((height: number) => void) | null; ccbSized?: number; ccbShownDrawn?: { drawn: string | undefined; data: string | undefined }; ccbImages?: Record<string, string>; ccbBuild?: () => string; ccbTokens?: boolean };
+export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbQueued?: ComponentFrame; ccbGaveUp?: boolean; ccbReady?: ((height: number) => void) | null; ccbSized?: number; ccbShownDrawn?: { drawn: string | undefined; data: string | undefined }; ccbImages?: Record<string, string>; ccbBuild?: (quick?: boolean) => string; ccbTokens?: boolean };
 
 /** What a frame's `ccb.setStatus(...)` is told to: `{clear}` or `{text, tone}` as the frame sent them. */
 export type StatusHandler = (message: { clear?: unknown; text?: unknown; tone?: unknown }) => void;
