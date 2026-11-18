@@ -74,12 +74,15 @@ function follower(driver: StoreDriver, seed: number) {
     async start() { await driver.start(); take("Start", Start(c, s)); check(); },
     async commit(cmd: string) {
       const ack = c.acks.includes(cmd);
+      const owing = s.debt;
       const { durable, rejected } = await driver.commit(cmd, ack ? "ack" : "event");
       take(`Commit(${cmd})`, Commit(c, s, cmd));
-      expect(durable, `${where()}: ${cmd} flushed`).toBe(ack);
+      // An engine event is flushed only while the writer owes a flush (a failed one before it).
+      expect(durable, `${where()}: ${cmd} flushed`).toBe(ack || owing);
       expect(rejected, `${where()}: ${cmd} rejected`).toBe(false);
       // The writer flushes a marked batch before it settles; the acknowledgement goes after.
-      if (ack) { if (s.synced < s.log.length) take("Flush", Flush(c, s)); take(`Ack(${cmd})`, Ack(c, s, cmd)); }
+      if (durable && s.synced < s.log.length) take("Flush", Flush(c, s));
+      if (ack) take(`Ack(${cmd})`, Ack(c, s, cmd));
       check();
     },
     /** An acknowledged command whose flush fails: committed, rejected, and the writer owes a flush. */

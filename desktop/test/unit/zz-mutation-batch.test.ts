@@ -14,8 +14,8 @@ const SPEC = "../spec/tests/store.spec.test.ts";
 const STORE = [T("server-store-durability"), T("server-store"), T("server-store-writer"), SPEC];
 const CONTENT = [T("server-content")];
 const LOG = [SPEC, T("server-log")];
-const BOTD = [T("botlingd-start-order"), T("server-store-durability")];
-const ALL = [...new Set([...STORE, ...CONTENT, ...LOG, ...BOTD, T("server-store-crash"), T("server-store-compaction"), T("server-content-crash"), T("server-slots")])];
+const BOTD = [T("botlingd-lost-tail")];
+const ALL = [...new Set([...STORE, ...CONTENT, ...LOG, ...BOTD, T("server-store-crash"), T("server-store-compaction"), T("server-content-crash"), T("server-slots"), T("botlingd-start-order")])];
 
 const CONN = "src/server/store/connection.ts";
 const WRITER = "src/server/store/writer.ts";
