@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
 import { replyPages } from "../../builtin-plugins/botling.component-studio/src/specs";
-import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
+import { OLDER_PREVIEW_ABOUTS, OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
 import { parseLine } from "../../src/core/agent/stream";
 import { addSpending, claudeRateLimits, codexRateLimits, codexTokens, freshSpending, type RateLimits, type RateLimitWindow } from "../../src/core/usage";
 
@@ -83,7 +83,10 @@ describe("result pages' preview cards (PagePreview.swift)", () => {
 
   it("recognizes exact 1.x shipped copies for migration and retains their data documentation", () => {
     expect(OLDER_PREVIEW_TEMPLATES[0]).toBe(P.template);
-    expect(PREVIEW_ABOUT).toBe(P.about);
+    expect(OLDER_PREVIEW_ABOUTS).toEqual([P.about]);
+    // The shipped usage text is the 1.x text with the two tag lines right after its first line, nothing else changed.
+    const lines = P.about.split("\n");
+    expect(PREVIEW_ABOUT).toBe([lines[0], "Built-in: yes", "Built-in order: 3", ...lines.slice(1)].join("\n"));
     expect(OLDER_PREVIEW_TEMPLATES.slice(1)).toEqual(P.olderTemplates);
   });
 

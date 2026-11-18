@@ -37,9 +37,9 @@ describe("components", () => {
     expect(snapshot.components.status).toMatchObject({ sizes: ["2x1", "2x2"], icon: "📊", title: "Status card", version: 0 });
     await turn(c, "hello");
     const first = inputs(dir)[0]!;
-    // A bot with no list yet that drew none has the tagged built-ins only (the library's `Built-in: yes`; nothing is seeded by name, so the untagged preview card is on the shelf; Maintainer gives it more); one line each, its usage on request (app_component_usage).
+    // A bot with no list yet that drew none has the built-ins only (the library's `Built-in: yes`, the preview card among them since its shipped about.md carries the tag; Maintainer gives it more); one line each, its usage on request (app_component_usage).
     expect(first).toContain("(App: Components in the chat: 0 / 20 yours, one line each below (a bot has at most 20).");
-    expect(first).toContain("\n- 網頁預覽卡片: 網頁預覽卡片：把一頁式 HTML 結果直接縮小預覽在對話裡");
+    expect(first).toContain("\n- 網頁預覽卡片 (JSON): 網頁預覽卡片：把一頁式 HTML 結果直接縮小預覽在對話裡");
     expect(first).toContain("(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name=\"name\">add it to my list</component>; it then shows up in your list.)\n- gitlog: Git log card: how many commits there are; More shows one commit.");
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toEqual([]);
     await turn(c, "again");

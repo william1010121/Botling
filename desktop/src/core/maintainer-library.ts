@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
-import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "./components/builtins";
+import { OLDER_PREVIEW_ABOUTS, OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "./components/builtins";
 import { PAGE_COMPONENT } from "./preview-url";
 import { writeFileAtomic } from "./durable/atomic";
 import { componentEditorAgent, pluginGuide } from "./maintainer-text";
@@ -62,7 +62,7 @@ export function prepareLibrary(root: string, model = "sonnet", builtIns: string 
   // The preview card is botling.cards' (a built-in plugin) since step M11: a copy an app wrote here (1.x's
   // `seedDefaults`) that nobody edited goes, so the built-in one shows and follows the app; an edited one stays.
   const preview = join(library, "ccb-components", "components", PAGE_COMPONENT);
-  if ([PREVIEW_TEMPLATE, ...OLDER_PREVIEW_TEMPLATES].includes(readText(join(preview, "template.html")) ?? "") && readText(join(preview, "about.md")) === PREVIEW_ABOUT) {
+  if ([PREVIEW_TEMPLATE, ...OLDER_PREVIEW_TEMPLATES].includes(readText(join(preview, "template.html")) ?? "") && [PREVIEW_ABOUT, ...OLDER_PREVIEW_ABOUTS].includes(readText(join(preview, "about.md")) ?? "")) {
     for (const file of ["template.html", "about.md"]) rmSync(join(preview, file), { force: true });
     try { if (!readdirSync(preview).length) rmSync(preview, { recursive: true }); } catch { /* gone */ }
   }

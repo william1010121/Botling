@@ -1,4 +1,6 @@
 網頁預覽卡片：把一頁式 HTML 結果直接縮小預覽在對話裡，附上標題和「開啟」按鈕，按下就用自己的視窗開成全尺寸。用 `<show name="網頁預覽卡片">JSON</show>` 叫出來。
+Built-in: yes
+Built-in order: 3
 
 ## 資料格式（window.ccb.data）
 

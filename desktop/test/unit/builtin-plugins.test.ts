@@ -20,7 +20,7 @@ import { checkReport } from "../../src/core/plugins/check-report";
 import { agentContributions } from "../../src/core/plugins/agent-contributions";
 import { claudePluginName } from "../../src/core/plugins/engine-skills";
 import { ComponentLibrary } from "../../src/core/components/library";
-import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
+import { OLDER_PREVIEW_ABOUTS, OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
 import { keybindingsOf, runsInHost, slashMenu } from "../../src/renderer/plugin-commands";
 import type { PluginsView } from "../../src/contract";
 
@@ -142,6 +142,14 @@ describe("the plugin library without seeded cards", () => {
       mkdirSync(card(dir), { recursive: true });
       writeFileSync(join(card(dir), "template.html"), template);
       writeFileSync(join(card(dir), "about.md"), PREVIEW_ABOUT);
+      prepareLibrary(dir);
+      expect(existsSync(card(dir))).toBe(false);
+    }
+    // An install that seeded the card before the tag has the old usage text: still recognized and taken away, so the tagged shipped copy shows.
+    for (const about of OLDER_PREVIEW_ABOUTS) {
+      mkdirSync(card(dir), { recursive: true });
+      writeFileSync(join(card(dir), "template.html"), PREVIEW_TEMPLATE);
+      writeFileSync(join(card(dir), "about.md"), about);
       prepareLibrary(dir);
       expect(existsSync(card(dir))).toBe(false);
     }
