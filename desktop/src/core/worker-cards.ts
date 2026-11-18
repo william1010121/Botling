@@ -9,6 +9,7 @@
 // given every component with its usage and picks one; its report is untrusted (it may carry web text): only its words and components
 // with their own JSON are drawn, a `command` only when it runs a script under .bot/card-scripts (and the user allows it as for any
 // card), and the one request it may make is a component for Maintainer (`wants`, passed on once by bot/workers.ts).
+import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { CARD_CHART_RULE, INLINE_EXAMPLES } from "./inline-blocks";
@@ -35,8 +36,30 @@ export interface CardShow { name: string; data: string; at?: number; command?: s
 /** What a report is checked against: where card scripts may live, the folder paths are read from, and whether a component fills itself from its own command. */
 export interface CardRules { scriptsDir: string; folder: string; hasCommand: (name: string) => boolean }
 
-/** A component the worker asks Maintainer for (its `<component name="…">request</component>`; the first one only). */
+/**
+ * A component the worker asks Maintainer for (the first one only). The worker only describes the chart it wants in a nameless `<component>description</component>`:
+ * Maintainer decides what is built (a new component, or a new kind in an existing one such as inline-chart), what it is called and where it goes. The app gives
+ * such an ask a placeholder name (`unnamedCardAsk`); a worker that still writes `<component name="…">` keeps that name.
+ */
 export interface CardWant { name: string; request: string }
+
+/** The placeholder name of an ask the worker did not name: stable for the same description, so a re-read report is the same ask. */
+export const UNNAMED_CARD_ASK = "chart-request-";
+export const unnamedCardAsk = (request: string): string => UNNAMED_CARD_ASK + createHash("sha1").update(request).digest("hex").slice(0, 8);
+export const isUnnamedCardAsk = (name: string): boolean => name.startsWith(UNNAMED_CARD_ASK);
+
+/** The first nameless `<component>…</component>` outside fenced code, and the report without any such tag. */
+function takeUnnamedComponent(report: string): { rest: string; request?: string } {
+  const masked = report.replace(/```[\s\S]*?```/g, (code) => " ".repeat(code.length));
+  const tag = /<component\s*>\s*([\s\S]*?)\s*<\/component>/g;
+  let request: string | undefined, rest = "", last = 0, hit: RegExpExecArray | null;
+  while ((hit = tag.exec(masked))) {
+    const text = report.slice(hit.index, hit.index + hit[0].length).replace(/^<component\s*>\s*|\s*<\/component>$/g, "");
+    if (request === undefined && text.trim()) request = text.trim().slice(0, 4_000);
+    rest += report.slice(last, hit.index); last = hit.index + hit[0].length;
+  }
+  return { rest: rest + report.slice(last), ...(request !== undefined ? { request } : {}) };
+}
 
 /** One card, as chat.json keeps it. */
 export interface WorkerCardRecord {
@@ -160,7 +183,7 @@ export function cardSystemPrompt(brief: CardBrief): string {
 1. Gather what the card needs. When numbers need gathering, write a read-only script (it prints JSON or text and changes nothing) in ${brief.scriptsDir}/<short-name>/ and run it; write nowhere else and run nothing that changes anything. Every script a card command runs must live in ${brief.scriptsDir}/<short-name>/ (a script elsewhere, such as a helper already in the repo, is not run: copy it into that folder, or write it there, and point the command at the copy; arguments such as a row count are fine).
 2. Pick the components that fit from the list below.${usage} End your report with one <show name="component">JSON as its usage says</show> for each figure the card needs: several in a row when it needs several (for example three bar charts to compare side by side, or a chart and a table), drawn in the order you write them, at most ${CARD_SHOWS_MAX}; one figure is one <show>. When a script of yours prints that component's data and can run again, write <show name="component" command="python3 ${brief.scriptsDir}/<short-name>/<file>.py"></show> instead, so the card refreshes (a command whose script is outside that folder is rejected and you are told; the command is python3, node or bash, then that script, then plain arguments: no pipes, redirects or other commands). A component whose usage has a Command: needs only <show name="component"></show>.
 3. If none fits and a new one is not worth it, draw a matplotlib picture saved in the project (${brief.scriptsDir.replace(/\/card-scripts$/, "")}/artifacts/<name>.png) and end with <show name="inline-report-block">{"type":"image","src":"/full/path.png","alt":"caption"}</show> (a PNG or JPEG file). Never leave a picture only as a Markdown link: a ![caption](file:///full/path.png) in your words is drawn as that image component for you, but the <show> is the rule.
-4. If a new component is worth it, end with <component name="short-english-name">what it shows, its data format, where the data comes from</component> instead of a <show>, and stop: the app tells you when it is built (or why not), and then you fill the card. Ask for one at most.
+4. If none of the components fits and a new kind of figure is worth it, do not name or build anything: end with <component>the chart you want, described: what it must show, the shape of its data, and a short example of that data</component> instead of a <show>, and stop. Maintainer decides what is built (a new component, or a new kind in an existing one), what it is called and where it goes; the app tells you when it is ready (or why not), and then you fill the card. Ask for one at most.
 5. Your words: one or two sentences on what the card shows, in the user's language.
 ${CARD_CHART_RULE}
 Examples of the JSON of the inline components (the title states the point; for any other kind or type follow its usage below):
@@ -249,7 +272,9 @@ export function cardPictures(text: string, folder: string): { words: string; fou
 
 /** A report as the card keeps it: its words, its components with their JSON (and a script command, see `cardScriptCommand`), and the component it asks for. Never another command or request. */
 export function cardContent(report: string, rules?: CardRules): { text: string; shows: CardShow[]; rejected: string[]; want?: CardWant } {
-  const parsed = parseReply(report, []);
+  // The nameless ask is read first: parseReply knows only a `<component name="…">`, and the tag must not stay in the words.
+  const unnamed = takeUnnamedComponent(report);
+  const parsed = parseReply(unnamed.rest, []);
   const shows: CardShow[] = [];
   const rejected: string[] = [];
   for (const display of parsed.displays) {
@@ -276,7 +301,8 @@ export function cardContent(report: string, rules?: CardRules): { text: string; 
     }
   }
   const asked = parsed.requests.find((request) => request.kind === "component");
-  const want = asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) } : undefined;
+  const want = asked && asked.kind === "component" && asked.name.trim() && asked.request.trim() ? { name: asked.name.trim().slice(0, 100), request: asked.request.trim().slice(0, 4_000) }
+    : unnamed.request ? { name: unnamedCardAsk(unnamed.request), request: unnamed.request } : undefined;
   return { text: words.slice(0, CARD_TEXT_MAX), shows, rejected, ...(want ? { want } : {}) };
 }
 

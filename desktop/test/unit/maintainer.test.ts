@@ -12,6 +12,7 @@ import golden from "../fixtures/prompts-golden.json";
 import { componentEditorAgent, maintainerInstructions, pluginGuide } from "../../src/core/maintainer-text";
 import { MaintainerDesk, arrivalLead, classifySource, prepareLibrary } from "../../src/core/maintainer";
 import { ComponentLibrary } from "../../src/core/components/library";
+import { unnamedCardAsk } from "../../src/core/worker-cards";
 
 const M = (golden as unknown as { maintainer: Record<string, any> }).maintainer;
 const MAINTAINER = "DEC0DE00-0000-4000-8000-00000000DEC0";
@@ -148,6 +149,40 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       expect(r.told[0]![1]).toContain("No data source.");
       expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
     }
+  });
+
+  it("a chart the worker only described (no component name): Maintainer is told it decides everything (a new component, a new kind in an existing one, the name); give-component answers the worker, on no list; declined reaches it too", () => {
+    const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const r = cardRig(full, full);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    const placeholder = unnamedCardAsk("A dumbbell chart of median and p90 seconds per model.");
+    r.desk.requestComponentChange(placeholder, "A dumbbell chart of median and p90 seconds per model.", "Main bot", r.bot, [], "TASK4");
+    expect(handedTo).toHaveLength(1);
+    const handed = handedTo[0]!;
+    expect(handed).toContain("describes without naming a component: A dumbbell chart");
+    expect(handed).toContain("named no component and chose nothing");
+    expect(handed).toContain("whether an existing component (for example inline-chart) gets a new kind or option instead of a new component");
+    expect(handed).toContain('<give-component bot="Main bot">its name</give-component>');
+    expect(handed).not.toContain("wants a new component");
+    expect(r.told).toEqual([]);
+    // The placeholder never matches a library component: nothing is delivered on its own.
+    r.desk.deliverAsked();
+    expect(r.told).toEqual([]);
+    // Maintainer built (or extended) `todo`... any name: the worker is told, no list changes, the bot is not woken.
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told).toHaveLength(1);
+    expect(r.told[0]![0]).toBe("TASK4");
+    expect(r.told[0]![1]).toContain('The component "todo" is ready.');
+    expect(r.told[0]![1]).not.toContain("in place of");
+    expect(r.list()).toEqual(full);
+    expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
+    // And a refusal.
+    r.desk.requestComponentChange(placeholder + "x", "Another.", "Main bot", r.bot, [], "TASK5");
+    const key = /component-declined id="([0-9a-f]{8})"/.exec(handedTo[1]!)![1]!;
+    r.desk.decline(key, "Out of scope.");
+    expect(r.told[1]![0]).toBe("TASK5");
+    expect(r.told[1]![1]).toContain("Out of scope.");
   });
 
   it("a new component that lands in the library goes to its worker (its usage), on no list, even when the bot's list is full; a second ask of the same worker for it is one ask", () => {

@@ -7,7 +7,7 @@ import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_CATALOG_MAX, CARD_SHOWS_MAX, cardPictures, writeCardUsage, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardSystemPrompt, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS,
+  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_CATALOG_MAX, CARD_SHOWS_MAX, cardPictures, writeCardUsage, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardSystemPrompt, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS, isUnnamedCardAsk, unnamedCardAsk,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
 import { CARD_CHART_RULE, INLINE_EXAMPLES } from "../../src/core/inline-blocks";
@@ -201,7 +201,11 @@ describe("what a card worker is told: its own card in its message, the fixed rul
     expect(text).toContain("/p/repo/.bot/card-scripts/<short-name>/");
     expect(text).toMatch(/one <show name="component">JSON as its usage says<\/show> for each figure the card needs/);
     expect(text).toContain("matplotlib");
-    expect(text).toContain('<component name="short-english-name">');
+    // A new kind of figure is only described: no component name, no choice of where it goes (Maintainer's).
+    expect(text).toContain("<component>the chart you want, described: what it must show, the shape of its data, and a short example of that data</component>");
+    expect(text).toContain("do not name or build anything");
+    expect(text).toContain("Maintainer decides what is built");
+    expect(text).not.toContain("short-english-name");
     expect(text).toContain("read-only script");
   });
 
@@ -343,6 +347,18 @@ describe("cardContent with rules", () => {
     expect(one.text).toBe("No fit.");
     expect(cardContent('<component name="x"></component>', RULES).want).toBeUndefined();
     expect(cardContent("<new-bot name=\"evil\">go</new-bot> <install>github.com/x/y</install>", RULES).want).toBeUndefined();
+  });
+
+  it("a chart the worker only describes (a nameless <component>) is an ask under a placeholder name, and the tag leaves the words; a named one and a fenced one are as before", () => {
+    const text = "No fit. <component>A dumbbell chart: per model the median and p90 seconds; data: [{\"model\":\"haiku\",\"p50\":5,\"p90\":9}]</component>";
+    const one = cardContent(text, RULES);
+    expect(one.want).toEqual({ name: unnamedCardAsk('A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]'), request: 'A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]' });
+    expect(isUnnamedCardAsk(one.want!.name)).toBe(true);
+    expect(one.text).toBe("No fit.");
+    expect(cardContent(text, RULES).want!.name).toBe(one.want!.name);
+    expect(cardContent("<component>\n</component>", RULES).want).toBeUndefined();
+    expect(cardContent("```\n<component>quoted</component>\n```", RULES).want).toBeUndefined();
+    expect(cardContent('<component name="gpu">named</component> <component>nameless</component>', RULES).want).toEqual({ name: "gpu", request: "named" });
   });
 });
 
