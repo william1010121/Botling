@@ -827,11 +827,19 @@ describe("messages", () => {
 
   it("the toolbar's CSS puts the buttons away until the card is the target (hover, focus-within, an open box, notes or reply), keeps the Opus tag, and shows all on a touch screen", () => {
     const css = readChatCss();
-    const shown = css.match(/\.worker-card:is\([^)]*\) > \.worker-card-tools > \*[^{]*\{ opacity: 1;/)?.[0] ?? "";
-    for (const part of [":hover", ":focus-within", ".tools-open", ".notes-open", ".replying", ".worker-card-new"]) expect(shown).toContain(part);
+    // Every `:is(...)` list of the show rule (the card's own selector and the `.row ...` one for the cube) names every target.
+    const showRule = css.match(/\.worker-card:is\([^)]*\) > \.worker-card-tools > \*[^{]*\{ opacity: 1;/)?.[0] ?? "";
+    const lists = [...showRule.matchAll(/:is\(([^)]*)\)/g)].map((found) => found[1]);
+    expect(lists).toHaveLength(2);
+    for (const list of lists) for (const part of [":hover", ":focus-within", ".tools-open", ".notes-open", ".replying"]) expect(list).toContain(part);
+    expect(showRule).toContain(".worker-card-new");
     expect(css).toMatch(/\.worker-card-tools > :not\(\.worker-card-model\)[^{]*\{ opacity: 0; pointer-events: none;/);
-    expect(css).toMatch(/\.row \.worker-card-tools \.worker-card-new[^{]*\{ opacity: 0;/);
+    expect(css).toMatch(/\.row \.worker-card-tools \.worker-card-new \{ opacity: 0;/);
     expect(css).toMatch(/@media \(hover: none\) \{\s*\.worker-card-tools \{[^}]*\}\s*\.worker-card-tools > \*[^{]*\{ opacity: 1;/);
+    // The notes chevron turns while the notes are open; the data lines up with the reply's text (the frame is pulled out by the component's own padding).
+    expect(css).toContain(".worker-card.notes-open > .worker-card-tools .steps-toggle svg { transform: rotate(90deg); }");
+    expect(css).toMatch(/\.worker-card \{ --card-inset: 12px; \}/);
+    expect(css).toMatch(/\.worker-card-body > \.component \{ margin-left: calc\(-1 \* var\(--card-inset\)\); margin-right: calc\(-1 \* var\(--card-inset\)\); \}/);
     // Put-away parts really go: `display: flex` on the reply box and the notes would otherwise beat the hidden attribute.
     expect(css).toMatch(/\.worker-card-reply\[hidden\] \{ display: none; \}/);
     expect(css).toMatch(/\.worker-card-notes > \.worker-card-body\[hidden\] \{ display: none; \}/);
@@ -879,6 +887,34 @@ describe("messages", () => {
     expect(roots[0].classList.contains("tools-open")).toBe(true);
     expect(roots[1].classList.contains("tools-open")).toBe(false);
     document.querySelector<HTMLButtonElement>(".report .send")!.click();
+  });
+
+  it("a done card with nothing to draw (no words, no component, no warning) still says its title and state in one line", () => {
+    const row = messageElement(message({ id: "m84", workerCards: [{ id: "c19", title: "Prices", status: "done", run: 1, taskId: "T15", at: null }] }), {});
+    expect(row.querySelector(".worker-card-line .worker-card-title")?.textContent).toBe("Prices");
+    expect(row.querySelector(".worker-card-line .worker-card-detail")?.textContent).toBe("Done");
+  });
+
+  it("the reply box stays open through a redraw once opened (no draft), closes on Escape only while empty, and puts itself away after a send", () => {
+    const card = { id: "c20", title: "Prices", status: "done" as const, run: 1, taskId: "T16", at: null, text: "x" };
+    const row = messageElement(message({ id: "m85", workerCards: [card] }), {});
+    document.body.append(row);
+    const form = row.querySelector<HTMLFormElement>(".worker-card-reply")!;
+    const input = form.querySelector("input")!;
+    row.querySelector<HTMLButtonElement>(".worker-card-reply-toggle")!.click();
+    expect(messageElement(message({ id: "m85", workerCards: [card] }), {}).querySelector<HTMLFormElement>(".worker-card-reply")!.hidden).toBe(false);
+    // Escape with words in the box keeps it (and the words).
+    input.value = "half a thought";
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(form.hidden).toBe(false);
+    // Sending puts it away.
+    sent.length = 0;
+    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    expect(sent).toEqual([{ type: "cardSend", taskID: "T16", text: "half a thought" }]);
+    expect(form.hidden).toBe(true);
+    expect(row.querySelector(".worker-card")!.classList.contains("replying")).toBe(false);
+    expect(messageElement(message({ id: "m85", workerCards: [card] }), {}).querySelector<HTMLFormElement>(".worker-card-reply")!.hidden).toBe(true);
   });
 
   it("the toolbar can be reached by keyboard: a labelled toolbar of real buttons, none taken out of the tab order", () => {
