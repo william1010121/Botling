@@ -190,10 +190,11 @@ export class BotRestart {
   }
 
 
-  /** The prompt hash head.json kept for this session (the old core wrote it): none for an older file or another session. */
-  savedPromptHash(sessionId: string): { promptHash?: string } {
+  /** The prompt hash and the last model call head.json kept for this session (the old core wrote them): none for an older file or another session. */
+  savedPromptHash(sessionId: string): { promptHash?: string; lastModelAt?: number } {
     const saved = this.store.loadHead();
-    return saved?.sessionId === sessionId && saved.promptHash ? { promptHash: saved.promptHash } : {};
+    if (saved?.sessionId !== sessionId) return {};
+    return { ...(saved.promptHash ? { promptHash: saved.promptHash } : {}), ...(saved.lastModelAt !== undefined ? { lastModelAt: saved.lastModelAt } : {}) };
   }
 
   /** A hash of the system prompt this head's session would be created with now (engine differences included). */

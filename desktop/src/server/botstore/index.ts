@@ -359,7 +359,7 @@ export class DbBotStore implements BotStore {
     try {
       const text = this.listText(HEAD);
       const value = text === null ? undefined : JSON.parse(text) as Partial<HeadState> | undefined;
-      if (value && typeof value.sessionId === "string" && typeof value.started === "boolean") return { sessionId: value.sessionId, started: value.started, ...(typeof value.promptHash === "string" ? { promptHash: value.promptHash } : {}) };
+      if (value && typeof value.sessionId === "string" && typeof value.started === "boolean") return { sessionId: value.sessionId, started: value.started, ...(typeof value.promptHash === "string" ? { promptHash: value.promptHash } : {}), ...(typeof value.lastModelAt === "number" && Number.isFinite(value.lastModelAt) ? { lastModelAt: value.lastModelAt } : {}) };
     } catch { /* a new session then */ }
     return null;
   }

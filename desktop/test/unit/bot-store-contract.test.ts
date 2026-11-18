@@ -85,13 +85,13 @@ describe.each(BOT_STORES)("$name store", (impl) => {
     store.saveList("tasks.json", []);
     store.saveHead({ sessionId: "S1", started: false });
     expect(store.loadHead()).toEqual({ sessionId: "S1", started: false });
-    store.saveHead({ sessionId: "S1", started: true, promptHash: "h" });
+    store.saveHead({ sessionId: "S1", started: true, promptHash: "h", lastModelAt: 1_700_000_000_000 });
     await impl.reopen();
     const again = impl.open(dir);
     expect(again.loadList("pins.json")).toEqual([{ id: "p", text: "pinned" }]);
     expect(again.loadList("specs.json")).toEqual([{ id: "s" }, { id: "t" }]);
     expect(again.loadList("tasks.json")).toEqual([]);
-    expect(again.loadHead()).toEqual({ sessionId: "S1", started: true, promptHash: "h" });
+    expect(again.loadHead()).toEqual({ sessionId: "S1", started: true, promptHash: "h", lastModelAt: 1_700_000_000_000 });
   });
 
   it("subagents: the index without steps, steps appended per subagent, unchanged ids keep their entry, removed ones lose their steps", async () => {

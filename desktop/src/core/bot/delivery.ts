@@ -105,6 +105,23 @@ export class BotDelivery {
       if (!exited) await old.terminate(1_000);
       if (this.turn !== turn || !turn.open) return;
     }
+    // The one place every new turn passes before it is sent: a head that is still running (a long idle timer, a handed-over or given
+    // head) whose prompt cache went cold ends here too, so the turn goes to a new session (ensureHead) and not to the old one. Its own
+    // work under way (a subagent, a background command, an outage) is not cut off for it; a tidy turn is what a sleep runs.
+    if (turn.origin !== "tidy" && !this.host.shuttingDown && !this.ownWorkRunning && !this.host.tidying) {
+      const cold = this.head;
+      if (cold?.running && this.host.headRun.cacheCold()) {
+        this.log(`its prompt cache is cold and its process still runs: ending it, so this message starts a new session`);
+        // Given as the turn's head (or already its head): its exit below must not fail the turn.
+        if (turn.head === cold) turn.head = null;
+        cold.finish();
+        const exited = await Promise.race([cold.exited.then(() => true), sleep(5_000).then(() => false)]);
+        if (!exited) await cold.terminate(1_000);
+        if (this.turn !== turn || !turn.open) return;
+        // `given` was that head: gone now, so the new session's head (ensureHead) serves the turn.
+        given = undefined;
+      }
+    }
     const waking = !given && !this.head?.running;
     let head: AgentHead;
     try {

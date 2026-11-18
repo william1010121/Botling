@@ -19,7 +19,7 @@ import type { Bot } from "../bot";
 import { isBotTool, type BotToolName, type ToolCaller } from "../bot-tools";
 import type { BotContext } from "./context";
 import type { Engine, Heads } from "../heads";
-import { WARM_WINDOW_MS, type Outage } from "../network-resume";
+import { CACHE_TTL_MS, WARM_WINDOW_MS, type Outage } from "../network-resume";
 import { isPlainOK, type BotPrompts } from "../prompts";
 import type { BotSettingsView } from "../../contract";
 import { newId, toSwiftDate, type ChatRecord } from "../store/records";
@@ -108,11 +108,29 @@ export class BotHead {
 
   /**
    * When claude's own coordinator last made a model call (ms): its prompt cache (1-hour TTL) is warm only for WARM_WINDOW_MS after it.
-   * Null: not known (a new object after a restart), which forces nothing.
+   * It lives in `session` (so head.json keeps it and a restart or core swap hands it over with the session); a new session clears it.
+   * Null: not known (a session from an older head.json), which forces nothing.
    */
-  lastModelAt: number | null = null;
+  get lastModelAt(): number | null { return this.session.lastModelAt ?? null; }
+  set lastModelAt(at: number | null) { if (at === null) delete this.session.lastModelAt; else this.session.lastModelAt = at; }
+  /** When head.json last got the clock (it is written at most once a minute while the model works, and at every handover). */
+  private lastModelSavedAt = 0;
   /** The coordinator's own model call came in just now. */
-  modelCalled() { this.lastModelAt = Date.now(); }
+  modelCalled() {
+    const now = Date.now();
+    this.lastModelAt = now;
+    if (now - this.lastModelSavedAt >= 60_000 || now < this.lastModelSavedAt) { this.lastModelSavedAt = now; this.store.saveHead(this.session); }
+  }
+  /**
+   * The claude session's prompt cache is cold: its last model call is older than the warm window, so resuming would write the whole
+   * conversation again at the full price. The one exception, kept narrow: a session handed over by a restart or a core swap (`adopted`: a
+   * cut-off turn or its workers were in flight) is resumed as it is while the cache's real TTL has not passed; past CACHE_TTL_MS nothing
+   * of it is warm, so even that starts afresh. Unknown age (null) forces nothing.
+   */
+  cacheCold(adopted = this.adoptedSession): boolean {
+    if (this.engine !== "claude" || !this.session.started || this.briefing || this.lastModelAt === null) return false;
+    return Date.now() - this.lastModelAt > (adopted ? CACHE_TTL_MS : WARM_WINDOW_MS);
+  }
 
   /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
   adoptedSession = false;
@@ -127,7 +145,7 @@ export class BotHead {
   /** The session goes by this id from now on (the id its process reported). */
   sessionRenamed(sessionId: string) { this.session.sessionId = sessionId; }
   /** An earlier session goes on as it was (a conversation saved, or the one a lost network cut off): it is resumed, so no wake briefing. */
-  sessionResumed(sessionId: string) { this.session = { sessionId, started: true }; this.briefing = false; }
+  sessionResumed(sessionId: string) { this.session = { sessionId, started: true, ...(this.session.lastModelAt !== undefined ? { lastModelAt: this.session.lastModelAt } : {}) }; this.briefing = false; }
   /** An earlier session goes on as `session` says (a restart or a core swap handed it over). */
   sessionAdopted(session: HeadState) { this.session = session; }
   /** The session was handed over (`adopted`): its first message goes as it is, once. */
@@ -165,9 +183,9 @@ export class BotHead {
     }
     // Its last model call is older than the cache's warm window: resuming would write the whole conversation again at the full
     // price (eeg, 2026-11-17: 243,988 tokens written, none read), so it starts afresh from memory.md and the chat instead, as a
-    // wake does. A session handed over by a restart (a cut-off turn) is resumed exactly as it was.
-    else if (this.engine === "claude" && this.session.started && !this.briefing && !adopted && this.lastModelAt !== null && Date.now() - this.lastModelAt > WARM_WINDOW_MS) {
-      this.log(`its prompt cache is cold (last model call ${Math.round((Date.now() - this.lastModelAt) / 60_000)} min ago): a new session instead of resuming`);
+    // wake does. A session handed over by a restart (a cut-off turn) is resumed as it was until the cache's real TTL has passed.
+    else if (this.cacheCold(adopted)) {
+      this.log(`its prompt cache is cold (last model call ${Math.round((Date.now() - this.lastModelAt!) / 60_000)} min ago): a new session instead of resuming`);
       this.newSession();
       this.startedFresh = true;
     }
@@ -300,8 +318,8 @@ export class BotHead {
     }
     this.host.delivery.forgetQueuedNote();
     this.freshSessionPending = false;
+    // A new object: the old session's model clock (`lastModelAt`) stays behind with it.
     this.session = { sessionId: randomUUID(), started: false };
-    this.lastModelAt = null;
     this.briefing = true;
     this.host.recordsBook.forgetReactions();
     this.host.cards.forgetBriefed();
