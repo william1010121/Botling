@@ -286,6 +286,8 @@ export const en = {
   "questions.submit": "Submit answers",
   "questions.progress": "{done} of {total} answered",
   "questions.count": "{n} questions",
+  "component.notFound": "Component not found: {name}",
+  "component.notFoundHint": "It is not in the component library, so nothing can be drawn. Ask the bot to show it with another component.",
   "component.updating": "Component being updated",
   "component.report": "Report this component",
   "component.updated": "Updated",

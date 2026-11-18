@@ -160,6 +160,20 @@ function checkProgress(block: Record<string, unknown>): string | null {
 }
 
 /**
+ * The error for a `<show name>` that is no component of the library (haiku wrote `name="progress"`: nothing draws it, and the card was accepted as done with no
+ * error), or null when `name` is `known`. It names the components there are, and, when the name is one of inline-report-block's types or inline-chart's kinds,
+ * the component and field that mean it. `names` is the list shown to the worker (the library's, without the pin-only ones).
+ */
+export function unknownComponentError(name: string, known: readonly string[], names: readonly string[]): string | null {
+  if (known.includes(name)) return null;
+  const lower = name.trim().toLowerCase();
+  const hint = REPORT_BLOCK_TYPES.some((type) => type === lower) && known.includes("inline-report-block") ? `for a ${lower} block use inline-report-block with type "${lower}". `
+    : CHART_KIND_NAMES.includes(lower) && known.includes("inline-chart") ? `for a ${lower} chart use inline-chart with "kind": "${lower}". ` : "";
+  const shown = names.slice(0, 40).join(", ") + (names.length > 40 ? `, … (${names.length - 40} more)` : "");
+  return `is not in the library: ${hint}Use name="…" of one of these components: ${shown}`;
+}
+
+/**
  * The error of one `<show>`'s JSON for the component `name`, or null when it is fine, the component has no schema here, or the check itself could not run. Never throws.
  * `template` is the component's live template.html (the library's copy, which Maintainer may have extended): its own list of kinds / types is the one that counts.
  */
