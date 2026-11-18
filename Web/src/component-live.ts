@@ -2,7 +2,7 @@ import { post } from "./bridge";
 import { t } from "./i18n";
 import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
-import { onScreen, whenShownAgain } from "./visible";
+import { onScreen, whenShownAgain, windowVisible } from "./visible";
 import { escapeHTML } from "./util";
 import type { ChoiceView, ComponentInfo, DisplayView } from "./types";
 import { resizeFrame, type ComponentFrame } from "./component-page";
@@ -102,33 +102,88 @@ const liveRuns = new Map<string, () => void>();
 const liveSchedule = new LiveSchedule();
 let liveTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * The cards that refresh by themselves, as they are made: the tick walks only these, never the whole page. `seen`: it has been
+ * on the page (a card made but not put there, as a redraw's copy of a kept card, is dropped once `liveGrace` has passed).
+ */
+const liveCards = new Map<HTMLElement, { born: number; seen: boolean; card: LiveCard }>();
+/** How long a card that is not on the page yet is waited for, in ms. */
+const liveGrace = 2000;
+/** How long a card that is due but out of view is left alone before it is measured again, in ms (measuring it lays the page out). */
+export const offscreenRecheck = 1000;
+const offscreenUntil = new WeakMap<HTMLElement, number>();
+/** How many cards the tick looks after (for tests: a card gone from the page must not stay here). */
+export function liveCardCount(): number {
+  return liveCards.size;
+}
+
+/** The time of the tick being made (what `ready` measures against). */
+let tickNow = 0;
+
 // Shown again (the window was minimized, hidden or covered): those overdue run at once.
 whenShownAgain(() => refreshDueCards());
 
-/** Runs the cards whose time has come and that are on screen; how many ran. */
-export function refreshDueCards(now = Date.now()): number {
-  const cards = [...document.querySelectorAll<HTMLElement>(".command-card[data-every]")];
-  const ran = liveSchedule.tick(cards.map((card): LiveCard => {
-    const key = card.dataset.liveKey ?? "";
-    return {
-      key,
-      every: Number(card.dataset.every),
-      idle: card.dataset.status === "done" || card.dataset.status === "failed",
-      // Not seen (visible.ts: the window shown, its tab showing, scrolled into view), or its
-      // frame not built yet (it is built once near): it waits.
-      ready: () => onScreen(card) && builtFrames(card),
-      run: () => liveRuns.get(key)?.(),
-    };
-  }), now);
-  if (!cards.length && liveTimer) {
-    clearInterval(liveTimer);
-    liveTimer = null;
-    liveSchedule.clear();
-  }
-  return ran;
+/** A card as the schedule sees it: its state is read from the element when asked, so one object serves every tick. */
+function liveCard(card: HTMLElement): LiveCard {
+  const key = card.dataset.liveKey ?? "";
+  return {
+    key,
+    get every() { return Number(card.dataset.every); },
+    get idle() { return card.dataset.status === "done" || card.dataset.status === "failed"; },
+    // Not seen (visible.ts: the window shown, its tab showing, scrolled into view), or its
+    // frame not built yet (it is built once near): it waits. A card out of view is measured
+    // only now and then, not at every tick while it is overdue.
+    ready: () => {
+      if (!windowVisible()) return false;
+      if (tickNow < (offscreenUntil.get(card) ?? 0)) return false;
+      if (!onScreen(card)) {
+        offscreenUntil.set(card, tickNow + offscreenRecheck);
+        return false;
+      }
+      return builtFrames(card);
+    },
+    run: () => liveRuns.get(key)?.(),
+  };
 }
 
-function watchLiveCards(): void {
+/** Runs the cards whose time has come and that are on screen; how many ran. */
+export function refreshDueCards(now = Date.now()): number {
+  const here: LiveCard[] = [];
+  const gone = new Set<string>();
+  const kept = new Set<string>();
+  for (const [element, entry] of liveCards) {
+    if (element.isConnected) {
+      entry.seen = true;
+      here.push(entry.card);
+      kept.add(entry.card.key);
+    } else if (entry.seen || now - entry.born > liveGrace) {
+      liveCards.delete(element);
+      gone.add(entry.card.key);
+    } else {
+      kept.add(entry.card.key);
+    }
+  }
+  // A card nothing on the page stands for any more is forgotten (a redraw's kept card still holds its key).
+  for (const key of gone) {
+    if (kept.has(key)) continue;
+    liveRuns.delete(key);
+    liveSchedule.forget(key);
+  }
+  if (!here.length) {
+    // A card made but not put on the page yet (inside its grace) is still waited for: the timer and its run stay.
+    if (liveCards.size) return 0;
+    if (liveTimer) clearInterval(liveTimer);
+    liveTimer = null;
+    liveRuns.clear();
+    liveSchedule.clear();
+    return 0;
+  }
+  tickNow = now;
+  return liveSchedule.tick(here, now);
+}
+
+function watchLiveCards(card: HTMLElement): void {
+  liveCards.set(card, { born: Date.now(), seen: false, card: liveCard(card) });
   liveTimer ??= setInterval(() => refreshDueCards(), liveTick);
 }
 
@@ -155,7 +210,7 @@ export function commandCard(
     card.dataset.every = String(Math.max(1, display.every));
     card.dataset.liveKey = key;
     liveRuns.set(key, () => run({ force: true, live: true }));
-    watchLiveCards();
+    watchLiveCards(card);
   }
 
   if (display.command && options.bar !== false) {
