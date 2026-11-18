@@ -43,6 +43,10 @@ describe("headArguments", () => {
     for (const gone of ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources"]) expect(plain).not.toContain(gone);
     expect(flag(plain, "--plugin-dir")).toBe("/plug");
   });
+  it("a harmless (test) session is never lean", () => {
+    const args = headArguments({ ...base, ...app, harmless: true, lean: true, systemPrompt: "RULES", pluginDirs: ["/plug"] });
+    for (const gone of ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources"]) expect(args).not.toContain(gone);
+  });
   it("gives a harmless (test) session neither", () => {
     const args = headArguments({ ...base, ...app, harmless: true });
     expect(args).not.toContain("--mcp-config");

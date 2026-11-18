@@ -200,7 +200,9 @@ ${components}${brief.others ? `\nAlso in the library, usage not shown here (end 
  * and only a regular file counts as "already what it should be".
  */
 export function writeCardUsage(dir: string, entries: readonly { name: string; text: string }[]): void {
-  try { if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir); } catch { /* not there yet */ }
+  let linked = false;
+  try { linked = lstatSync(dir).isSymbolicLink(); } catch { /* not there yet */ }
+  if (linked) unlinkSync(dir);
   mkdirSync(dir, { recursive: true });
   const keep = new Set<string>();
   for (const { name, text } of entries) {

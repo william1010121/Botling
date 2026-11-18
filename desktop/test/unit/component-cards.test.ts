@@ -2,7 +2,7 @@
 // usage (component-via-cards, 2026-11-18). Two layers: the knowledge a bot is told (`componentKnowledgeFor`, `knowledgeFull`, `knowledgeChanges`), and a real
 // bot (`BotCards`) with a library: what its wake note holds, what a card worker is given, and when the old whole list is still told.
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Core } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
@@ -209,6 +209,23 @@ describe("a bot with the cards", () => {
       const text = cardSystemPrompt(brief);
       expect(text).toContain(`${brief.usageDir}/<name>.md`);
       expect(text).toContain("Components you may use, one line each:");
+    } finally { await core.shutdown(); }
+  });
+
+  it("a pin-only component has no line and no usage file; a usage folder that cannot be made gives no catalog brief (the caller falls back to the usages up front)", async () => {
+    const { core, flux, folder } = bot(null, "flux-pinned", { "inline-chart": "Inline chart.\nBuilt-in: yes\nData: {}", pinned: "A pin.\nPin only: yes\nCommand: echo hi\n", plain: "A plain card.\nData: {}" });
+    try {
+      const brief = flux.cards.cardCatalogBrief();
+      expect(brief.components).toContain("- plain (JSON): ");
+      expect(brief.components).not.toContain("pinned");
+      expect(existsSync(join(brief.usageDir, "pinned.md"))).toBe(false);
+      expect(existsSync(join(brief.usageDir, "plain.md"))).toBe(true);
+      // A file where the folder should be: nothing can be written there.
+      rmSync(brief.usageDir, { recursive: true });
+      writeFileSync(brief.usageDir, "not a folder");
+      expect(flux.cards.cardCatalogBrief()).toBeNull();
+      const whole = flux.cards.cardBrief();
+      expect(`${whole.components}\n${whole.others}`).toContain("- plain");
     } finally { await core.shutdown(); }
   });
 

@@ -168,7 +168,8 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(handed).toContain("describes without naming a component: A dumbbell chart");
     expect(handed).toContain("named no component and chose nothing");
     expect(handed).toContain("whether an existing component (for example inline-chart) gets a new kind or option instead of a new component");
-    expect(handed).toMatch(/<give-component bot="Main bot" id="[0-9a-f]{8}">its name<\/give-component>/);
+    // Both places that name the answer carry the ask's id.
+    expect(handed.match(/<give-component bot="Main bot" id="[0-9a-f]{8}">its name<\/give-component>/g)).toHaveLength(2);
     expect(handed).not.toContain("wants a new component");
     expect(working).toEqual([]);
     expect(r.told).toEqual([]);
@@ -222,6 +223,33 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(r.told).toHaveLength(3);
     // Neither of them touched the list.
     expect(r.list()).toEqual(full);
+  });
+
+  it("a pin-only name does not answer a card's chart; a name the bot asked for itself goes on its list as before, and a nameless-looking ask of the bot's own (no card) is no card's", () => {
+    const r = cardRig(["status"]);
+    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    const ask = unnamedCardAsk("A chart.");
+    r.desk.requestComponentChange(ask, "A chart.", "Main bot", r.bot, [], "TASK-A");
+    // A pin-only component is never a card's.
+    r.desk.changeList(true, "secret", "Main bot");
+    expect(r.told).toEqual([]);
+    // The bot itself waits for `weather` (no card): the library gets it, Maintainer gives it: the bot's ask is answered and the list grows, the card keeps waiting.
+    r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, []);
+    r.make("weather");
+    r.library.rescan();
+    r.desk.changeList(true, "weather", "Main bot");
+    expect(r.told).toEqual([]);
+    expect(r.list()).toContain("weather");
+    // Then the card's own answer still works.
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
+    // A bot's own plain ask that happens to carry a placeholder-looking name is not a card's: the component goes on its list.
+    const r2 = cardRig(["status"]);
+    (r2.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    r2.desk.requestComponentChange("chart-request-deadbeef", "a chart", "Main bot", r2.bot, []);
+    r2.desk.changeList(true, "todo", "Main bot");
+    expect(r2.list()).toContain("todo");
+    expect(r2.told).toEqual([]);
   });
 
   it("<give-component bot=…> answers only a card of that bot, never another bot's waiting card", () => {

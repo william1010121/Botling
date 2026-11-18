@@ -414,6 +414,29 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ taskId: "T2", model: "opus", status: "running" });
   });
 
+  const catalog = { components: "- one (JSON): CATALOG-LINE", others: "", scriptsDir: "/p/.bot/card-scripts", usageDir: "/p/.bot/card-usage" };
+  const whole = { components: "WHOLE-USAGE-MARKER", others: "", scriptsDir: "/p/.bot/card-scripts" };
+  async function redoText(brief: typeof catalog | null) {
+    const r = rig();
+    r.peek.cards.cardCatalogBrief = () => brief;
+    r.peek.cards.cardBrief = () => whole;
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2" });
+    return String(handoffCalls(r)[1]![1].instructions);
+  }
+  it("the redo is given the catalog brief (usage files) like the first worker", async () => {
+    const text = await redoText(catalog);
+    expect(text).toContain("CATALOG-LINE");
+    expect(text).not.toContain("WHOLE-USAGE-MARKER");
+  });
+  it("the redo is given the usages up front when the usage files cannot be written", async () => {
+    const text = await redoText(null);
+    expect(text).toContain("WHOLE-USAGE-MARKER");
+    expect(text).not.toContain("CATALOG-LINE");
+  });
+
   it("from then on the card follows the opus worker only, and the user's words on the card go to its task id", async () => {
     const r = rig();
     const record = await finished(r);

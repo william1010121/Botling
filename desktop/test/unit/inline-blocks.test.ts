@@ -465,6 +465,26 @@ describe("the component lines", () => {
     expect(knowledgeFull(componentKnowledgeFor(library, ["table"]))).not.toContain("needs no lookup");
     expect(knowledgeFull(componentKnowledgeFor(library, ["table"], false))).toBe(knowledgeFull(componentKnowledgeFor(library, ["table"])));
   });
+  it("a Claude bot with app workers that reaches components by cards and has the guidance writes only <card>: no inline blocks, no example promise in its note; Maintainer, Codex and native-subagent bots keep both", () => {
+    const here = folder();
+    const make = (over: { engine?: string; workers?: boolean; id?: string }) => {
+      const lib = new ComponentLibrary(() => [cardsFolder]);
+      const owner: any = { profile: { folder: here, id: over.id ?? "bot-1" }, engine: over.engine ?? "claude", workers: { claudeWorkersOn: () => over.workers ?? true }, readOnly: false, store: { saveSetting() {} } };
+      const host: any = { readOnly: false, records: [], updated() {} };
+      const ctx: any = { options: { components: { library: lib }, launch: () => ({ subagentHourCache: false, inlineBlockGuidance: "all", componentsViaCards: true }) }, id: "bot-1", owner, peers: [], store: owner.store };
+      const bot = new BotCards(host, ctx);
+      owner.cards = bot;
+      bot.componentList = [];
+      return bot.componentNote();
+    };
+    const cardsOnly = make({});
+    expect(cardsOnly).not.toContain("needs no lookup");
+    expect(cardsOnly).not.toContain("- inline-chart");
+    for (const keeps of [make({ id: "DEC0DE00-0000-4000-8000-00000000DEC0" }), make({ engine: "codex" }), make({ workers: false })]) {
+      expect(keeps).toContain("needs no lookup");
+      expect(keeps).toContain("- inline-chart");
+    }
+  });
   it("a bot's note follows settings.json inlineBlockGuidance (launch) and its project folder", () => {
     const make = (guidance: unknown, folder: string) => {
       const lib = new ComponentLibrary(() => [cardsFolder]);

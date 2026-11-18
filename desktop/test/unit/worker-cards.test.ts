@@ -614,6 +614,20 @@ describe("the catalog brief's system prompt (progressive disclosure)", () => {
   });
 });
 
+describe("the nameless ask's edges", () => {
+  const rules = { scriptsDir: "/p/.bot/card-scripts", folder: "/p", hasCommand: () => false } as CardRules;
+  it("an empty <component></component> asks for nothing and does not hide a later one; the description is cut at 4000 characters", () => {
+    const content = cardContent("Words.\n<component>  </component>\n<component>A real chart.</component>", rules);
+    expect(content.want).toEqual({ name: unnamedCardAsk("A real chart."), request: "A real chart." });
+    expect(content.text).toContain("Words.");
+    expect(content.text).not.toContain("component>");
+    expect(cardContent("<component></component>", rules).want).toBeUndefined();
+    const long = cardContent(`<component>${"x".repeat(5_000)}</component>`, rules).want!;
+    expect(long.request).toHaveLength(4_000);
+    expect(long.name).toBe(unnamedCardAsk("x".repeat(4_000)));
+  });
+});
+
 describe("writeCardUsage", () => {
   it("writes one file per component, leaves one that is already right alone, rewrites a changed one and removes the .md of a component that is gone (other files stay)", () => {
     const dir = join(tempDir("card-usage"), "card-usage");

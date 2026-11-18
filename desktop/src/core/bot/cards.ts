@@ -131,7 +131,8 @@ export class BotCards {
     const examples = inlineBlocksFor({ inlineBlockGuidance: this.options.launch?.().inlineBlockGuidance }, this.owner.profile.folder);
     // A Claude bot that can start `<card>` workers is told the built-in components only; a card's worker picks from the rest (`cardBriefing`).
     // The same test as the prompt's (prompts.ts): a head that writes only `<card>` has neither the examples nor the inline blocks in its note.
-    const cardsOnly = headWritesCards(this.owner.engine, this.owner.workers.claudeWorkersOn(), examples, this.owner.profile.id === MAINTAINER_ID);
+    const appWorkers = this.owner.engine === "claude" && this.owner.workers.claudeWorkersOn();
+    const cardsOnly = headWritesCards(this.owner.engine, appWorkers, examples, this.owner.profile.id === MAINTAINER_ID);
     return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards(), cardsOnly);
   }
 
