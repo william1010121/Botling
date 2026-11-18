@@ -162,6 +162,8 @@ export interface TaskChipView {
   /** A cron job's five fields ("30 9 * * 1-5"), and whether it fires on every match. */
   schedule?: string | null;
   recurring?: boolean | null;
+  /** One of the bot's own routines (not a task its head started): how it stands, in the Routines panel's words, and when it last ran. */
+  routine?: { state: "scheduled" | "watching" | "due" | "failing"; last: { at: number; result: "sent" | "ok" | "failed" } | null } | null;
   /** The subagent that started it (absent: the bot itself). */
   owner?: { kind: "subagent"; id: string; label: string } | null;
 }

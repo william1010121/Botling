@@ -2,6 +2,7 @@
 // "‹ botling / Release ▾" shown in its place inside a sub bot, and ⌘[ / ⌘] between the two. The pure part
 // (SubBotNav.tsx draws it). A sub bot is a room the user opened on purpose; it is never a row of the left column.
 import type { BotView, RoutineView, WaitingView } from "../contract";
+import { cadence, clock, distance, groupOf, standing, type Tone } from "../../../Web/src/routine-words";
 import { elapsedText } from "./rail-idle";
 
 /** The status dot on a row's square face: blue at work, green an unread report, orange waits on you, red a problem, grey idle. */
@@ -22,9 +23,11 @@ export interface SubBotRow {
   status: string | null;
   /** The row's top-right word: asks / new / error, or how long it has been idle. */
   badge: SubBotBadge | null;
-  /** When its soonest routine runs next (ms), and that routine's schedule ("Every day 09:00"); null: none will run. */
+  /** When its soonest routine runs next (ms), and how often that routine runs ("Daily 09:00", the same words as the Routines panel); null: none will run. */
   next: number | null;
   schedule: string | null;
+  /** How its routines stand, in the panel's dot words ("Scheduled", "Failing", "Not confirmed") and colour; null: it has none worth a dot. */
+  routine: { word: string; tone: Tone } | null;
 }
 
 export type SubBotSection = { title: "Needs you" | "Pinned" | "Active" | "Scheduled" | "Idle"; rows: SubBotRow[] };
@@ -46,30 +49,22 @@ function tintOf(id: string): number {
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const pad = (value: number) => String(value).padStart(2, "0");
-/** When a routine runs next, in the viewer's time: "today 18:00", "tomorrow 09:00", "Thu 10:30" within the week, else "Nov 20 09:00". */
-export function whenText(at: number, now: number): string {
-  const when = new Date(at);
-  const clock = `${pad(when.getHours())}:${pad(when.getMinutes())}`;
-  const day = (time: Date) => new Date(time.getFullYear(), time.getMonth(), time.getDate()).getTime();
-  const days = Math.round((day(when) - day(new Date(now))) / 86_400_000);
-  if (days <= 0) return `today ${clock}`;
-  if (days === 1) return `tomorrow ${clock}`;
-  if (days < 7) return `${DAYS[when.getDay()]} ${clock}`;
-  return `${MONTHS[when.getMonth()]} ${when.getDate()} ${clock}`;
-}
-
-/** Its routine that runs soonest (enabled, with a next run), or null. */
+/** Its routine that runs soonest (it will run: pending or enabled, with a next run), or null. */
 function soonest(routines: readonly RoutineView[]): { at: number; schedule: string } | null {
   let best: { at: number; schedule: string } | null = null;
   for (const routine of routines) {
     const at = routine.next ? Date.parse(routine.next) : NaN;
-    if (routine.status !== "enabled" || !Number.isFinite(at)) continue;
-    if (!best || at < best.at) best = { at, schedule: routine.schedule };
+    if ((routine.status !== "enabled" && routine.status !== "pending") || !Number.isFinite(at)) continue;
+    if (!best || at < best.at) best = { at, schedule: cadence(routine) };
   }
   return best;
+}
+
+/** What its routines say about themselves: the first that needs a look (a failing watch, a send nobody confirmed), else Scheduled while one will run. */
+function routineStanding(routines: readonly RoutineView[], coming: boolean): { word: string; tone: Tone; title: string | null } | null {
+  const attention = routines.find((routine) => groupOf(routine) === "attention");
+  if (attention) return { ...standing(attention), title: attention.title || null };
+  return coming ? { word: "Scheduled", tone: "ok", title: null } : null;
 }
 
 /** One row of the menu, from the sub bot, what waits on you, and its routines (read from its own routines.cron). */
@@ -87,12 +82,15 @@ export function subBotRow(bot: BotView, waiting: WaitingView, now: number, routi
     : dot === "error" ? { kind: "error", text: "error" } : dot === "idle" && Number.isFinite(since) ? { kind: "time", text: elapsedText(Math.max(0, now - since)) } : null;
   const initial = bot.name.trim().charAt(0).toUpperCase() || "?";
   const next = soonest(routines);
-  // Idle with a routine coming: it says when it wakes instead of how long it slept.
-  if (dot === "idle" && next) {
-    return { id: bot.id, name: bot.name, initial, tint: tintOf(bot.id), dot, purpose, status: `Next ${whenText(next.at, now)}`,
-      badge: { kind: "time", text: `⟳ ${next.schedule}` }, next: next.at, schedule: next.schedule };
+  const state = routineStanding(routines, next !== null);
+  // Idle with a routine coming (or one that needs a look): it says how it stands and when it wakes instead of how long it slept.
+  if (dot === "idle" && (next || state)) {
+    const when = next ? `Next ${clock(next.at, now)} · ${distance(next.at, now)}` : null;
+    const lead = state ? [state.word, state.title].filter(Boolean).join(" · ") : null;
+    return { id: bot.id, name: bot.name, initial, tint: tintOf(bot.id), dot, purpose, status: [lead, when].filter(Boolean).join(" · ") || null,
+      badge: next ? { kind: "time", text: `⟳ ${next.schedule}` } : badge, next: next?.at ?? null, schedule: next?.schedule ?? null, routine: state && { word: state.word, tone: state.tone } };
   }
-  return { id: bot.id, name: bot.name, initial, tint: tintOf(bot.id), dot, purpose, status, badge, next: next?.at ?? null, schedule: next?.schedule ?? null };
+  return { id: bot.id, name: bot.name, initial, tint: tintOf(bot.id), dot, purpose, status, badge, next: next?.at ?? null, schedule: next?.schedule ?? null, routine: null };
 }
 
 const needsYou = (row: SubBotRow) => row.dot === "asks" || row.dot === "error";

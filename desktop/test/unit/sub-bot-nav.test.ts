@@ -142,26 +142,40 @@ describe("⌘[ and ⌘] between the project bot and its sub bot", () => {
 
 // ---- Navigation v5, part 3: Scheduled, Pinned, ⌘⌥1–9, drag order, "New while you were in X", reduced motion.
 import type { RoutineView } from "../../src/contract";
-import { flashMs, leaveMark, movePinned, newSinceMark, pinnedTarget, togglePinned, whenText } from "../../src/renderer/sub-bot-nav";
+import { flashMs, leaveMark, movePinned, newSinceMark, pinnedTarget, togglePinned } from "../../src/renderer/sub-bot-nav";
+import { clock } from "../../../Web/src/routine-words";
 
 const routine = (over: Partial<RoutineView>): RoutineView => ({ id: "cron:1", kind: "legacy", task: "audit", title: "audit", schedule: "Every day 09:00", cron: "0 9 * * *", timezone: "system_local", status: "enabled", next: null, ...over });
 
 describe("scheduled sub bots", () => {
   const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).getTime();
-  it("writes when it next runs: today, tomorrow, a weekday within the week, else the date", () => {
+  it("writes when it next runs, in the panel's words: today, tomorrow, a weekday within the week, else the date", () => {
     const now = at(8, 12);
-    expect(whenText(at(8, 18), now)).toBe("today 18:00");
-    expect(whenText(at(9, 9), now)).toBe("tomorrow 09:00");
-    expect(whenText(at(12, 10, 30), now)).toBe("Thu 10:30");
-    expect(whenText(at(20, 9), now)).toBe("Nov 20 09:00");
+    expect(clock(at(8, 18), now)).toBe("Today 18:00");
+    expect(clock(at(9, 9), now)).toBe("Tomorrow 09:00");
+    expect(clock(at(12, 10, 30), now)).toBe("Thu 10:30");
+    expect(clock(at(20, 9), now)).toBe("Nov 20, 09:00");
   });
-  it("an idle sub bot with a routine that will run is Scheduled, soonest first, with ⟳ and its next run", () => {
+  it("an idle sub bot with a routine that will run is Scheduled, soonest first, with ⟳, the cron in words, its standing and its next run", () => {
     const now = at(8, 12);
     const a = subBotRow(sub("a", "Nightly audit"), none, now, [routine({ next: new Date(at(9, 9)).toISOString() })]);
-    const b = subBotRow(sub("b", "Weekly report"), none, now, [routine({ schedule: "Mon 10:00", next: new Date(at(9, 8)).toISOString() }), routine({ id: "x", next: null, status: "paused" })]);
+    const b = subBotRow(sub("b", "Weekly report"), none, now, [routine({ schedule: "Mon 10:00", cron: "0 10 * * 1", next: new Date(at(9, 8)).toISOString() }), routine({ id: "x", next: null, status: "paused" })]);
     const idle = subBotRow(sub("c", "Idle"), none, now, []);
-    expect(a).toMatchObject({ dot: "idle", next: at(9, 9), schedule: "Every day 09:00", badge: { kind: "time", text: "⟳ Every day 09:00" }, status: "Next tomorrow 09:00" });
+    expect(a).toMatchObject({ dot: "idle", next: at(9, 9), schedule: "Daily 09:00", badge: { kind: "time", text: "⟳ Daily 09:00" }, status: "Scheduled · Next Tomorrow 09:00 · in 21 h", routine: { word: "Scheduled", tone: "ok" } });
+    expect(b).toMatchObject({ schedule: "Every Mon 10:00", status: "Scheduled · Next Tomorrow 08:00 · in 20 h" });
     expect(subBotSections([a, idle, b]).map((section) => [section.title, section.rows.map((row) => row.id)])).toEqual([["Scheduled", ["b", "a"]], ["Idle", ["c"]]]);
+  });
+  it("an app-owned schedule (pending) counts, and a routine that needs a look leads the status with its word and name", () => {
+    const now = at(8, 12);
+    const pending = subBotRow(sub("a", "A"), none, now, [routine({ id: "p", kind: "recurring", status: "pending", next: new Date(at(8, 18)).toISOString() })]);
+    expect(pending).toMatchObject({ next: at(8, 18), status: "Scheduled · Next Today 18:00 · in 6 h" });
+    const failing = subBotRow(sub("b", "B"), none, now, [
+      routine({ id: "w", title: "Disk", status: "enabled", next: new Date(at(8, 12, 10)).toISOString(), watch: { command: "./c.sh", state: "failing", lastRun: null, exit: 3, timedOut: false } }),
+    ]);
+    expect(failing).toMatchObject({ routine: { word: "Failing", tone: "bad" }, status: "Failing · Disk · Next Today 12:10 · in 10 min" });
+    const unsure = subBotRow(sub("c", "C"), none, now, [routine({ id: "u", title: "Call", kind: "once", status: "delivery_uncertain", next: null })]);
+    expect(unsure).toMatchObject({ next: null, routine: { word: "Not confirmed", tone: "warn" }, status: "Not confirmed · Call" });
+    expect(subBotSections([unsure])[0]!.title).toBe("Idle");
   });
   it("a working one stays Active even with a routine", () => {
     const row = subBotRow(sub("a", "A", { working: true }), none, 0, [routine({ next: new Date(5_000).toISOString() })]);

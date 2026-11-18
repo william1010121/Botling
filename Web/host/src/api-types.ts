@@ -308,6 +308,8 @@ export interface RoutineRow {
   schedule: string; cron?: string | null; timezone: string;
   /** pending, due, paused, fired, cancelled, delivery_uncertain; enabled/paused for routines.cron. */
   status: string; next: string | null;
+  /** When it last ran (ISO-8601) and how that went ("sent": handed to the bot; "ok" / "failed": a watch's command); null: not yet. */
+  lastRun?: string | null; lastResult?: "sent" | "ok" | "failed" | null;
   /** A watch ("Name: !command"): the app runs the command and wakes the bot only when it fails; its last run, if any. */
   watch?: { command: string; state: "never" | "ok" | "failing"; lastRun: string | null; exit: number | null; timedOut: boolean };
 }

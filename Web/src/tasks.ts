@@ -231,14 +231,62 @@ function scheduledWords(kind: string, fires: number | null, schedule: string | n
   return fires != null ? until(fires - now) : t("status.waiting");
 }
 
+/** "Today 14:30", "Tomorrow 09:00", "Thu 10:30" within the week, else "11/25 09:00": a time in the viewer's day, as the Routines panel says it. */
+export function dayWords(at: number, now: number): string {
+  const when = new Date(at);
+  const time = hhmm(when.getHours(), when.getMinutes());
+  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(when) - midnight(new Date(now))) / 86_400_000);
+  if (days <= 0) return `${t("tasks.today")} ${time}`;
+  if (days === 1) return `${t("tasks.tomorrow")} ${time}`;
+  if (days < 7) return `${weekdayNames()[when.getDay()]} ${time}`;
+  return `${t("tasks.dateShort", { m: when.getMonth() + 1, d: when.getDate() })} ${time}`;
+}
+
+/** "4 min ago", "21 h ago", "2 days ago". */
+export function agoWords(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return t("tasks.agoNow");
+  if (minutes < 60) return t("tasks.agoMinutes", { m: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return t("tasks.agoHours", { h: hours });
+  return t("tasks.agoDays", { n: Math.round(hours / 24) });
+}
+
+/** How far off a routine's next run is, rounded the way the Routines panel says it: "in a moment", "in 6 min", "in 21 h", "in 3 d". */
+export function awayWords(ms: number): string {
+  if (ms < 45_000) return t("tasks.awayMoment");
+  if (ms < 3_600_000) return t("tasks.inMinutes", { m: Math.round(ms / 60_000) });
+  if (ms < 2 * 86_400_000) return t("tasks.inHours", { h: Math.round(ms / 3_600_000) });
+  return t("tasks.inDaysShort", { n: Math.round(ms / 86_400_000) });
+}
+
+/** A routine's line time: when it runs next, then how far off ("Tomorrow 09:00 · in 21 h"); its cadence is the name's neighbour. */
+function routineWords(item: { fires: number | null; schedule: string | null; recurring: boolean }, now: number): string {
+  const next = item.fires != null && item.fires > now ? item.fires : item.recurring ? nextCronFire(item.schedule ?? "", now) : item.fires;
+  return next != null ? (next <= now ? t("tasks.dueNow") : `${dayWords(next, now)} · ${awayWords(next - now)}`) : t("status.waiting");
+}
+
+type Running = { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean; routine?: boolean };
+
 /** A running line's time: how long it has run, or, for scheduled work, when it fires. */
-function runningWords(item: { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean }, now: number): string {
+function runningWords(item: Running, now: number): string {
+  if (item.routine) return routineWords(item, now);
   if (item.kind === "wakeup" || item.kind === "cron") return scheduledWords(item.kind, item.fires, item.schedule, item.recurring, now);
   return elapsed(now - item.started);
 }
 
-function runningOf(task: TaskChipView): { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean } {
-  return { kind: task.kind, started: task.started, fires: task.fires ?? null, schedule: task.schedule ?? null, recurring: task.recurring !== false };
+function runningOf(task: TaskChipView): Running {
+  return { kind: task.kind, started: task.started, fires: task.fires ?? null, schedule: task.schedule ?? null, recurring: task.recurring !== false, routine: !!task.routine };
+}
+
+/** The dot's colour for a routine's state (the Routines panel's: ok green, due blue, bad red). */
+const routineTone = { scheduled: "ok", watching: "ok", due: "due", failing: "bad" } as const;
+
+/** How a routine's last run went, in a sentence for its tooltip. */
+function lastWords(last: NonNullable<TaskChipView["routine"]>["last"], now: number): string {
+  if (!last) return t("tasks.lastNever");
+  return t(last.result === "ok" ? "tasks.lastOk" : last.result === "failed" ? "tasks.lastFailed" : "tasks.lastSent", { ago: agoWords(Math.max(0, now - last.at)) });
 }
 
 const endWords: Record<string, Key> = {
@@ -350,8 +398,10 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
     if (task.fires != null) item.dataset.fires = String(task.fires);
     if (task.schedule) item.dataset.schedule = task.schedule;
     if (task.recurring === false) item.dataset.recurring = "false";
-    const kind = t(kindWords[task.kind] ?? kindWords.command);
+    if (task.routine) item.dataset.routine = task.routine.state;
+    const kind = t(task.routine ? "tasks.kind.routine" : kindWords[task.kind] ?? kindWords.command);
     item.title = task.detail ? t("tasks.kindDetail", { kind, detail: task.detail }) : kind;
+    if (task.routine) item.title = `${item.title}\n${lastWords(task.routine.last, now)}`;
     const name = document.createElement("span");
     name.className = "task-name";
     name.textContent = task.title;
@@ -365,13 +415,25 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
       mark.innerHTML = glyph;
       mark.dataset.kind = task.kind;
     }
+    // A routine says how often it runs beside its name, and how it stands (a dot in the Routines panel's colours) before its next run.
+    const extras: HTMLElement[] = [];
+    if (task.routine) {
+      const cadence = document.createElement("span");
+      cadence.className = "task-cadence";
+      cadence.textContent = task.recurring === false ? t("tasks.routineOnce") : describeCron(task.schedule ?? "");
+      const dot = document.createElement("i");
+      dot.className = "task-dot";
+      dot.dataset.tone = routineTone[task.routine.state];
+      dot.title = t(`tasks.state.${task.routine.state}` as Key);
+      extras.push(cadence, dot);
+    }
     if (task.owner) {
       const by = document.createElement("span");
       by.className = "task-owner";
       by.textContent = t("tasks.by", { name: task.owner.label });
       by.title = by.textContent;
       item.append(mark, name, by, time);
-    } else item.append(mark, name, time);
+    } else item.append(mark, name, ...extras, time);
     item.addEventListener("click", () => {
       const id = key(origin(task), task.id);
       if (open.has(id)) {
@@ -458,7 +520,7 @@ export function tickTaskChips(now: number = clock()): void {
     if (!time || !Number.isFinite(started)) continue;
     const fires = line.dataset.fires != null ? Number(line.dataset.fires) : null;
     time.textContent = runningWords(
-      { kind: line.dataset.kind ?? "command", started, fires: fires != null && Number.isFinite(fires) ? fires : null, schedule: line.dataset.schedule ?? null, recurring: line.dataset.recurring !== "false" },
+      { kind: line.dataset.kind ?? "command", started, fires: fires != null && Number.isFinite(fires) ? fires : null, schedule: line.dataset.schedule ?? null, recurring: line.dataset.recurring !== "false", routine: line.dataset.routine !== undefined },
       now,
     );
     const messageID = line.dataset.message;

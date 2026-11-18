@@ -54,6 +54,12 @@ const WAITING_ROUTINE = new Set(["pending", "due", "enabled"]);
  */
 export const ROUTINE_CHIP_STARTED = Number.MAX_SAFE_INTEGER;
 
+/** When a routine last ran and how that went, for its chip's tooltip; null: not yet. */
+function lastRun(routine: RoutineView): { at: number; result: "sent" | "ok" | "failed" } | null {
+  const at = routine.lastRun ? Date.parse(routine.lastRun) : NaN;
+  return Number.isFinite(at) ? { at, result: routine.lastResult ?? "sent" } : null;
+}
+
 /** The bot's own routines that will still run, as scheduled work in the background-work row (drawn under `messageID`). */
 export function routineChips(routines: RoutineView[], messageID: string): TaskChipView[] {
   return routines.filter((routine) => WAITING_ROUTINE.has(routine.status)).map((routine) => ({
@@ -68,6 +74,7 @@ export function routineChips(routines: RoutineView[], messageID: string): TaskCh
     fires: routine.next ? Date.parse(routine.next) : null,
     schedule: routine.kind === "once" ? null : routine.cron ?? null,
     recurring: routine.kind !== "once",
+    routine: { state: routine.status === "due" ? "due" : routine.watch?.state === "failing" ? "failing" : routine.watch ? "watching" : "scheduled", last: lastRun(routine) },
   }));
 }
 
