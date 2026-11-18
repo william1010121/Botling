@@ -12,6 +12,8 @@ import golden from "../fixtures/prompts-golden.json";
 import { componentEditorAgent, maintainerInstructions, pluginGuide } from "../../src/core/maintainer-text";
 import { MaintainerDesk, arrivalLead, classifySource, prepareLibrary } from "../../src/core/maintainer";
 import { ComponentLibrary } from "../../src/core/components/library";
+import { unnamedCardAsk } from "../../src/core/worker-cards";
+import { parseReply } from "../../src/core/reply";
 
 const M = (golden as unknown as { maintainer: Record<string, any> }).maintainer;
 const MAINTAINER = "DEC0DE00-0000-4000-8000-00000000DEC0";
@@ -148,6 +150,116 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
       expect(r.told[0]![1]).toContain("No data source.");
       expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
     }
+  });
+
+  it("a chart the worker only described (no component name): Maintainer is told it decides everything (a new component, a new kind in an existing one, the name); give-component answers the worker, on no list; declined reaches it too", () => {
+    const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const r = cardRig(full, full);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    const placeholder = unnamedCardAsk("A dumbbell chart of median and p90 seconds per model.");
+    // Nothing in the library is "worked on" for a name nobody has picked yet.
+    const working: string[] = [];
+    const markWorking = r.library.markWorking.bind(r.library);
+    r.library.markWorking = ((name: string, said: string) => { working.push(name); return markWorking(name, said); }) as typeof r.library.markWorking;
+    r.desk.requestComponentChange(placeholder, "A dumbbell chart of median and p90 seconds per model.", "Main bot", r.bot, [], "TASK4");
+    expect(handedTo).toHaveLength(1);
+    const handed = handedTo[0]!;
+    expect(handed).toContain("describes without naming a component: A dumbbell chart");
+    expect(handed).toContain("named no component and chose nothing");
+    expect(handed).toContain("whether an existing component (for example inline-chart) gets a new kind or option instead of a new component");
+    // Both places that name the answer carry the ask's id.
+    expect(handed.match(/<give-component bot="Main bot" id="[0-9a-f]{8}">its name<\/give-component>/g)).toHaveLength(2);
+    expect(handed).not.toContain("wants a new component");
+    expect(working).toEqual([]);
+    expect(r.told).toEqual([]);
+    // The placeholder never matches a library component: nothing is delivered on its own.
+    r.desk.deliverAsked();
+    expect(r.told).toEqual([]);
+    // Maintainer built (or extended) `todo`... any name: the worker is told, no list changes, the bot is not woken.
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told).toHaveLength(1);
+    expect(r.told[0]![0]).toBe("TASK4");
+    expect(r.told[0]![1]).toContain('The component "todo" is ready.');
+    expect(r.told[0]![1]).not.toContain("in place of");
+    expect(r.list()).toEqual(full);
+    expect(r.sent.filter((line) => line.startsWith("(App:"))).toEqual([]);
+    // And a refusal.
+    r.desk.requestComponentChange(placeholder + "x", "Another.", "Main bot", r.bot, [], "TASK5");
+    const key = /component-declined id="([0-9a-f]{8})"/.exec(handedTo[1]!)![1]!;
+    r.desk.decline(key, "Out of scope.");
+    expect(r.told[1]![0]).toBe("TASK5");
+    expect(r.told[1]![1]).toContain("Out of scope.");
+  });
+
+  it("<give-component> may carry the id of the ask it answers; without one it parses as before, and <take-component> has no id", () => {
+    const requests = (text: string) => parseReply(text, []).requests;
+    expect(requests('ok <give-component bot="Main bot" id="a1b2c3d4">inline-chart</give-component>')).toEqual([{ kind: "giveComponent", bot: "Main bot", name: "inline-chart", id: "a1b2c3d4" }]);
+    expect(requests('ok <give-component bot="Main bot">todo</give-component>')).toEqual([{ kind: "giveComponent", bot: "Main bot", name: "todo" }]);
+    expect(requests("ok <take-component bot='Main bot'>todo</take-component>")).toEqual([{ kind: "takeComponent", bot: "Main bot", name: "todo" }]);
+  });
+
+  it("two cards of one bot wait for a chart each: <give-component id> answers the worker whose ask it names; without an id (or a wrong one) the oldest ask is answered; a new description from one card replaces that card's own earlier ask", () => {
+    const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const r = cardRig(full, full);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    const ask = (task: string, text: string) => { r.desk.requestComponentChange(unnamedCardAsk(text), text, "Main bot", r.bot, [], task); return /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(handedTo.at(-1)!)![1]!; };
+    const first = ask("TASK-A", "A dumbbell chart."), second = ask("TASK-B", "A waterfall chart.");
+    expect(first).not.toBe(second);
+    r.desk.changeList(true, "todo", "Main bot", second);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B"]);
+    // The other one is still waiting: an id that names nothing falls back to the oldest, and each ask is answered once.
+    r.desk.changeList(true, "status", "Main bot", "ffffffff");
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B", "TASK-A"]);
+    r.desk.changeList(true, "todo", "Main bot", first);
+    expect(r.told).toHaveLength(2);
+    // Another description of the same card replaces its earlier ask (one answer for that card, not two).
+    const third = ask("TASK-C", "One chart.");
+    const fourth = ask("TASK-C", "A different chart.");
+    r.desk.changeList(true, "todo", "Main bot", third);
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-B", "TASK-A", "TASK-C"]);
+    r.desk.changeList(true, "status", "Main bot", fourth);
+    expect(r.told).toHaveLength(3);
+    // Neither of them touched the list.
+    expect(r.list()).toEqual(full);
+  });
+
+  it("a pin-only name does not answer a card's chart; a name the bot asked for itself goes on its list as before, and a nameless-looking ask of the bot's own (no card) is no card's", () => {
+    const r = cardRig(["status"]);
+    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    const ask = unnamedCardAsk("A chart.");
+    r.desk.requestComponentChange(ask, "A chart.", "Main bot", r.bot, [], "TASK-A");
+    // A pin-only component is never a card's.
+    r.desk.changeList(true, "secret", "Main bot");
+    expect(r.told).toEqual([]);
+    // The bot itself waits for `weather` (no card): the library gets it, Maintainer gives it: the bot's ask is answered and the list grows, the card keeps waiting.
+    r.desk.requestComponentChange("weather", "the weather", "Main bot", r.bot, []);
+    r.make("weather");
+    r.library.rescan();
+    r.desk.changeList(true, "weather", "Main bot");
+    expect(r.told).toEqual([]);
+    expect(r.list()).toContain("weather");
+    // Then the card's own answer still works.
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told.map(([task]) => task)).toEqual(["TASK-A"]);
+    // A bot's own plain ask that happens to carry a placeholder-looking name is not a card's: the component goes on its list.
+    const r2 = cardRig(["status"]);
+    (r2.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    r2.desk.requestComponentChange("chart-request-deadbeef", "a chart", "Main bot", r2.bot, []);
+    r2.desk.changeList(true, "todo", "Main bot");
+    expect(r2.list()).toContain("todo");
+    expect(r2.told).toEqual([]);
+  });
+
+  it("<give-component bot=…> answers only a card of that bot, never another bot's waiting card", () => {
+    const full = Array.from({ length: 20 }, (_, i) => `c${i}`);
+    const r = cardRig(full, full);
+    (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
+    const other = { id: "OTHER-BOT", profile: { name: "Other" }, components: full, ownComponentNames: full, lastAsked: "", appMessage() {}, appNotice() { return "n"; }, workers: { tellCardWorker() {} } } as never;
+    r.desk.requestComponentChange(unnamedCardAsk("Somebody else's chart."), "Somebody else's chart.", "Other", other, [], "TASK-OTHER");
+    r.desk.changeList(true, "todo", "Main bot");
+    expect(r.told).toEqual([]);
   });
 
   it("a new component that lands in the library goes to its worker (its usage), on no list, even when the bot's list is full; a second ask of the same worker for it is one ask", () => {

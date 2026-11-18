@@ -179,7 +179,10 @@ describe("prompt sections", () => {
       { plugin: "deploy", id: "deploy.main", text: "DEPLOY MAIN", after: "end", roles: ["main"] },
     ]);
     const bot = desktopPrompts(botPrompts({ profile: profile("bot") }), profile("bot"), "claude", true, sections).system;
-    expect(bot).toContain(`</show> to your reply.\n${WHITEBOARD_PICTURE_LINE}\n  DEPLOY HOW\n`);
+    // The bot's own card-scripts line comes first after the <show> line (main has none), then the sections in order.
+    const between = bot.slice(bot.indexOf("</show> to your reply.") + "</show> to your reply.".length, bot.indexOf(WHITEBOARD_PICTURE_LINE));
+    expect(between.split("\n").filter(Boolean)).toHaveLength(1);
+    expect(bot).toContain(`${WHITEBOARD_PICTURE_LINE}\n  DEPLOY HOW\n`);
     expect(bot).not.toContain("DEPLOY MAIN");
     const main = desktopPrompts(botPrompts({ profile: profile("main") }), profile("main"), "claude", true, sections).system;
     expect(main.endsWith("\nDEPLOY MAIN")).toBe(true);

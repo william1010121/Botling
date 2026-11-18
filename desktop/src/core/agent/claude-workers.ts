@@ -86,6 +86,11 @@ export const claudeWorkerPolicy = (rules: OrchestrationRules = DEFAULT_ORCHESTRA
 ].join("\n");
 export const CLAUDE_WORKER_POLICY = claudeWorkerPolicy();
 
+/** Set (a symbol, so no JSON from a model can carry it) on the handoff of a `<card>` worker (bot/workers.ts `startCard`): it runs lean (`HeadConfig.lean`) with the card rules as system prompt. */
+export const CARD_WORKER = Symbol("card worker");
+/** The tools of a card worker: it writes and runs a small read-only script, reads files and searches; nothing else (no Edit, no web, no subagents). */
+export const CARD_WORKER_TOOLS = ["Bash", "Read", "Write", "Grep", "Glob"];
+
 /** A `.claude/agents/<type>.md` definition, as far as a worker can reproduce it. */
 export interface AgentDefinition {
   name: string; prompt: string; model: string | null; tools: string[] | null;
@@ -151,6 +156,8 @@ export interface ClaudeWorkersOptions {
   rules?(): OrchestrationRules | undefined;
   /** The app's component-shot command (BOTLING_SHOT_COMMAND); a worker a plugin started, with Bash, is told it in one line. Absent or null: no line. */
   shotCommand?(): string | null;
+  /** What every card worker is told besides its own card (`cardSystemPrompt`), read as each of its processes starts; null: nothing more. */
+  cardSystem?(): string | null;
   /** The bot's subagent model (null: the coordinator's model). */
   subagentModel(): string | null;
   /** The bot's subagent effort (null: the coordinator's effort). */
@@ -322,7 +329,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);
     const ignored = [...(wanted && !claudeEffort(wanted) ? [wanted] : []), ...(!wanted && definition?.effortIgnored ? [definition.effortIgnored] : [])];
     const machine = this.machine(request.args.machine) ?? this.defaultMachine(request.args.machine);
-    return { engineData: { ...(request.args[PLUGIN_STARTED] === true ? { pluginStarted: true } : {}), sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
+    return { engineData: { ...(request.args[PLUGIN_STARTED] === true ? { pluginStarted: true } : {}), ...((request.args as Record<symbol, unknown>)[CARD_WORKER] === true ? { card: true } : {}), sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}), ...(machine ? { machine: machine.id, machineName: machine.name } : {}) } };
   }
 
   /** app_handoff's `machine`: a trusted machine, or the refusal (nothing started). */
@@ -397,15 +404,19 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const def = r.type ? this.definition(r.type) : null;
     if (def && "error" in def) throw new Error(def.error);
     const siteToolsFolder = this.options.siteToolsFolder?.();
+    // A card worker: lean process, its few tools, and the card rules in the system prompt (the same text for every card, so it is cached).
+    const card = r.engineData.card === true;
+    const cardSystem = card ? this.options.cardSystem?.() ?? null : null;
     const extra = nonEmpty(r.engineData.machine) ? [] : this.existingDirs(this.options.extraDirs?.() ?? []);
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
       model: this.model(r, base), effort: this.effort(r, base), appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: r.engineData.pluginStarted === true ? [] : this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       ...(siteToolsFolder ? { siteToolsGuard: { folder: siteToolsFolder } } : {}),
-      systemPrompt: [claudeWorkerPolicy(this.options.rules?.(), r.engineData.pluginStarted === true && (!def?.tools || def.tools.includes("Bash")) ? this.options.shotCommand?.() ?? null : null), def?.prompt ?? ""].filter(Boolean).join("\n\n"),
+      systemPrompt: [claudeWorkerPolicy(this.options.rules?.(), r.engineData.pluginStarted === true && (!def?.tools || def.tools.includes("Bash")) ? this.options.shotCommand?.() ?? null : null), def?.prompt ?? "", cardSystem ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
-      ...(def?.tools ? { tools: def.tools } : {}),
+      ...(def?.tools ? { tools: def.tools } : card ? { tools: CARD_WORKER_TOOLS } : {}),
+      ...(card ? { lean: true } : {}),
       ...(extra.length ? { addDirs: [...new Set([...(base.addDirs ?? []), ...extra])] } : {}),
       // A worker a plugin started (M7-O03a, review F3/F4): never spec/ whatever its model, never the bot's skip-the-cards modes, and none of the "always allow" rules the user gave the bot (M7-O04).
       ...(r.engineData.pluginStarted === true ? { bypassPermissions: false, autoMode: false, askPermission: true, allowRules: [] } : {}),

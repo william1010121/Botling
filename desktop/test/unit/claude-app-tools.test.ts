@@ -26,6 +26,29 @@ describe("headArguments", () => {
     expect(flag(headArguments({ ...base, ...app }), "--disallowedTools")!.split(",")).toEqual(["AskUserQuestion", "Agent", "Task"]);
     expect(flag(headArguments(base), "--disallowedTools")).toBe("AskUserQuestion");
   });
+  it("a lean process (a card worker) takes no other MCP server, no skills or slash commands, only the project's settings files, and no plugins; the app's own server, --settings and --add-dir stay", () => {
+    const full = { ...base, ...app, effort: "low", tools: ["Bash", "Read"], pluginDirs: ["/plug"], addDirs: ["/scripts"], allowRules: ["Bash(ls)"], systemPrompt: "RULES" };
+    const lean = headArguments({ ...full, lean: true });
+    expect(lean).toEqual(expect.arrayContaining(["--strict-mcp-config", "--disable-slash-commands"]));
+    expect(flag(lean, "--setting-sources")).toBe("project");
+    expect(lean).not.toContain("--plugin-dir");
+    expect(flag(lean, "--effort")).toBe("low");
+    expect(flag(lean, "--tools")).toBe("Bash,Read");
+    expect(flag(lean, "--append-system-prompt")).toBe("RULES");
+    expect(flag(lean, "--add-dir")).toBe("/scripts");
+    expect(JSON.parse(flag(lean, "--settings")!)).toMatchObject({ permissions: { allow: ["Bash(ls)"] } });
+    expect(JSON.parse(flag(lean, "--mcp-config")!).mcpServers.botling).toEqual({ type: "sdk", name: "botling" });
+    // Not lean: as before.
+    const plain = headArguments(full);
+    for (const gone of ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources"]) expect(plain).not.toContain(gone);
+    expect(flag(plain, "--plugin-dir")).toBe("/plug");
+  });
+  it("a harmless (test) session is never lean", () => {
+    const args = headArguments({ ...base, ...app, harmless: true, lean: true, systemPrompt: "RULES", pluginDirs: ["/plug"] });
+    // (--strict-mcp-config is harmless mode's own flag; the lean ones are not added on top.)
+    for (const gone of ["--disable-slash-commands", "--setting-sources", "--plugin-dir", "--append-system-prompt"]) expect(args).not.toContain(gone);
+    expect(args.filter((arg) => arg === "--strict-mcp-config")).toHaveLength(1);
+  });
   it("gives a harmless (test) session neither", () => {
     const args = headArguments({ ...base, ...app, harmless: true });
     expect(args).not.toContain("--mcp-config");

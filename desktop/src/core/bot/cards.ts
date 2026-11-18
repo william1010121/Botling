@@ -9,17 +9,17 @@ import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } fr
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
-import { inlineBlocksFor } from "../inline-blocks";
-import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
+import { headWritesCards, inlineBlocksFor } from "../inline-blocks";
+import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
 import type { BotStore } from "../store/bot-store";
-import { toSwiftDate, type ChatRecord } from "../store/records";
+import { MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
-import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, splitCardWarning, cardWaiting, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, writeCardUsage, readCards, splitCardWarning, cardWaiting, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -130,7 +130,10 @@ export class BotCards {
     // A bot with the inline block guidance has its examples in its instructions: its note says no usage lookup is needed for them.
     const examples = inlineBlocksFor({ inlineBlockGuidance: this.options.launch?.().inlineBlockGuidance }, this.owner.profile.folder);
     // A Claude bot that can start `<card>` workers is told the built-in components only; a card's worker picks from the rest (`cardBriefing`).
-    return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards());
+    // The same test as the prompt's (prompts.ts): a head that writes only `<card>` has neither the examples nor the inline blocks in its note.
+    const appWorkers = this.owner.engine === "claude" && this.owner.workers.claudeWorkersOn();
+    const cardsOnly = headWritesCards(this.owner.engine, appWorkers, examples, this.owner.profile.id === MAINTAINER_ID);
+    return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards(), cardsOnly);
   }
 
   /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */
@@ -282,6 +285,25 @@ export class BotCards {
     while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
     const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
     return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
+  }
+
+  /**
+   * The catalog brief (progressive disclosure): one line for every component the card may show (the bot's own, the built-ins and the rest of the library:
+   * nothing is left without a line, whatever its usage weighs), and each one's whole usage in `<project>/.bot/card-usage/<name>.md`, which the worker reads for the
+   * components it picked, in one step. Null when the usage files cannot be written (the caller then uses `cardBrief`, the usages up front).
+   */
+  cardCatalogBrief(): CardBrief | null {
+    const context = this.context;
+    if (!context) return null;
+    const library = context.library;
+    const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
+    const builtIn = library.builtInNames();
+    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
+    const names = library.names.filter(usable).sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const scriptsDir = this.cardRules().scriptsDir;
+    const usageDir = join(dirname(scriptsDir), "card-usage");
+    try { writeCardUsage(usageDir, names.map((name) => ({ name, text: library.catalog([name]) }))); } catch { return null; }
+    return { components: names.map((name) => ownLine(library, name)).join("\n"), others: "", scriptsDir, usageDir };
   }
 
   /**

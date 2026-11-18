@@ -281,6 +281,11 @@ export function orchestrationPluginSha256(raw: RawSettings): string | null {
 /** The model a `<card>` worker runs on when settings.json does not say (it gathers data and picks a component; a small model does). */
 export const CARD_WORKER_MODEL = "haiku";
 
+/** How hard a `<card>` worker thinks (`--effort`): low. Its job is to read a few numbers and pick a component; at the default effort it thought ~3 s before answering (card-bench, 2026-11-18). */
+export const CARD_WORKER_EFFORT = "low";
+/** The card worker is given a one-line catalog and reads the usage files of the components it picked in one step (`cardCatalogBrief`); false: every usage up front (`cardBrief`). */
+export const CARD_USAGE_FILES = true;
+
 /** settings.json's `cardWorkerModel`: a Claude model (alias or full id), else haiku. */
 export function cardWorkerModel(raw: RawSettings): string {
   return claudeModelOrNull((raw as Record<string, unknown>).cardWorkerModel) ?? CARD_WORKER_MODEL;

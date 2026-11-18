@@ -6,7 +6,7 @@ import { ClaudeHead } from "../agent/head";
 import type { CodexItem } from "../agent/codex";
 import type { StreamItem } from "../agent/stream";
 import { isWorkerHost, isWorkerType, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "../agent/workers";
-import { ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "../agent/claude-workers";
+import { CARD_WORKER, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "../agent/claude-workers";
 import { hostKind, type ApprovalAnswerer, type HostFacts, type StartupHost } from "../agent-registry";
 import type { BackgroundKind } from "../background-tasks";
 import type { Bot, Status } from "../bot";
@@ -30,8 +30,9 @@ import type { RequestEvent } from "../token-speed";
 import { totalTokens } from "../usage";
 import { WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "../worker-core";
 import { projectWorker } from "../worker-projection";
-import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, followWorker, projectCard, rebindCard, takeRejection } from "../worker-cards";
-import { CARD_WORKER_MODEL } from "../settings";
+import type { CardBrief } from "../worker-cards";
+import { CARD_REDO_EFFORT, CARD_REDO_MODEL, CARD_WAIT_MAX_MS, cardHasWorker, cardInstructions, cardOfWorker, cardRedoInstructions, cardSystemPrompt, followWorker, projectCard, rebindCard, takeRejection } from "../worker-cards";
+import { CARD_USAGE_FILES, CARD_WORKER_EFFORT, CARD_WORKER_MODEL } from "../settings";
 import { BotContext } from "./context";
 import { NO_LONGER_NEEDED, type AgentHead, type BotOptions, type SessionStart, type Turn } from "./types";
 import { subagentView } from "./view-functions";
@@ -275,6 +276,7 @@ export class BotWorkers {
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
       rules: () => this.options.orchestrationRules?.(),
       shotCommand: () => this.options.shotCommand?.() ?? null,
+      cardSystem: () => { const brief = this.cardBriefNow(); return brief ? cardSystemPrompt(brief) : null; },
       subagentModel: () => this.owner.choices().subagentModel,
       subagentEffort: () => this.owner.choices().subagentEffort,
       defaultMachine: () => this.owner.choices().workerMachine,
@@ -537,9 +539,11 @@ export class BotWorkers {
     try {
       if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new Error("A card needs a Claude bot with app-managed Claude workers; nothing was started.");
       if (this.shuttingDown) throw new Error("The app is stopping; nothing was started.");
-      // The card's worker runs on the small model (settings.json `cardWorkerModel`, haiku) and is given every component with its usage.
+      // The card's worker runs on the small model (settings.json `cardWorkerModel`, haiku) at low effort, lean (no plugins, skills or other MCP servers),
+      // and is given every component with its usage in its system prompt (`ClaudeWorkers` `cardSystem`, the same text for every card, so it is cached);
+      // only the card's own prompt is its first message. The symbol marks it a card worker: no JSON from a model can set it.
       const model = this.options.launch?.().cardWorkerModel ?? CARD_WORKER_MODEL;
-      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: card.title, instructions: cardInstructions(card, this.host.cards.cardBrief() ?? undefined), group: card.title, model }) as { task_id: string; run: number };
+      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: card.title, instructions: cardInstructions(card), group: card.title, model, effort: CARD_WORKER_EFFORT, [CARD_WORKER]: true }) as { task_id: string; run: number };
       card.taskId = started.task_id;
       card.status = "running";
       card.run = started.run;
@@ -552,6 +556,11 @@ export class BotWorkers {
       this.log(`card "${card.title}" did not start a worker: ${card.error}`);
     }
     this.changed(record);
+  }
+
+  /** What a card's worker is given besides its prompt: the catalog with usage files (`CARD_USAGE_FILES`), or, when that cannot be written, every usage up front. */
+  private cardBriefNow(): CardBrief | null {
+    return (CARD_USAGE_FILES ? this.host.cards.cardCatalogBrief() : null) ?? this.host.cards.cardBrief();
   }
 
   /** The cards whose redo is being started (`redoCard`): a double tap starts one worker. */
@@ -573,7 +582,7 @@ export class BotWorkers {
     if (this.engine !== "claude" || !this.claudeWorkersOn()) throw new ContractError("conflict", "A card needs a Claude bot with app-managed Claude workers; nothing was started.");
     this.redoingCards.add(card.id);
     try {
-      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: `${card.title} (Opus)`, instructions: cardRedoInstructions(card, this.host.cards.cardBrief() ?? undefined, note), group: card.title, model: CARD_REDO_MODEL, effort: CARD_REDO_EFFORT }) as { task_id: string; run: number };
+      const started = await this.ensureClaudeWorkers().tool("app_handoff", { name: `${card.title} (Opus)`, instructions: cardRedoInstructions(card, this.cardBriefNow() ?? undefined, note), group: card.title, model: CARD_REDO_MODEL, effort: CARD_REDO_EFFORT }) as { task_id: string; run: number };
       // The state is checked again after the await: the card may have been bound elsewhere meanwhile.
       if (card.taskId !== taskId || this.shuttingDown) {
         void this.ensureClaudeWorkers().tool("app_cancel_task", { task_id: started.task_id }).catch((error: Error) => this.log(`card redo ${started.task_id}: ${error.message}`));

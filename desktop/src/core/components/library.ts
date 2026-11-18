@@ -418,7 +418,7 @@ export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">
 }
 
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
-export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly" | "builtInNames">>, mine: readonly string[], examples = false, viaCards = false): ComponentKnowledge {
+export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly" | "builtInNames">>, mine: readonly string[], examples = false, viaCards = false, cardsOnly = false): ComponentKnowledge {
   // choices is the app's own buttons: the instructions already teach its block, so it is not listed again. A pin-only component (status
   // things for the pin strip) is in neither list: the bots do not see it.
   const listed = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name);
@@ -432,10 +432,11 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     // Which ones is the library's and the guidance's, never the bot's own list: the note does not move when a list does, nor when a component that is
     // not built in comes or goes (`knowledgeChanges` has nothing to say, so a wake keeps its cached front).
     const everything = library.names.filter(listed);
-    const kept = everything.filter((name) => builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)).sort((a, b) => rank(a) - rank(b));
+    // A head that writes only `<card>` for blocks and charts (`cardsOnly`: `headWritesCards`) has the inline blocks as the card worker's, not in its note.
+    const kept = everything.filter((name) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)) && !(cardsOnly && INLINE_BLOCK_COMPONENTS.includes(name))).sort((a, b) => rank(a) - rank(b));
     return {
       own: kept.map((name) => ({ name, text: ownLine(library, name) })), others: [], limit: COMPONENT_LIMIT,
-      ...(builtIn.length ? { builtIn } : {}), ...(examples ? { examples } : {}), viaCards: { hidden: everything.length - kept.length },
+      ...(builtIn.length ? { builtIn } : {}), ...(examples && !cardsOnly ? { examples } : {}), viaCards: { hidden: everything.length - kept.length },
     };
   }
   return {
@@ -444,9 +445,12 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     others: others.map((name) => ({ name, text: library.summaries([name]) })),
     limit: COMPONENT_LIMIT,
     ...(builtIn.length ? { builtIn } : {}),
-    ...(examples ? { examples } : {}),
+    ...(examples && !cardsOnly ? { examples } : {}),
   };
 }
+
+/** The two built-in components of the inline guidance (inline-blocks.ts). */
+export const INLINE_BLOCK_COMPONENTS: readonly string[] = ["inline-report-block", "inline-chart"];
 
 /** What a card-capable bot is told instead of the rest of the list (one line; the worker of a `<card>` gets every component with its usage). */
 export const VIA_CARDS_NOTE = (hidden: number): string => `(App: ${hidden > 0 ? `${hidden} other components in the library are` : "Any other component is"} not listed here. To show data with one, write <card title="…">what to show and where its data is</card>: its worker sees every component with its usage, picks one and draws it. To change a component or get a new one, <component name="name">request</component> still works.)`;

@@ -25,6 +25,7 @@ vi.mock("../../src/core/agent/head", async (original) => ({ ...await original<an
 vi.mock("../../src/core/agent/codex", async (original) => ({ ...await original<any>(), CodexHead: class extends fixture.Head {} }));
 vi.mock("../../src/core/agent/agy-acp", () => ({ verifyAcpRuntime() {}, AgyAcpHead: class extends fixture.Head {} }));
 import { Bot } from "../../src/core/bot";
+import { CARD_WORKER } from "../../src/core/agent/claude-workers";
 import { mainProfile } from "../../src/core/store/workspace";
 import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
@@ -88,8 +89,12 @@ describe("a reply with <card>: the worker starts", () => {
     expect(r.handoff).toHaveBeenCalledTimes(1);
     const [tool, args] = r.handoff.mock.calls[0]!;
     expect(tool).toBe("app_handoff");
-    expect(args).toMatchObject({ name: "Prices", group: "Prices", model: "haiku" });
+    expect(args).toMatchObject({ name: "Prices", group: "Prices", model: "haiku", effort: "low" });
+    // The symbol (no JSON can carry it) makes it a card worker: lean process, the card rules as its system prompt.
+    expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBe(true);
     expect(String(args.instructions)).toContain("Collect the prices of the three plans.");
+    // Only the card's own part is the message; the fixed rules are its system prompt (ClaudeWorkers `cardSystem`), not repeated per card.
+    expect(String(args.instructions)).not.toContain("You are a card worker");
     expect(record.workerCards![0]).toMatchObject({ title: "Prices", taskId: "T1", status: "running", run: 1, at: "Checking.\n".length });
   });
 
@@ -399,12 +404,37 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(done).toEqual({ taskId: "T2", run: 1 });
     const [, args] = handoffCalls(r)[1]!;
     expect(args).toMatchObject({ model: "opus", effort: "medium", group: "Prices" });
+    // The redo is no card worker: no lean flags, tools or card system prompt of the haiku worker (its rules come in its message).
+    expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBeUndefined();
     expect(String(args.instructions)).toContain("Collect the prices.");
     expect(String(args.instructions)).toContain(JSON.stringify("Plans: A $5."));
     expect(String(args.instructions)).toContain(JSON.stringify('{"series":[5]}'));
     expect(String(args.instructions)).toContain(JSON.stringify("a bar chart"));
     expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "running", run: 1, earlier: ["T1"], text: "Plans: A $5." });
     expect(r.peek.messageView(record).workerCards[0]).toMatchObject({ taskId: "T2", model: "opus", status: "running" });
+  });
+
+  const catalog = { components: "- one (JSON): CATALOG-LINE", others: "", scriptsDir: "/p/.bot/card-scripts", usageDir: "/p/.bot/card-usage" };
+  const whole = { components: "WHOLE-USAGE-MARKER", others: "", scriptsDir: "/p/.bot/card-scripts" };
+  async function redoText(brief: typeof catalog | null) {
+    const r = rig();
+    r.peek.cards.cardCatalogBrief = () => brief;
+    r.peek.cards.cardBrief = () => whole;
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2" });
+    return String(handoffCalls(r)[1]![1].instructions);
+  }
+  it("the redo is given the catalog brief (usage files) like the first worker", async () => {
+    const text = await redoText(catalog);
+    expect(text).toContain("CATALOG-LINE");
+    expect(text).not.toContain("WHOLE-USAGE-MARKER");
+  });
+  it("the redo is given the usages up front when the usage files cannot be written", async () => {
+    const text = await redoText(null);
+    expect(text).toContain("WHOLE-USAGE-MARKER");
+    expect(text).not.toContain("CATALOG-LINE");
   });
 
   it("from then on the card follows the opus worker only, and the user's words on the card go to its task id", async () => {
