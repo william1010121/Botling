@@ -118,7 +118,7 @@ A branch shows alternative versions of a part of the note (e.g. two approaches).
 
 ## Linking to a bot
 
-Writing `@Name` in a cell, where Name is a bot of the left column (any case; one that two bots share is left alone), draws a small chip that opens that bot's chat when clicked (sub bots are not in the left column, so they cannot be linked). It is plain text in the file: write `@EEG`, nothing else, and only when the user asks for a link. A name that is not a bot stays text; code, math and the text of a link are never turned into chips. Do not guess bot names from plain words.
+`@Name` in a cell, where Name is a bot of the left column (any case; a name two bots share is left alone), is drawn as a small chip that opens that bot's chat when clicked. Sub bots are not in the left column, so they are not linked. It is plain text in the file (`@EEG`, nothing else); a name that is not a bot stays text, and code, math and the text of a link are never turned into chips (to keep a bot's name as text, put it in code).
 
 ## Live cards
 

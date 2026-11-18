@@ -82,3 +82,10 @@ it("bots: the left column's bots as { id, name } (one clean line, no sub bots: b
   api.bots.list.mockRejectedValueOnce(new Error("no"));
   await expect(exposed.get("bots")!({}) as Promise<unknown>).rejects.toThrow("no");
 });
+
+it("bots: an id or a name is cut at 200 characters, and a bot without a usable id or name (blank, not text) is left out", async () => {
+  const { api, exposed } = fake();
+  activate(api);
+  api.bots.list.mockResolvedValueOnce([{ id: "x".repeat(300), name: "n".repeat(300) }, { id: "b", name: " \n " }, { id: "c", name: null }, { name: "noid" }, { id: "d", name: "Ok" }] as never);
+  expect(await exposed.get("bots")!({})).toEqual([{ id: "x".repeat(200), name: "n".repeat(200) }, { id: "d", name: "Ok" }]);
+});

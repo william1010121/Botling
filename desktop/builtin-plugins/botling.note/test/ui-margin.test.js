@@ -34,7 +34,7 @@ const thread = (over = {}) => ({
 });
 
 function makeEnv(text, threads = []) {
-  const env = { text, mtime: 1, calls: [], handlers: {}, stop: null, root: null, margin: { threads: structuredClone(threads), asked: [], folded: [], deleted: [] } };
+  const env = { text, mtime: 1, calls: [], commands: [], bots: null, handlers: {}, stop: null, root: null, margin: { threads: structuredClone(threads), asked: [], folded: [], deleted: [] } };
   const m = env.margin;
   env.answer = async (id, a) => {
     const t = m.threads.find((x) => x.id === id);
@@ -50,6 +50,7 @@ function makeEnv(text, threads = []) {
     panels: { register: (id, fn) => { env.view_fn = fn; } },
     host: {
       call: async (method, params) => {
+        if (method === "bots") return env.bots ?? [];
         env.calls.push(method);
         if (method === "read") return { text: env.text, mtime: env.mtime };
         if (method === "write") {
@@ -85,6 +86,7 @@ function makeEnv(text, threads = []) {
     },
     on: (name, fn) => { env.handlers[name] = fn; return () => { delete env.handlers[name]; }; },
     notify() {},
+    commands: { execute: (id, ...args) => { env.commands.push([id, ...args]); } },
     card: async ({ component }) => `https://card.invalid/${component}`,
   };
   return env;
@@ -299,5 +301,24 @@ describe("margin comments on the Note page", () => {
     await settle(800);
     expect(ev.defaultPrevented).toBe(false);
     expect(env.text).toBe(saved);
+  });
+
+  it("@Name in the user's question and in the bot's answer is a chip that opens that bot's chat (the margin is outside the note's own click handler)", async () => {
+    const env = makeEnv(NOTE, [thread({ turns: [{ rid: "r0", q: "請問 @EEG 的進度？", a: "see @EEG and @nobody", qAt: 1000, aAt: 2000, seenAt: 1500 }] })]);
+    env.bots = [{ id: "bot-eeg", name: "EEG" }];
+    document.body.innerHTML = "";
+    const root = document.createElement("div");
+    document.body.append(root);
+    activate(env.ccb);
+    env.stop = env.view_fn(root);
+    env.root = root;
+    current = env;
+    await settle(10);
+    const chips = qa(env, ".nm-card a.n-bot");
+    expect(chips.map((a) => a.textContent)).toEqual(["@EEG", "@EEG"]);
+    for (const chip of chips) click(chip);
+    expect(env.commands).toEqual([["botling.openChat", "bot-eeg"], ["botling.openChat", "bot-eeg"]]);
+    expect(writes(env)).toEqual([]);
+    expect(env.text).toBe(NOTE);
   });
 });

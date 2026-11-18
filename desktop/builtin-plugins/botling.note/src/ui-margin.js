@@ -445,7 +445,17 @@ export function install(st, api) {
     t.append(av, msg);
     return t;
   };
-  const textP = (s) => Object.assign(h("div", "nm-md"), { innerHTML: `<p>${inline(String(s))}</p>` });
+  // the user's own question: a chip (or link) in it opens like the one in a bot's answer
+  const textP = (s) => {
+    const box = Object.assign(h("div", "nm-md"), { innerHTML: `<p>${inline(String(s))}</p>` });
+    box.addEventListener("click", (e) => {
+      const a = e.target.closest?.("a");
+      if (!a) return;
+      e.preventDefault();
+      openAnchor(ccb, st.botId, a);
+    });
+    return box;
+  };
 
   function cardFor(t) {
     const winOpen = mg.win?.id === t.id;

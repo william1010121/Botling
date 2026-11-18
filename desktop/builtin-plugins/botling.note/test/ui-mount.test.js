@@ -523,4 +523,34 @@ describe("the Note page, mounted from source", () => {
     expect(q(env, "a.n-bot")).toBeNull();
     expect(lineEl(env, "see @EEG")).toBeTruthy();
   });
+
+  it("@Name: a bot list that arrives after the note was read is still drawn at the first render (the load waits for it)", async () => {
+    const env = makeEnv("see @EEG\n");
+    env.ccb.host.call = ((call) => async (method, params) => (method === "bots" ? new Promise((resolve) => setTimeout(() => resolve([{ id: "bot-eeg", name: "EEG" }]), 5)) : call(method, params)))(env.ccb.host.call);
+    await open(null, env);
+    expect(q(env, "a.n-bot")?.dataset.bot).toBe("bot-eeg");
+  });
+
+  it("@Name: the line being edited shows the raw text, a chip press (mousedown + click) neither edits nor writes, and the note's bytes stay as they were", async () => {
+    const TEXT = "Weekly TODO\n2. @EEG 的進度 and @nobody\n";
+    const env = makeEnv(TEXT);
+    env.bots = [{ id: "bot-eeg", name: "EEG" }];
+    await open(null, env);
+    const chip = q(env, "a.n-bot");
+    down(env, chip);
+    click(chip);
+    await settle(1500);
+    expect(textarea(env)).toBeNull();
+    expect(env.calls.filter((c) => c.startsWith("write"))).toEqual([]);
+    expect(env.text).toBe(TEXT);
+    down(env, lineEl(env, "Weekly TODO"));
+    await settle();
+    down(env, lineEl(env, "進度"));
+    await settle();
+    expect(textarea(env).value).toBe("2. @EEG 的進度 and @nobody");
+    expect(q(env, ".nl-active a.n-bot")).toBeNull();
+    await settle(1500);
+    expect(env.calls.filter((c) => c.startsWith("write"))).toEqual([]);
+    expect(env.text).toBe(TEXT);
+  });
 });

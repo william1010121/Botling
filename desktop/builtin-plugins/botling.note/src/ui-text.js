@@ -51,7 +51,7 @@ function mentions(text) {
     const bot = BOTS.find((b) => {
       const end = i + 1 + b.name.length;
       if (text.slice(i + 1, end).toLowerCase() !== b.lower) return false;
-      return !(WORD.test(b.name.at(-1)) && /[A-Za-z0-9_-]/.test(text[end] ?? ""));
+      return !(WORD.test(b.plain.at(-1)) && /[A-Za-z0-9_-]/.test(text[end] ?? ""));
     });
     if (!bot) continue;
     const end = i + 1 + bot.name.length;
