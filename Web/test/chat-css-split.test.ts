@@ -6,18 +6,21 @@ import { describe, expect, it } from "vitest";
 import { inlineTokens } from "../kit/build.mjs";
 import { chatCssPath, readChatCss } from "./helpers/chat-css";
 
-// Web/src/chat.css is cut into Web/src/chat/NN-*.css (M7-S80). The page's stylesheet must stay the same bytes: the
-// hashes are of the one-file chat.css at 7e3875b6 (raw, and with tokens.css put in as the app builds do).
+// Web/src/chat.css is cut into Web/src/chat/NN-*.css (M7-S80). The page's stylesheet must not change by accident: the
+// hashes are of the stylesheet's bytes (raw, and with tokens.css put in as the app builds do), last taken at the card-style-1b
+// change (card without a box or title, toolbar in the corner, data lined up with the reply text). They are a snapshot: an
+// edit to any chat CSS file changes them on purpose, and the same commit takes the new values from this test's failure
+// message. The cut itself (only imports in chat.css, one section per import, none over 800 lines) is the third test.
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
-const RAW_BEFORE = "367ba98e033ebc064c253472cd5076268928d487ec4b9dc39d69c48e9fa02451";
-const BUILT_BEFORE = "4d360f2a87507aee0d36d4bf555fceeddcdad563105793ea0f669c4603f2af33";
+const RAW_BEFORE = "0a7f7e4d7ca92b15f833ccbde33a0fa6d4d9408213e82074c23bf3b125b7ed30";
+const BUILT_BEFORE = "027ba33f3f880b008d29c26beda524ee93deb0ac8508360f8938094919ade7cd";
 
 describe("chat.css cut into sections", () => {
-  it("builds to the same bytes as the one-file chat.css (tokens.css put in, as the app builds do)", () => {
+  it("builds to the snapshot bytes (tokens.css put in, as the app builds do)", () => {
     expect(sha256(inlineTokens(readFileSync(chatCssPath, "utf8"), chatCssPath))).toBe(BUILT_BEFORE);
   });
 
-  it("reads back, for the tests, as the one-file chat.css was", () => {
+  it("reads back, for the tests, as the snapshot bytes", () => {
     expect(sha256(readChatCss())).toBe(RAW_BEFORE);
   });
 
