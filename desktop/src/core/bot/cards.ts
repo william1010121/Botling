@@ -278,11 +278,12 @@ export class BotCards {
       used += text.length + 1;
       whole.push(name);
     }
-    const lines = library.summaries([...moved, ...roles.usable.filter((name) => !own.includes(name))]).split("\n");
+    // One line each in the order told (the ones that did not fit first), not the library's: `summaries` itself keeps the library's order.
+    const lines = [...moved, ...roles.usable.filter((name) => !own.includes(name))].map((name) => library.summaries([name])).filter(Boolean);
     let shown = 0, size = 0;
     while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
     const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
-    return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
+    return { components: whole.map((name) => library.catalog([name])).join("\n"), others, scriptsDir: this.cardRules().scriptsDir };
   }
 
   /**

@@ -662,7 +662,7 @@ describe("the catalog brief's system prompt (progressive disclosure)", () => {
     expect(text).toContain("- grouped-bar-errorbar (JSON): grouped bars with error bars");
     expect(text).toContain("the file /p/repo/.bot/card-usage/<name>.md");
     expect(text).toMatch(/Read the usage file of every component you picked, all in the same turn \(one Read each, side by side, never one after the other\), before you write its JSON/);
-    expect(text).toContain("the examples below need no read for the kinds and types they show");
+    expect(text).toContain("the examples in your rules need no read for the kinds and types they show");
     // The whole-usage brief says none of it.
     const whole = cardSystemPrompt({ ...catalog, usageDir: undefined });
     expect(whole).not.toContain("card-usage");
