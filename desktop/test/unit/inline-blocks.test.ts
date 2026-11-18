@@ -225,9 +225,9 @@ describe("the report rule by size", () => {
     expect(page(true, "agy").system).not.toContain(REPORT_RULE_BY_SIZE);
   });
   it("a plugin that rewrote the sentence is not half-edited: no match, no change", () => {
-    const rewritten = [{ plugin: "botling.report", ...REPORT_SECTION, text: manifestText.replace("settled result", "finished result"), tool }];
+    const rewritten = [{ plugin: "botling.report", ...REPORT_SECTION, text: manifestText.replace("A report page is made ONLY", "A report page gets made ONLY"), tool }];
     const text = desktopPrompts(botPrompts({ profile: profile(), inlineBlocks: true }), profile(), "claude", true, rewritten as never, undefined, true).system;
-    expect(text).toContain("finished result that needs visuals");
+    expect(text).toContain("A report page gets made ONLY when the user explicitly asks");
     expect(text).not.toContain(REPORT_RULE_BY_SIZE);
   });
 });

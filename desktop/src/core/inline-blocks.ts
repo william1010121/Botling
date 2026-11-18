@@ -45,7 +45,7 @@ export const REPORT_RULE_BY_SIZE = "Default is inline; a report page is made onl
 export const inlineReportRule = (text: string): string => text.replace(REPORT_RULE_ALL_TO_PAGE, () => REPORT_RULE_BY_SIZE);
 
 /** The results rule's list of what goes to a page (prompts.ts), and the same list without comparisons for a bot with the inline guidance. */
-export const RESULTS_LIST = "A report or page the user asks for (or agrees to after you ask in the chat), and screenshots and previews meant for the user";
+export const RESULTS_LIST = "Results meant for the user (a report or comparison only when the user asks or agrees after you ask in the chat; screenshots, previews)";
 export const RESULTS_LIST_INLINE = "Results meant for the user go inline in the chat by default (inline blocks, below); screenshots, previews and pages the user asks for (or agrees to after you ask in the chat)";
 /** Added to the end of the Claude worker handoff line for a bot with the inline guidance (not the main bot): what a worker hands back: the data and a script, shown by a <card>, never component JSON (2026-11-18, the user). */
 export const INLINE_HANDOFF_SENTENCE = "A worker hands back the data (numbers or rows, concise) plus the path of a re-runnable read-only script in .bot/card-scripts/<name>/ that prints it, never component JSON; you show it with a <card> (what to show, where the data or script is). A page only if the user asked or agreed when the bot asked.";

@@ -68,12 +68,14 @@ describe("the report page rule", () => {
   });
 
   for (const engine of ["claude", "codex", "agy"] as const) {
-    it(`sends long reports to a ReportSpec v2 page and keeps chat to a brief conclusion plus link (${engine})`, () => {
+    it(`makes a ReportSpec v2 page only on the user's ask or agreement, and keeps chat to a brief conclusion plus link (${engine})`, () => {
       for (const role of ["main", "manager", "bot"] as const) {
         const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), "claude", true, reportSections(tool));
         const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2 JSON, never hand-written HTML")) ?? "";
         expect(text).toContain("--render-report");
-        expect(text).toMatch(/settled result that needs visuals or comparison/);
+        expect(text).toMatch(/A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat/);
+        expect(text).toMatch(/never on your own, however long or visual the result is/);
+        expect(text).not.toMatch(/really long|more than 3 blocks|settled result that needs visuals/);
         expect(text).toContain("still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat");
         expect(text).not.toContain("a .md file");
         expect(text).toContain("opens with one sentence that answers the user's question");
