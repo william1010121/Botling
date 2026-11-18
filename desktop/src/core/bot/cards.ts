@@ -510,7 +510,10 @@ export class BotCards {
     return { botId: this.id, names: [...library.names], offered: this.offeredComponents(library).filter((name) => !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
   }
 
-  /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
+  /**
+   * Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). A line's worker cards'
+   * components follow the line's own, under the key the page draws them with (`<line id>:card-<n>`, `shownAt`), so a card's component can be pinned as a reply's is.
+   */
   cardsShown(): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] {
     if (this.options.primary) return this.options.primary.cards.cardsShown();
     const context = this.context;
@@ -518,14 +521,20 @@ export class BotCards {
     const out: ReturnType<Bot["cards"]["cardsShown"]> = [];
     for (const record of [...this.records].reverse()) {
       if (record.role !== "bot") continue;
+      const author = typeof record.sourceID === "string" ? record.sourceID.toUpperCase() : null;
       const displays = (record.displays ?? []) as Display[];
       for (let index = displays.length - 1; index >= 0; index--) {
         const display = displays[index]!;
-        out.push({
-          messageId: record.id, index, name: display.name, command: display.command ?? null, shownCommand: displayCommand(display, record.role, context.library), data: display.data,
-          author: typeof record.sourceID === "string" ? record.sourceID.toUpperCase() : null,
-        });
+        out.push({ messageId: record.id, index, name: display.name, command: display.command ?? null, shownCommand: displayCommand(display, record.role, context.library), data: display.data, author });
       }
+      // A card's component keeps only a command that is a script of the card's (`cardDisplay` checks it again), as the page draws it.
+      readCards(record.workerCards).forEach((card, at) => {
+        const shows = card.shows ?? [];
+        for (let index = shows.length - 1; index >= 0; index--) {
+          const display = this.cardDisplay(shows[index]!);
+          out.push({ messageId: `${record.id}:card-${at}`, index, name: display.name, command: display.command ?? null, shownCommand: displayCommand(display, record.role, context.library), data: display.data, author });
+        }
+      });
     }
     return out;
   }

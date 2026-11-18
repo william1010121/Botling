@@ -402,8 +402,8 @@ function fromSubagent(agent: { id: string; title: string }): HTMLElement {
  * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
  */
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
-  // A worker card's report is drawn as a reply is, but is no message of the chat: nothing in it answers, saves or pins.
-  const readOnly = cardBodies.has(message);
+  // A worker card's report is drawn as a reply is (`cardBodies`), but is no message of the chat: nothing in it answers or saves (`drawComponent`). Its components do
+  // have a plugin's bars (the Board's pin): `<line>:card-<n>` is the key the core finds a card's component by (`BotCards.shownAt` / `cardsShown`).
   // Shown with no data and nothing to get it from: nothing to draw, and no error card in the
   // user's chat (the app tells the bot with the user's next message).
   if (display.status === "empty" && !display.command) return null;
@@ -413,7 +413,7 @@ function componentView(message: MessageView, display: DisplayView, index: number
     : drawComponent(message, display, index, components, botId);
   // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
   if (!element || element.classList.contains("unknown-component")) return element;
-  const bars = readOnly ? [] : extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
+  const bars = extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
   if (!bars.length) return element;
   const holder = document.createElement("div");
   holder.className = "pin-holder" + (bars.some((bar) => bar.dataset.holder === "pinned") ? " pinned" : "");
