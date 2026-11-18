@@ -231,6 +231,7 @@ export function install(st, api) {
 
   // Rendered links open on a plain click (the line is not being edited); Cmd/Ctrl+click inside the edited line is on its textarea.
   st.body.addEventListener("click", (e) => {
+    if (e.defaultPrevented) return; // a link inside the margin's answer was already opened by its own handler (ui-margin.js mdEl)
     const a = e.target.closest?.("a[href]");
     if (!a || !st.body.contains(a)) return;
     e.preventDefault();

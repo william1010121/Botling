@@ -303,7 +303,7 @@ describe("margin comments on the Note page", () => {
     expect(env.text).toBe(saved);
   });
 
-  it("@Name in the user's question and in the bot's answer is a chip that opens that bot's chat (the margin is outside the note's own click handler)", async () => {
+  it("@Name in the user's question and in the bot's answer, in the card and in the window, is a chip that opens that bot's chat, once per press", async () => {
     const env = makeEnv(NOTE, [thread({ turns: [{ rid: "r0", q: "請問 @EEG 的進度？", a: "see @EEG and @nobody", qAt: 1000, aAt: 2000, seenAt: 1500 }] })]);
     env.bots = [{ id: "bot-eeg", name: "EEG" }];
     document.body.innerHTML = "";
@@ -317,6 +317,14 @@ describe("margin comments on the Note page", () => {
     const chips = qa(env, ".nm-card a.n-bot");
     expect(chips.map((a) => a.textContent)).toEqual(["@EEG", "@EEG"]);
     for (const chip of chips) click(chip);
+    // once per press (the margin sits inside the note's body, whose own click handler must not open it a second time)
+    expect(env.commands).toEqual([["botling.openChat", "bot-eeg"], ["botling.openChat", "bot-eeg"]]);
+    env.commands.length = 0;
+    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "在視窗追問"));
+    await settle();
+    const inWin = qa(env, ".nm-win a.n-bot");
+    expect(inWin).toHaveLength(2);
+    for (const chip of inWin) click(chip);
     expect(env.commands).toEqual([["botling.openChat", "bot-eeg"], ["botling.openChat", "bot-eeg"]]);
     expect(writes(env)).toEqual([]);
     expect(env.text).toBe(NOTE);
