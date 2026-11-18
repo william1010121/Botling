@@ -381,6 +381,87 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(r.told).toHaveLength(2);
   });
 
+  // The card asks kept in card-asks.json (`saveCardAsks`, `loadCardAsks`): one probe per guard (L-010).
+  // Equivalent mutants, so no probe: dropping `ask.card ||` in `deliverAsked` (M1), `!ask.card` in the by-name find of the no-id give (M3) and the stored kind in `readCards` (M10b) change
+  // nothing the app can do: a card ask's name is always a placeholder (`chart-request-<hash>`) and never the name of a library component, and a stored kind always agrees with its name
+  // (need = placeholder name). Only a component hand-made under a placeholder name would tell them apart. The by-kind fallback of the same give (M3b) is killed above.
+  const asksFile = (root: string) => join(root, "card-asks.json");
+  const keptKeys = (root: string): string[] => (JSON.parse(readFileSync(asksFile(root), "utf8")) as Array<{ key: string }>).map((ask) => ask.key);
+  const waitingAsks = (desk: MaintainerDesk) => (desk as unknown as { asks: Array<{ key: string; card?: string }> }).asks;
+  const storedAsk = (key: string, card = `T-${key}`) => ({ key, name: "chart-request-00000000", botId: MAIN, request: "r", userAsked: "", stamp: "", card });
+  const deskOver = (r: ReturnType<typeof cardRig>) => new MaintainerDesk({ root: r.root, maintainer: () => null, mainBot: () => r.bot, bots: () => [r.bot], library: r.library, plugins: () => null, log: () => {} });
+  const keyOf = (text: string) => /give-component bot="Main bot" id="([0-9a-f]{8})"/.exec(text)![1]!;
+
+  it("an answered card ask is out of card-asks.json at once (M5), the last one leaves an empty list, and with no asks and no file nothing is written (M27)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestCardNeed("A chart.", r.bot, "TASK-A");
+    r.desk.requestCardNeed("Another chart.", r.bot, "TASK-B");
+    const keys = handedTo.map(keyOf);
+    expect(keptKeys(r.root)).toEqual(keys);
+    r.desk.changeList(true, "todo", "Main bot", keys[0]!);
+    expect(keptKeys(r.root)).toEqual([keys[1]]);
+    r.desk.changeList(true, "todo", "Main bot", keys[1]!);
+    expect(keptKeys(r.root)).toEqual([]);
+    // No ask and no file: neither an unmatched id nor a save writes one.
+    const fresh = cardRig(["status"]);
+    (fresh.desk as unknown as { saveCardAsks(): void }).saveCardAsks();
+    fresh.desk.decline("deadbeef", "No.");
+    fresh.desk.changeList(true, "todo", "Main bot", "deadbeef");
+    expect(existsSync(asksFile(fresh.root))).toBe(false);
+  });
+
+  it("a described need with no words, or from no card, is no ask: nothing is handed to Maintainer, kept or written (M22)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    r.desk.requestCardNeed("", r.bot, "T");
+    r.desk.requestCardNeed("  \n ", r.bot, "T");
+    r.desk.requestCardNeed("x", r.bot, "");
+    expect(handedTo).toEqual([]);
+    expect(waitingAsks(r.desk)).toEqual([]);
+    expect(existsSync(asksFile(r.root))).toBe(false);
+  });
+
+  it("a card-asks.json that is not a list, or holds entries that are not objects, starts with no asks and never throws (M21, M21b)", () => {
+    const r = cardRig(["status"]);
+    for (const text of ["{}", "null", '"x"', "5", "[]", '{"key":"a1b2c3d4"}', JSON.stringify([null, "x", 5, true, [], {}, [storedAsk("a1b2c3d4")]])]) {
+      writeFileSync(asksFile(r.root), text);
+      let desk!: MaintainerDesk;
+      expect(() => { desk = deskOver(r); }, text).not.toThrow();
+      expect(waitingAsks(desk), text).toEqual([]);
+    }
+  });
+
+  it("only an entry with a key of exactly 8 lower-case hex digits is read back (M4)", () => {
+    const r = cardRig(["status"]);
+    const bad = ["ZZZZZZZZ", "abc", "a1b2c3d", "a1b2c3d4e", "xa1b2c3d4", "a1b2c3d4x", "A1B2C3D4", "a1b2 3d4", ""];
+    writeFileSync(asksFile(r.root), JSON.stringify([...bad.map((key) => storedAsk(key)), storedAsk("0a1b2c3d")]));
+    expect(waitingAsks(deskOver(r)).map((ask) => ask.key)).toEqual(["0a1b2c3d"]);
+  });
+
+  it("two stored entries with one key are one ask, the first (M20)", () => {
+    const r = cardRig(["status"]);
+    writeFileSync(asksFile(r.root), JSON.stringify([storedAsk("a1b2c3d4", "T-FIRST"), storedAsk("a1b2c3d4", "T-SECOND"), storedAsk("b1b2c3d4")]));
+    const asks = waitingAsks(deskOver(r));
+    expect(asks.map((ask) => [ask.key, ask.card])).toEqual([["a1b2c3d4", "T-FIRST"], ["b1b2c3d4", "T-b1b2c3d4"]]);
+  });
+
+  it("at most 200 card asks are kept: the newest 200 are written (M19) and the newest 200 are read back (M19b)", () => {
+    const r = cardRig(["status"]);
+    const handedTo: string[] = [];
+    (r.desk as unknown as { handTo(text: string): void }).handTo = (text) => { handedTo.push(text); };
+    for (let i = 0; i < 205; i++) r.desk.requestCardNeed(`Chart ${i}.`, r.bot, `T-${i}`);
+    const keys = handedTo.map(keyOf);
+    expect(keys).toHaveLength(205);
+    expect(keptKeys(r.root)).toEqual(keys.slice(-200));
+    // Read: a file of 205 (written by hand, as an older or another build might) keeps the newest 200.
+    const all = Array.from({ length: 205 }, (_, i) => i.toString(16).padStart(8, "0"));
+    writeFileSync(asksFile(r.root), JSON.stringify(all.map((key) => storedAsk(key))));
+    expect(waitingAsks(deskOver(r)).map((ask) => ask.key)).toEqual(all.slice(-200));
+  });
+
   it("a decline whose id names no waiting ask is logged and told to Maintainer, and reaches no card", () => {
     const r = cardRig(["status"]);
     (r.desk as unknown as { handTo(text: string): void }).handTo = () => {};
