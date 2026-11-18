@@ -33,7 +33,7 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
   const subscribe = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
   const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe } as unknown as WorkspaceStore;
   const requests: any[] = [];
-  const client = { request: vi.fn(async (command: any) => { requests.push(command); return command.type === "plugins.panel" ? { title: "Wall", source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/t" } : command.type === "storage.list" ? { items: [], artifacts: null } : { specs: [] }; }), onEvent: () => () => {} } as unknown as Client;
+  const client = { request: vi.fn(async (command: any) => { requests.push(command); return command.type === "plugins.panel" ? { title: "Wall", source: "", settings: {} } : command.type === "card.page" ? { url: "botling-card://page/t" } : command.type === "storage.list" ? { items: [], artifacts: null } : command.type === "plugins.list" ? { plugins: [] } : { specs: [] }; }), onEvent: () => () => {} } as unknown as Client;
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -229,4 +229,56 @@ it("a right-click on a plugin's tab pins or unpins it; Note and Storage have not
 it("a pin belongs to one bot: another bot's pin does not show here", async () => {
   const { buttons } = await render(PROJECT, { plugins: dynamic, ...pinned(MAIN, [GIT]) });
   expect(buttons()).toEqual(["Chat", "Note", "Reading", "Storage", "More tabs"]);
+});
+
+// The "More tabs" menu closes on Escape (and keeps the key from the page's own Escape), on a press outside it, on a row's click, and when another bot's header shows; a press inside it keeps it open.
+const toolsTab = { plugin: "tools", id: "tools.a", title: "Tools", forRole: "any" as const };
+const both: PluginsView = { ...plugins, mainTabs: [noteTab, toolsTab] };
+const press = (target: Element) => target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+
+it("the \"More tabs\" menu closes on Escape, without the key reaching the page", async () => {
+  const { host } = await render(PROJECT, { plugins: both });
+  const more = host.querySelector<HTMLButtonElement>(".main-tab-more")!;
+  await act(async () => more.click());
+  expect(host.querySelector(".tab-more-menu")).not.toBeNull();
+  const reached = vi.fn();
+  document.addEventListener("keydown", reached);
+  const key = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  await act(async () => { host.querySelector(".tab-more-row")!.dispatchEvent(key); });
+  document.removeEventListener("keydown", reached);
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
+  expect(key.defaultPrevented).toBe(true);
+  expect(reached).not.toHaveBeenCalled();
+  expect(more.getAttribute("aria-expanded")).toBe("false");
+});
+
+it("the \"More tabs\" menu stays open for a press inside it and closes for a press outside it", async () => {
+  const { host } = await render(PROJECT, { plugins: both });
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  await act(async () => { press(host.querySelector(".tab-more-note")!); });
+  expect(host.querySelector(".tab-more-menu")).not.toBeNull();
+  await act(async () => { press(document.body); });
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
+});
+
+it("the \"More tabs\" button opens and closes the menu; a row's click closes it", async () => {
+  const { host, requests } = await render(PROJECT, { plugins: both });
+  const more = host.querySelector<HTMLButtonElement>(".main-tab-more")!;
+  await act(async () => more.click());
+  expect(host.querySelector(".tab-more-menu")).not.toBeNull();
+  await act(async () => more.click());
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
+  await act(async () => more.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('.tab-more-row[data-tab="tools/tools.a"]')!.click());
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: PROJECT, tab: "tools/tools.a" } } });
+});
+
+it("the \"More tabs\" menu is closed when another bot's header shows", async () => {
+  const { host, update } = await render(PROJECT, { plugins: both });
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  expect(host.querySelector(".tab-more-menu")).not.toBeNull();
+  await update({ chat: { botId: MAIN, messages: [], running: null, live: [] } });
+  expect(host.querySelector(".main-tab-more")).not.toBeNull();
+  expect(host.querySelector(".tab-more-menu")).toBeNull();
 });
