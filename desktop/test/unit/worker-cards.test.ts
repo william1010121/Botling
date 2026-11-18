@@ -618,7 +618,7 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
   });
 
   it("rebindCard binds the card to the new worker, keeps the old task id as an earlier one, and drops what the old worker asked for", () => {
-    const record = card({ taskId: "T1", status: "done", run: 2, text: "old words", wants: { name: "g", request: "r" }, asked: true, askedAt: 5, error: "e" });
+    const record = card({ taskId: "T1", status: "done", run: 2, text: "old words", wants: { kind: "need", name: "g", request: "r" }, asked: true, askedAt: 5, error: "e" });
     rebindCard(record, "T2", 1, "opus");
     expect(record).toMatchObject({ taskId: "T2", model: "opus", status: "running", run: 1, earlier: ["T1"], text: "old words" });
     expect(record.wants).toBeUndefined(); expect(record.asked).toBeUndefined(); expect(record.askedAt).toBeUndefined(); expect(record.error).toBeUndefined();
@@ -641,7 +641,7 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
 
   it("a redone card whose worker ends with no report keeps the earlier drawing and says the failure beside it; a plain card still clears", () => {
     for (const [status, message] of [["failed", /failed without a report/], ["stopped", /was stopped/], ["interrupted", /app went away/], ["done", /ended without a report/]] as const) {
-      const redone = card({ taskId: "T1", status: "done", text: "Plans: A $5.", shows: [{ name: "inline-chart", data: '{"series":[5]}' }], wants: { name: "g", request: "r" }, asked: true });
+      const redone = card({ taskId: "T1", status: "done", text: "Plans: A $5.", shows: [{ name: "inline-chart", data: '{"series":[5]}' }], wants: { kind: "need", name: "g", request: "r" }, asked: true });
       rebindCard(redone, "T2", 1, "opus");
       followWorker(redone, ledger({ id: "T2", status }));
       expect(redone, status).toMatchObject({ text: "Plans: A $5.", shows: [{ name: "inline-chart", data: '{"series":[5]}' }], taskId: "T2", model: "opus" });

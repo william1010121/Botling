@@ -32,7 +32,6 @@ import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
 import { Command } from "../../src/contract";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
-import { ComponentsContext } from "../../src/core/components/service";
 import { tempDir } from "../helpers";
 
 const bots: Bot[] = [];
