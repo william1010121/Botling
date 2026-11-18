@@ -28,7 +28,7 @@ vi.mock("../../src/core/agent/head", async (original) => ({ ...await original<an
 vi.mock("../../src/core/agent/codex", async (original) => ({ ...await original<any>(), CodexHead: class extends fixture.Head {} }));
 vi.mock("../../src/core/agent/agy-acp", () => ({ verifyAcpRuntime() {}, AgyAcpHead: class extends fixture.Head {} }));
 import { Bot } from "../../src/core/bot";
-import { WARM_WINDOW_MS } from "../../src/core/network-resume";
+import { CACHE_TTL_MS, WARM_WINDOW_MS } from "../../src/core/network-resume";
 import { mainProfile } from "../../src/core/store/workspace";
 import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
@@ -47,8 +47,8 @@ async function waitFor(what: string, ok: () => unknown) {
   throw new Error(`gave up waiting for ${what}`);
 }
 
-function rig(engine: "claude" | "codex" = "claude") {
-  const folder = tempDir("bot-cold-resume"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
+function rig(engine: "claude" | "codex" = "claude", sameFolder?: string) {
+  const folder = sameFolder ?? tempDir("bot-cold-resume"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", agyModel: "m", heads: { engines: [engine], answerWith: engine, codexModel: "m" } }));
   const b = new Bot({ profile, deferStartup: true, ledger: { record() {}, forget() {} } as any,
     headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: folder, allowedTools: [] }; },
@@ -57,7 +57,7 @@ function rig(engine: "claude" | "codex" = "claude") {
     prompts: (e, heads) => botPrompts({ profile, engine: e, heads }),
     emit() {}, log() {}, idleMs: 600000, approvalTimeoutMs: 1000, interruptGraceMs: 10, tidyTimeoutMs: 30 });
   bots.push(b);
-  return { b, peek: b as any };
+  return { b, peek: b as any, folder };
 }
 
 /** One answered message, so the session has started (claude wrote it) and its first line has gone. */
@@ -215,5 +215,113 @@ describe("what counts as a model call", () => {
     await flush();
     try { r.peek.onItem(fixture.heads[0], { kind: "assistantText", text: "hello" }); } catch { /* ignored */ }
     expect(r.peek.headRun.lastModelAt).toBeNull();
+  });
+});
+
+// Item 1 of the invariant review (a Claude session is never reused once its prompt cache is past its TTL): the check sits where a new
+// turn is sent, so a head that is still running, a handed-over session and a restarted core all meet it. Fake clock: only Date.
+describe("a cold cache is never reused, on every path a new turn takes", () => {
+  const MIN = 60_000;
+  const at = (minutes: number) => vi.setSystemTime(new Date(T0 + minutes * MIN));
+  const T0 = Date.UTC(2026, 10, 18, 9, 0, 0);
+  afterEach(() => { vi.useRealTimers(); });
+  const clock = () => { vi.useFakeTimers({ toFake: ["Date"] }); at(0); };
+
+  it("a head that is still running (a long idle timer): the next message starts a new session once idle > TTL", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    const id = r.peek.session.sessionId;
+    expect(fixture.heads[0].running).toBe(true);
+    at(CACHE_TTL_MS / MIN + 1);
+    r.b.send("after a long idle");
+    await waitFor("the message to reach a new head", () => fixture.heads[1]?.sent.length === 1);
+    expect(fixture.heads[0].running).toBe(false);
+    expect(fixture.heads[1].config.resume).toBe(false);
+    expect(fixture.heads[1].config.sessionId).not.toBe(id);
+    expect(fixture.heads[1].sent[0]).toContain("after a long idle");
+  });
+
+  it("the same running head inside the warm window keeps serving: the one process, the one session", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    at(10);
+    r.b.send("soon after");
+    await waitFor("the message to reach the same head", () => fixture.heads[0].sent.length === 2);
+    expect(fixture.heads.length).toBe(1);
+  });
+
+  it("a running head with its own work under way (a subagent) is not cut off: its work goes on, the session stays", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    r.peek.managedPending = true;
+    at(CACHE_TTL_MS / MIN + 1);
+    r.b.send("while it works");
+    await waitFor("the message to reach the same head", () => fixture.heads[0].sent.length === 2);
+    expect(fixture.heads.length).toBe(1);
+    expect(fixture.heads[0].running).toBe(true);
+  });
+
+  it("a tidy turn is never the one that ends a cold head (the tidy is what the sleep runs)", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    at(CACHE_TTL_MS / MIN + 1);
+    const tidy = r.peek.newTurn("tidy", "tidy", null);
+    r.peek.begin(tidy, r.peek.head);
+    await waitFor("the tidy to reach the same head", () => fixture.heads[0].sent.length === 2);
+    expect(fixture.heads.length).toBe(1);
+  });
+
+  it("the last model call is kept in head.json, so a restarted core knows how old it is", async () => {
+    clock();
+    const r = rig();
+    await answered(r);
+    r.peek.headRun.modelCalled();
+    expect(r.peek.store.loadHead()).toMatchObject({ sessionId: r.peek.session.sessionId, lastModelAt: T0 });
+    at(10);
+    r.peek.headRun.modelCalled();
+    expect(r.peek.store.loadHead()?.lastModelAt).toBe(T0 + 10 * MIN);
+  });
+
+  /** A new core takes over the session the old one left in head.json (the restart's handover). */
+  async function handedOver(idleMin: number, how: "restart" | "swap") {
+    const old = rig();
+    await answered(old);
+    old.peek.headRun.modelCalled();
+    const id = old.peek.session.sessionId;
+    old.peek.store.saveHead(old.peek.session);
+    // The old core is left as it is (its heads count no more); the new one reads what it wrote.
+    fixture.heads.length = 0;
+    at(idleMin);
+    const next = rig("claude", old.folder);
+    if (how === "restart") next.peek.retainRestartIdentity({ engine: "claude", sessionId: id, sessionStarted: true, continue: true, queued: [] });
+    else next.peek.adoptSwap([{ botId: "x", engine: "claude", sessionId: id, continue: false, queued: [] }]);
+    return { next, id };
+  }
+  for (const how of ["restart", "swap"] as const) {
+    it(`handed over by a core ${how}, idle > TTL: a new session, not the old one`, async () => {
+      clock();
+      const { next, id } = await handedOver(CACHE_TTL_MS / MIN + 1, how);
+      next.b.send("after the handover");
+      await waitFor("the message to reach a new head", () => fixture.heads[0]?.sent.length === 1);
+      expect(fixture.heads[0].config.resume).toBe(false);
+      expect(fixture.heads[0].config.sessionId).not.toBe(id);
+    });
+  }
+
+  it("the one exception, kept narrow: in-flight work handed over inside the TTL (past the warm window) still resumes", async () => {
+    clock();
+    const { next, id } = await handedOver(WARM_WINDOW_MS / MIN + 5, "restart");
+    next.b.send("the cut-off turn goes on");
+    await waitFor("the message to reach the resumed head", () => fixture.heads[0]?.sent.length === 1);
+    expect(fixture.heads[0].config.resume).toBe(true);
+    expect(fixture.heads[0].config.sessionId).toBe(id);
   });
 });

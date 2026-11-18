@@ -23,6 +23,8 @@ export interface Outage {
 
 /** Back within this long, the session (and its subagents) go on where they were: the prompt cache (1-hour TTL) is still warm. */
 export const WARM_WINDOW_MS = 50 * 60_000;
+/** The prompt cache's real TTL (1 hour): past it nothing is warm, whatever the session's history. */
+export const CACHE_TTL_MS = 60 * 60_000;
 /** The line added to a cut-off subagent's prompt when it starts over. */
 export const RESTART_LINE = "這個任務剛剛被中斷了，請從 worktree 的現況接著做";
 /** The status and chat word for it. */
