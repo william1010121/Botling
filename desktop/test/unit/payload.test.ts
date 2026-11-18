@@ -22,13 +22,13 @@ describe("chat state for the Web/src page", () => {
     const plain: MessageView = { id: "p", role: "bot", text: "No card", time: at(0) };
     const withCard: MessageView = {
       id: "c", role: "bot", text: "Look", time: at(1),
-      workerCards: [{ id: "k1", title: "Data", status: "done", run: 2, taskId: "T1", at: 4, text: "Found it", warning: "⚠ not kept", waiting: "late", displays: [{ name: "inline-chart", data: "{}", at: 0 } as never] }, { id: "k2", title: "Soon", status: "starting", run: 0 }],
+      workerCards: [{ id: "k1", title: "Data", status: "done", run: 2, taskId: "T1", at: 4, text: "Found it", warning: "⚠ not kept", waiting: "late", model: "opus", displays: [{ name: "inline-chart", data: "{}", at: 0 } as never] }, { id: "k2", title: "Soon", status: "starting", run: 0 }],
     };
     const { state } = chatState(bot, { botId: "B", messages: [plain, withCard], running: null, live: [] });
     expect(state.messages[0]).not.toHaveProperty("workerCards", expect.anything());
     const cards = (state.messages[1] as unknown as { workerCards: Array<Record<string, unknown>> }).workerCards;
     expect(cards).toHaveLength(2);
-    expect(cards[0]).toMatchObject({ id: "k1", title: "Data", status: "done", run: 2, taskId: "T1", at: 4, text: "Found it", warning: "⚠ not kept", waiting: "late", displays: [{ name: "inline-chart", data: "{}" }] });
+    expect(cards[0]).toMatchObject({ id: "k1", title: "Data", status: "done", run: 2, taskId: "T1", at: 4, text: "Found it", warning: "⚠ not kept", waiting: "late", model: "opus", displays: [{ name: "inline-chart", data: "{}" }] });
     expect(cards[1]).toMatchObject({ id: "k2", status: "starting", run: 0 });
     expect(cards[1]).not.toHaveProperty("taskId", expect.anything());
   });

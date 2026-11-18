@@ -482,6 +482,33 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
     expect(record.text).toBe("from opus");
   });
 
+  it("a redone card whose worker ends with no report keeps the earlier drawing and says the failure beside it; a plain card still clears", () => {
+    for (const [status, message] of [["failed", /failed without a report/], ["stopped", /was stopped/], ["interrupted", /app went away/], ["done", /ended without a report/]] as const) {
+      const redone = card({ taskId: "T1", status: "done", text: "Plans: A $5.", shows: [{ name: "inline-chart", data: '{"series":[5]}' }], wants: { name: "g", request: "r" }, asked: true });
+      rebindCard(redone, "T2", 1, "opus");
+      followWorker(redone, ledger({ id: "T2", status }));
+      expect(redone, status).toMatchObject({ text: "Plans: A $5.", shows: [{ name: "inline-chart", data: '{"series":[5]}' }], taskId: "T2", model: "opus" });
+      expect(redone.error, status).toMatch(message);
+      expect(redone.error, status).toMatch(/earlier drawing is kept/);
+      expect(redone.wants).toBeUndefined();
+    }
+    // A later good report replaces the drawing and clears the error.
+    const again = card({ taskId: "T1", status: "done", text: "old", shows: [{ name: "n", data: "1" }] });
+    rebindCard(again, "T2", 1, "opus");
+    followWorker(again, ledger({ id: "T2", status: "failed" }));
+    followWorker(again, ledger({ id: "T2", status: "done", run: 2, text: "new words" }));
+    expect(again.text).toBe("new words"); expect(again.shows).toBeUndefined(); expect(again.error).toBeUndefined();
+    // No drawing to keep: the failure alone, without the claim.
+    const empty = card({ taskId: "T1", status: "failed" });
+    rebindCard(empty, "T2", 1, "opus");
+    followWorker(empty, ledger({ id: "T2", status: "failed" }));
+    expect(empty.error).toBe("The worker failed without a report.");
+    // A card that was never redone is cleared as before.
+    const plain = card({ text: "old", shows: [{ name: "n", data: "1" }] });
+    followWorker(plain, ledger({ status: "failed" }));
+    expect(plain.text).toBeUndefined(); expect(plain.shows).toBeUndefined();
+  });
+
   it("a stored card keeps its model and earlier task ids, and drops what is not a string", () => {
     const [kept] = readCards([{ id: ID, title: "t", prompt: "p", status: "done", run: 1, taskId: "T2", model: "opus", earlier: ["T1", 5, "", "T0"] }]);
     expect(kept).toMatchObject({ model: "opus", earlier: ["T1", "T0"] });

@@ -267,9 +267,12 @@ export function followWorker(card: WorkerCardRecord, worker: WorkerLedgerRecord,
       // A component asked for is passed on once; the same ask again (the next run repeats it) is not.
       if (!content.want) { delete card.wants; delete card.asked; delete card.askedAt; }
       else if (card.wants?.name !== content.want.name || card.wants.request !== content.want.request) { card.wants = content.want; delete card.asked; delete card.askedAt; }
+    } else if (card.model) {
+      // A card redone by another worker (`rebindCard`) whose run ended with no report keeps the drawing it had (the first worker's, or the last good one): the failure is said beside it.
+      delete card.wants; delete card.asked; delete card.askedAt;
     } else { delete card.text; delete card.shows; delete card.wants; delete card.asked; delete card.askedAt; delete card.rejected; delete card.rejectedTold; }
     // A run that ended badly and left no words says so on the card.
-    const failure = report ? undefined : ENDED_BADLY[status];
+    const failure = report ? undefined : card.model ? `${ENDED_BADLY[status] ?? "The worker ended without a report."}${card.text || card.shows?.length ? " The earlier drawing is kept." : ""}` : ENDED_BADLY[status];
     if (failure) card.error = failure; else delete card.error;
   }
   return JSON.stringify(card) !== before;

@@ -483,6 +483,34 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     void record;
   });
 
+  it("an opus run that fails with no report keeps the first worker's drawing on the card, shown with the failure", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => (tool === "app_handoff" ? { task_id: "T2", run: 1 } : {}));
+    await r.peek.workers.redoCard("T1");
+    r.peek.projectWorker(ledger({ id: "T2", status: "failed", run: 1 }));
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T2", model: "opus", status: "failed", text: "Plans: A $5.", error: expect.stringMatching(/failed without a report.*earlier drawing is kept/) });
+    expect(record.workerCards![0]!.shows![0]!.data).toBe('{"series":[5]}');
+    const view = r.peek.messageView(record).workerCards[0];
+    expect(view).toMatchObject({ status: "failed", model: "opus", text: "Plans: A $5.", error: expect.stringMatching(/earlier drawing is kept/) });
+    expect(view.displays).toHaveLength(1);
+  });
+
+  it("a card that changed while the redo was starting is left alone and the new worker is cancelled", async () => {
+    const r = rig();
+    const record = await finished(r);
+    r.handoff.mockImplementation(async (tool: string) => {
+      if (tool !== "app_handoff") return {};
+      // Another path bound the card elsewhere while the handoff was answered.
+      record.workerCards![0]!.taskId = "Z9";
+      return { task_id: "T2", run: 1 };
+    });
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/changed while the redo was starting/) });
+    expect(record.workerCards![0]).toMatchObject({ taskId: "Z9", status: "done" });
+    expect(record.workerCards![0]!.model).toBeUndefined();
+    expect(r.handoff.mock.calls.find(([tool]) => tool === "app_cancel_task")![1]).toEqual({ task_id: "T2" });
+  });
+
   it("the card's redo is a contract command: its shape, and nothing else is taken", () => {
     expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1" }).success).toBe(true);
     expect(Command.safeParse({ type: "card.redo", botId: "b", taskId: "T1", note: "again" }).success).toBe(true);
