@@ -29,12 +29,13 @@ function writePlugin(root: string, name: string, web: string): string {
   return folder;
 }
 
-async function serving(plugins: Record<string, string>, ticketOpts: ConstructorParameters<typeof ContentTickets>[0] = {}) {
+/** `library`: the plugins are installed copies (the user's library), not built in: since the trust model (2026-11-16) a built-in is approved by being built in, so only an installed one can lose its approval. */
+async function serving(plugins: Record<string, string>, ticketOpts: ConstructorParameters<typeof ContentTickets>[0] = {}, opts: { library?: boolean } = {}) {
   const dir = tempDir("probe"); dirs.push(dir);
   const builtIns = join(dir, "builtins"); const library = join(dir, "plugins");
   mkdirSync(builtIns, { recursive: true }); mkdirSync(library, { recursive: true });
   const folders: Record<string, string> = {};
-  for (const [n, w] of Object.entries(plugins)) folders[n] = writePlugin(builtIns, n, w);
+  for (const [n, w] of Object.entries(plugins)) folders[n] = writePlugin(opts.library ? library : builtIns, n, w);
   const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore(), builtIns);
   const bundlesDir = join(dir, "plugin-bundles");
   const cache = new PluginHashCache({ bundlesDir });
@@ -85,7 +86,7 @@ describe("M7-09a review: bundle security", () => {
   });
 
   it("revoke read grant -> next request refused at once (ticket still unexpired); regrant -> served again; tombstone -> refused", async () => {
-    const t = await serving({ "plugin-a": "A\n" });
+    const t = await serving({ "plugin-a": "A\n" }, {}, { library: true });
     const ref = t.ref("plugin-a");
     const tk = (await t.ticket("plugin-a", ref)) as { ticket: string };
     expect((await t.get(ref, "plugin-a", tk.ticket)).status).toBe(200);
@@ -99,12 +100,16 @@ describe("M7-09a review: bundle security", () => {
     await t.writer.close();
   });
 
-  it("grant tier below read / grant only for an OLD code hash refuses", async () => {
-    const t = await serving({ "plugin-a": "A\n" });
+  it("trust model: a user grant recorded at an OLD code hash still serves (it belongs to the plugin); a record that is not the user's or an import's refuses", async () => {
+    const t = await serving({ "plugin-a": "A\n" }, {}, { library: true });
     const ref = t.ref("plugin-a");
     const tk = (await t.ticket("plugin-a", ref)) as { ticket: string };
     const r = t.row("plugin-a")!;
-    await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:plugin-a", { ...r, grants: { ["sha256:" + "0".repeat(64)]: r.grants[r.codeHash]! } }));
+    const old = "sha256:" + "0".repeat(64);
+    await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:plugin-a", { ...r, grants: { [old]: r.grants[r.codeHash]! } }));
+    expect((await t.get(ref, "plugin-a", tk.ticket)).status).toBe(200);
+    // only a `builtin` record (what a built-in left behind that a library copy replaced): the copy is not installed
+    await t.writer.submit((tx) => putRow(tx, t.stream, "plugin:plugin-a", { ...r, grants: { [old]: { ...r.grants[r.codeHash]!, grantedBy: "builtin" as const } } }));
     expect((await t.get(ref, "plugin-a", tk.ticket)).status).toBe(403);
     await t.writer.close();
   });
