@@ -495,6 +495,17 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(view).toMatchObject({ status: "failed", model: "opus", text: "Plans: A $5.", error: expect.stringMatching(/earlier drawing is kept/) });
   });
 
+  it("while the app is stopping a redo starts nothing and says so", async () => {
+    const r = rig();
+    const record = await finished(r);
+    const before = handoffCalls(r).length;
+    r.peek.shuttingDown = true;
+    await expect(r.peek.workers.redoCard("T1")).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/app is stopping/) });
+    expect(handoffCalls(r)).toHaveLength(before);
+    expect(record.workerCards![0]).toMatchObject({ taskId: "T1", status: "done" });
+    expect(record.workerCards![0]!.model).toBeUndefined();
+  });
+
   it("a card that changed while the redo was starting is left alone and the new worker is cancelled", async () => {
     const r = rig();
     const record = await finished(r);
