@@ -133,7 +133,7 @@ describe("a reply with <card>: the worker starts", () => {
     expect(record.workerCards!.map((card) => card.status)).toEqual(Array(6).fill("running"));
     // Nothing is held back or said to the bot; the warning is a log line with the count and the limit, one for each card above the limit.
     expect(note).not.toHaveBeenCalled();
-    const warnings = r.logs.filter((line) => line.startsWith("warn:"));
+    const warnings = r.logs.filter((line) => /\] warn: /.test(line));
     expect(warnings).toHaveLength(3);
     expect(warnings.map((line) => /warn: (\d+) card workers.*limit of (\d+)/.exec(line)!.slice(1))).toEqual([["4", "3"], ["5", "3"], ["6", "3"]]);
   });
@@ -143,7 +143,7 @@ describe("a reply with <card>: the worker starts", () => {
     const record = await answer(r, [1, 2, 3].map((k) => `<card title="c${k}">job ${k}</card>`).join("\n"));
     await waitFor("three handoffs", () => r.handoff.mock.calls.length === 3);
     await waitFor("bound", () => record.workerCards!.every((card) => card.taskId));
-    expect(r.logs.filter((line) => line.startsWith("warn:"))).toEqual([]);
+    expect(r.logs.filter((line) => /\] warn: /.test(line))).toEqual([]);
   });
 
   it("a card whose worker fails to start leaves the others alone", async () => {
@@ -169,7 +169,7 @@ describe("a reply with <card>: the worker starts", () => {
     await waitFor("the third handoff", () => r.handoff.mock.calls.length === 3);
     await waitFor("bound", () => (later.workerCards[0] as { taskId?: string }).taskId);
     expect(later.workerCards[0]).toMatchObject({ status: "running" });
-    expect(r.logs.filter((line) => line.startsWith("warn:"))).toHaveLength(1);
+    expect(r.logs.filter((line) => /\] warn: /.test(line))).toHaveLength(1);
   });
 
   it("a card in a code fence starts nothing", async () => {
