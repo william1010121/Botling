@@ -97,9 +97,13 @@ describe("chat state for the Web/src page", () => {
     expect(state.messages[2]!.decisionID).toBe("D1");
     expect(state.working).toBe(true);
     expect(extras.running).toBe(true);
-    // One head: none of it.
+    // One head: no rounds line or hand-offs; the composer still gets that one engine (its model and effort menu hangs on it).
     const one = chatState(bot, { botId: "B", messages, running: null, live: [] }).state;
-    expect(one.answerWith).toBeUndefined();
+    expect(one.answerWith).toEqual({ options: [{ id: "claude", label: "Claude" }], chosen: "claude" });
+    expect(one.rounds).toBeUndefined();
+    expect(one.handoffs).toBeUndefined();
+    // A bot with no engines listed does not crash and offers nothing.
+    expect(chatState({ ...bot, heads: [] }, { botId: "B", messages, running: null, live: [] }).state.answerWith).toBeUndefined();
     expect(one.messages[1]!.speaker).toBeNull();
     expect(one.messages[1]!.seen).toBeNull();
   });

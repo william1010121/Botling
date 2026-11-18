@@ -122,10 +122,16 @@ it('a bot with one engine still opens the model and effort menu, without the two
  settings={...settings,engines:['claude']};
  composer.update({...state(),answerWith:{chosen:'claude',options:[{id:'claude',label:'Claude'}]}} as ChatState);
  expect(document.querySelectorAll('.answer-chip').length).toBe(1);
+ expect((document.querySelector('.answer-with') as HTMLElement).hidden).toBe(false);
  expect((document.querySelector('.answer-hint') as HTMLElement).hidden).toBe(true);
+ expect(document.querySelector('.answer-hint')!.textContent).toBe('');
  await open('Claude');
  expect(document.querySelector('.model-popover')).not.toBeNull();
  button('Runtime choice').click(); await settle();
  expect(configure).toHaveBeenCalledWith('A',{model:'runtime'});
  expect(sent.filter(a=>a.type==='setAnswerWith')).toEqual([]);
+ // Two heads: the hint is back, with both keys.
+ composer.update({...state(),answerWith:{chosen:'claude',options:[{id:'claude',label:'Claude'},{id:'codex',label:'Codex'}]}} as ChatState);
+ expect((document.querySelector('.answer-hint') as HTMLElement).hidden).toBe(false);
+ expect(document.querySelector('.answer-hint')!.textContent).toContain('⌥1 ⌥2');
 });
