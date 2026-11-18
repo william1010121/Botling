@@ -233,7 +233,7 @@ export const zhHant: Dictionary = {
   "regather.title": "做成圖表報告：Bot 重新收集資料，用圖表或報告再回答一次",
   "regather.question": "報告想要怎麼呈現？",
   "regather.placeholder": "可不填，例如：改成按週比較，或只看失敗的。",
-  "regather.message": "請重新收集我引用的那則回覆背後的資料，再用圖表報告回答一次。先想清楚這張圖要呈現什麼（組別並排、時間軸、誤差線、實測對估計）：表格、KPI、比較或時間線用一個 inline-report-block；圖表只有 inline-chart 能清楚呈現時才用，否則用 matplotlib 畫成 PNG 直接貼在對話裡；內容真的很長才用結果頁。如果元件庫裡沒有適合的、而且我之後還會想再看，就照平常的做法建議做成元件。",
+  "regather.message": "請重新收集我引用的那則回覆背後的資料，再用圖表報告回答一次。先想清楚這張圖要呈現什麼（組別並排、時間軸、誤差線、實測對估計）：表格、KPI、比較或時間線用一個 inline-report-block；圖表只有 inline-chart 能清楚呈現時才用，否則用 matplotlib 畫成 PNG 直接貼在對話裡；除非我要求，不要開結果頁。如果元件庫裡沒有適合的、而且我之後還會想再看，就照平常的做法建議做成元件。",
   "regather.suggestion": "我的建議：",
   // components.ts: a card that runs a command
   "command.runsIn": "在 {folder} 執行",

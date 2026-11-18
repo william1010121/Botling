@@ -332,7 +332,7 @@ export const FILE_LINK_RULE = "- When you point the user to a file or folder to 
 /** Approved 2026-11-10 (the user): browser site tools are Maintainer's alone, so they are shared and reused; a bot asks with <plugin>. */
 export const SITE_TOOLS_RULE = "Browser site tools (the puzzle tools in Botling's browser pane, kept in the browser-tools folder of Botling's data folder) are made and kept only by Maintainer, so every bot can reuse them: never write or change a site tool yourself or have a worker do it; end your reply with <plugin>site tool: what it should do, on which page (its URL)</plugin>.";
 /** `BotPrompts.init(profile:results:language:engine:heads:)`. */
-export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a report page (see the results rule), and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
+export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; give the conclusion and ask in one sentence whether the user wants a report page, and make it (see the results rule) only after they ask or agree, then link to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
 /** The main bot's own app actions on Antigravity (<new-bot>, <new-project>): the app does them, no worker or Claude behind them. Component and plugin tags stay Claude-only. */
 const AGY_MAIN_APP_ACTIONS = "As the main bot you may ask the app itself (no worker) for two things. A bot of the user's own with no folder (a morning news bot, a reading coach): end your reply with <new-bot name=\"short name, no quotes\">its job in a few sentences, including when it should work</new-bot>; never for a name the list already has. A folder on the user's Mac that should get a manager (a project): end your reply with <new-project folder=\"full path of the folder\">what its manager should do first</new-project>, or <new-project folder=\"...\"/> when there is nothing to do yet; folder=\"~/tool/**\" adds every project under a folder, folder=\"~/tool/*\" the folders directly inside it, and one tag per named folder. The app asks the user on a card. Say so in one sentence only when this reply carries the tag, and never write these tags inside code or examples.";
 export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null, rules = DEFAULT_ORCHESTRATION_RULES, inlineBlocks = false }: PromptInput): BotPrompts {
@@ -624,7 +624,7 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     system = system.replace(claudeWorkersRule(rules), () => onRequestWorkersRule(rules)).replace(NATIVE_SUBAGENT_LINE, () => ON_REQUEST_SUBAGENT_LINE)
       .replace(WORKERS_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS).replace(NATIVE_SUB_BOT_AGENTS, ON_REQUEST_SUB_BOT_AGENTS);
   }
-  // A bot with the inline guidance (not the main bot) also tells its workers what to hand back: inline component JSON, not a report page.
+  // A bot with the inline guidance (not the main bot) also tells its workers what to hand back: the data and a script path for a <card>, not component JSON and not a report page.
   if (workers && inlineBlocks && profile.role !== "main") {
     const workersRule = claudeWorkersRule(rules);
     if (system.includes(workersRule)) system = system.replace(workersRule, () => `${workersRule} ${INLINE_HANDOFF_SENTENCE}`);
@@ -677,7 +677,7 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
   }
   for (const section of told.filter((entry) => entry.after === "results").reverse()) {
-    // A bot with the inline guidance is told the report rule by size (one block inline, more than that a page); a Codex worker only builds pages, so it keeps the whole rule.
+    // A bot with the inline guidance is told the same ask-only rule worded for inline blocks; a Codex worker only builds pages, so it keeps the whole rule.
     const line = fillSection(section.text, section.tool, artifacts);
     const chatLine = inlineBlocks && engine !== "agy" && section.id === REPORT_SECTION_ID ? fillSection(inlineReportRule(section.text), section.tool, artifacts) : line;
     system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, chatLine);

@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
 import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
-import { INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
+import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
+import { INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
@@ -75,20 +76,20 @@ describe("the guidance in the prompt", () => {
       expect(text).toContain(INLINE_BLOCK_GUIDANCE);
       expect(text).toContain("yours to use, no request needed");
       expect(text).toContain("A block is not a sentence");
-      expect(text).toContain("a report page is the exception");
+      expect(text).toContain("a report page is made only when the user explicitly asks for a report or a page, or after you asked in the chat and they agreed");
       // The no-lookup sentence covers only the shown examples; any other kind or type is looked up first (2026-11-18: a bot guessed a waterfall as `items`).
       expect(text).toContain("the examples below need no usage lookup");
       expect(text).toContain("for any other kind or type call app_component_usage first");
       expect(text).not.toContain("so you need no usage lookup");
       // The main bot's results rule is its own line (it hands work over), without the list.
       if (role !== "main") {
-        // Inline is the default and comes first; a page is for screenshots, previews, really long content or a page the user asks for.
+        // Inline is the default and comes first; a page is for screenshots, previews or a page the user asks for (or agrees to after the bot asks in the chat); never for length.
         expect(text).toContain(`${RESULTS_LIST_INLINE} go into one `);
         // The wording itself, not only the constant by value (review mutants M7, M9 survived): inline by default, and what still goes to a page.
         expect(RESULTS_LIST_INLINE).toContain("go inline in the chat by default");
-        for (const page of ["screenshots", "previews", "really long content", "pages the user asks for"]) expect(RESULTS_LIST_INLINE).toContain(page);
-        expect(text).not.toContain("Results meant for the user (reports");
-        expect(text).not.toContain("(reports, comparisons, screenshots, previews)");
+        for (const page of ["screenshots", "previews", "pages the user asks for", "agrees to after you ask in the chat"]) expect(RESULTS_LIST_INLINE).toContain(page);
+        expect(RESULTS_LIST_INLINE).not.toMatch(/long/);
+        expect(text).not.toContain(RESULTS_LIST);
       }
       expect(text).toContain("every bot has them, and no request to Maintainer is needed to show one");
       expect(text).toContain("is not a request either: it is yours to use");
@@ -103,7 +104,7 @@ describe("the guidance in the prompt", () => {
       expect(text).not.toContain("inline-report-block");
       expect(botPrompts({ profile: profile(), engine, inlineBlocks: false }).system).toBe(text);
     }
-    expect(without()).toContain("(reports, comparisons, screenshots, previews)");
+    expect(without()).toContain(RESULTS_LIST);
   });
   it("Antigravity draws no components: even asked for, it gets neither the guidance nor the shorter list", () => {
     expect(withIt("agy")).toBe(without("agy"));
@@ -194,12 +195,15 @@ describe("the report rule by size", () => {
   it("the manifest still says the sentence the swap replaces (change the swap with the manifest, never one of them)", () => {
     expect(manifestText).toContain(`- ${REPORT_RULE_ALL_TO_PAGE}`);
     expect(REPORT_RULE_BY_SIZE).toMatch(/ONE inline report block/);
-    // Default is inline, a page is the exception (the user, 2026-11-17: "報告只有在真的很長的時候才要開，或者是我特別要求下").
-    expect(REPORT_RULE_BY_SIZE).toMatch(/^Default is inline; a report page is the exception\./);
-    expect(REPORT_RULE_BY_SIZE).toMatch(/report page ONLY when the content is really long \(more than 3 blocks or a long read\) or the user explicitly asks for a report or a page/);
-    expect(REPORT_RULE_BY_SIZE).toMatch(/anything else stays in chat/);
-    expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is the exception, only for really long content \(more than 3 blocks or a long read\) or when the user explicitly asks for a report or a page/);
-    expect(INLINE_BLOCK_GUIDANCE).toMatch(/everything else stays in chat/);
+    // A page only on the user's ask, or after the bot asked in chat and they agreed (the user, 2026-11-18: "我覺得只有我強制要求要報告。或著是你需要強制的在對話裡面問我要報告並且經過我同意之後才可用"); no length trigger.
+    expect(REPORT_RULE_BY_SIZE).toMatch(/^Default is inline; a report page is made only when asked\./);
+    expect(REPORT_RULE_BY_SIZE).toMatch(/Make a report page ONLY when the user explicitly asks for a report or a page, or after you asked in the chat \("Do you want this as a report page\?"\) and the user agreed; never on your own, however long the content is/);
+    expect(REPORT_RULE_BY_SIZE).toMatch(/long content goes in as several blocks or as text/);
+    expect(REPORT_RULE_ALL_TO_PAGE).toMatch(/^A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat/);
+    for (const rule of [REPORT_RULE_BY_SIZE, REPORT_RULE_ALL_TO_PAGE, INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE]) {
+      expect(rule).not.toMatch(/really long|more than 3 blocks|long read|page is the exception/);
+    }
+    expect(INLINE_BLOCK_GUIDANCE).toMatch(/Default is inline: a report page is made only when the user explicitly asks for a report or a page, or after you asked in the chat and they agreed \(link only\); long content goes in as several blocks or as text/);
   });
   it("a bot with the guidance is told by size; the rest of the page rule is untouched", () => {
     const text = page(true).system;
@@ -217,14 +221,29 @@ describe("the report rule by size", () => {
       expect(page(true, "claude", role).system).toContain(REPORT_RULE_BY_SIZE);
     }
   });
+  it("the whole rule names no inline blocks (Antigravity, Codex workers and a bot without the guidance have none), and the component docs send nothing to a page on their own", () => {
+    expect(REPORT_RULE_ALL_TO_PAGE).not.toMatch(/block|component|<card>/);
+    expect(REPORT_RULE_ALL_TO_PAGE).toContain("Without that, the result stays in chat as text.");
+    for (const text of [page(false).system, page(true, "agy").system, page(true, "claude", "manager").codexWorkerSystem]) expect(text).not.toContain("several blocks");
+    const about = readFileSync(join(cardsFolder, "inline-report-block", "about.md"), "utf8");
+    expect(about).not.toMatch(/publish a report page instead|use a full report page/);
+    expect(about).toContain("make a report page only when the user asked for one");
+    const skill = readFileSync(new URL("../../builtin-plugins/botling.report/skills/report/SKILL.md", import.meta.url).pathname, "utf8");
+    expect(skill).toContain("A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat and the user agreed");
+    expect(skill).not.toMatch(/many visuals|more than 3 blocks|really long/);
+  });
+  it("the Antigravity per-turn reminder has no length trigger either (agy-acp.test.ts runs on the Mac only, so this guard lives here)", () => {
+    expect(AGY_REPLY_REMINDER).toContain("long content is not a reason for a report page: make one only when the user asks for it or agrees after you ask in the chat");
+    expect(AGY_REPLY_REMINDER).not.toMatch(/goes into a report page|really long|more than 3 blocks/);
+  });
   it("Antigravity keeps the whole rule (no inline blocks there), whatever it is asked for", () => {
     expect(page(true, "agy").system).toContain(REPORT_RULE_ALL_TO_PAGE);
     expect(page(true, "agy").system).not.toContain(REPORT_RULE_BY_SIZE);
   });
   it("a plugin that rewrote the sentence is not half-edited: no match, no change", () => {
-    const rewritten = [{ plugin: "botling.report", ...REPORT_SECTION, text: manifestText.replace("settled result", "finished result"), tool }];
+    const rewritten = [{ plugin: "botling.report", ...REPORT_SECTION, text: manifestText.replace("A report page is made ONLY", "A report page gets made ONLY"), tool }];
     const text = desktopPrompts(botPrompts({ profile: profile(), inlineBlocks: true }), profile(), "claude", true, rewritten as never, undefined, true).system;
-    expect(text).toContain("finished result that needs visuals");
+    expect(text).toContain("A report page gets made ONLY when the user explicitly asks");
     expect(text).not.toContain(REPORT_RULE_BY_SIZE);
   });
 });
@@ -232,13 +251,15 @@ describe("the report rule by size", () => {
 describe("what a worker hands back (inline first)", () => {
   const told = (inlineBlocks: boolean, role: "main" | "manager" | "bot" = "manager", engine: "claude" | "codex" | "agy" = "claude", delegation: string | null = null) =>
     desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), { ...profile(role), delegation }, engine, true, reportSections(tool), undefined, inlineBlocks).system;
-  it("a bot with the guidance tells its workers to hand back inline component JSON (and a script when numbers need gathering), a page only on request or when really long", () => {
+  it("a bot with the guidance tells its workers to hand back the data and a re-runnable script path (never component JSON; the head shows it with a <card>), a page only on request or after the bot asked and the user agreed", () => {
     for (const role of ["manager", "bot"] as const) {
       const text = told(true, role);
       expect(text).toContain(INLINE_HANDOFF_SENTENCE);
-      expect(INLINE_HANDOFF_SENTENCE).toMatch(/inline component JSON \(inline-chart, inline-report-block\)/);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/hands back the data \(numbers or rows, concise\) plus, when it had to be gathered, the path of a re-runnable read-only script/);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/never component JSON; you show it with a <card>/);
+      expect(INLINE_HANDOFF_SENTENCE).not.toMatch(/ready-to-paste|inline-chart|inline-report-block/);
       expect(INLINE_HANDOFF_SENTENCE).toContain(".bot/card-scripts/<name>/");
-      expect(INLINE_HANDOFF_SENTENCE).toMatch(/ask for a page only if the user asked or the content is really long/);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/A page only if the user asked or agreed after you asked/);
       // It ends the Claude workers line (its own line of the prompt), after what is already there.
       expect(text.split("\n").find((line) => line.startsWith("- Hand all real work"))?.endsWith(` ${INLINE_HANDOFF_SENTENCE}`)).toBe(true);
     }
@@ -250,8 +271,8 @@ describe("what a worker hands back (inline first)", () => {
     expect(told(true, "manager", "agy")).not.toContain("A worker hands back");
     expect(told(true, "manager", "claude", "onRequest")).not.toContain("A worker hands back");
   });
-  it("is about 40 tokens (about 250 characters)", () => {
-    expect(INLINE_HANDOFF_SENTENCE.length).toBeLessThan(270);
+  it("is about 70 tokens (about 320 characters)", () => {
+    expect(INLINE_HANDOFF_SENTENCE.length).toBeLessThan(330);
   });
 });
 
