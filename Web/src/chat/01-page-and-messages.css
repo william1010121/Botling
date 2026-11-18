@@ -233,6 +233,24 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .worker-card-reply button:hover:not(:disabled) { background: var(--accent-bg); }
 .worker-card-reply button:disabled, .worker-card-reply input:disabled { opacity: 0.5; cursor: default; }
 
+/* Rest state: only the caption and the report show. "Show notes" and "Reply" join the caption's line, and the "new component" button its end,
+   while the pointer or focus is on the card; they stay while the notes or the reply box are open or a draft waits (a touch screen has no hover,
+   so they stay there). The foot dissolves into the card, so the reply box and opened notes still come below the report. */
+.worker-card { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
+.worker-card > * { order: 4; flex: 0 0 100%; }
+.worker-card > .worker-card-head { order: 0; flex: 0 1 auto; }
+.worker-card > .worker-card-body { order: 3; }
+.worker-card-foot { display: contents; }
+.worker-card-foot .steps-toggle { flex: none; margin: 0; padding: 0; }
+.worker-card-notes > .steps-toggle { order: 1; }
+.worker-card-foot .worker-card-reply-toggle { order: 2; }
+.worker-card-notes > .worker-card-body { order: 5; }
+.worker-card-reply { order: 6; }
+.worker-card-foot .steps-toggle, .worker-card-new { opacity: 0; transition: opacity 0.12s; }
+.worker-card:hover .steps-toggle, .worker-card:focus-within .steps-toggle,
+.worker-card:has(.worker-card-notes.open) .steps-toggle, .worker-card:has(.worker-card-foot.replying) .steps-toggle { opacity: 1; }
+@media (hover: none) { .worker-card-foot .steps-toggle { opacity: 1; } }
+
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
 /* New data drawing behind the frame on screen (keepFrames), until it is ready to take its place. */
