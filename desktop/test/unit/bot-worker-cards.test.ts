@@ -309,9 +309,11 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     await waitFor("bound", () => record.workerCards![0]!.taskId);
     const report = 'No component fits a gauge with history.\n<component name="gpu-gauge">A gauge with a 60 s history line; data {"load": 0-100}.</component>';
     r.peek.projectWorker(ledger({ status: "done", run: 1, text: report }));
-    expect(record.workerCards![0]).toMatchObject({ wants: { name: "gpu-gauge" }, asked: true });
+    expect(record.workerCards![0]).toMatchObject({ wants: { kind: "usage", name: "gpu-gauge" }, asked: true });
     await waitFor("the ask", () => asked.length === 1);
-    expect(asked[0]).toMatchObject({ kind: "component", name: "gpu-gauge", card: "T1" });
+    // A name the worker wrote is a lookup, never a component request: it is its own kind and carries the task id, and Maintainer's plain `component` kind is not used for a card.
+    expect(asked[0]).toMatchObject({ kind: "cardUsage", name: "gpu-gauge", card: "T1" });
+    expect(asked.some((request) => request.kind === "component")).toBe(false);
     expect(asked[0].request).toContain("A gauge with a 60 s history line");
     expect(asked[0].request).toContain("card worker");
     // Its next run repeats the ask: not passed on again.
@@ -319,6 +321,18 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     r.peek.projectWorker(ledger({ status: "done", run: 2, text: report }));
     await new Promise((resolve) => setImmediate(resolve));
     expect(asked).toHaveLength(1);
+  });
+
+  it("a chart the worker only describes is passed on as a described need (no name, the task id on it); with a named component beside it, only the need is passed on", async () => {
+    const asked: any[] = [];
+    const r = rig("claude", undefined, (_bot, requests) => { asked.push(...requests); return []; });
+    const record = await answer(r, '<card title="Charts">Show the GPU load.</card>');
+    await waitFor("bound", () => record.workerCards![0]!.taskId);
+    r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'No fit.\n<component name="gpu-gauge">my own name</component><component>A gauge with a history line.</component>' }));
+    await waitFor("the ask", () => asked.length === 1);
+    expect(asked[0]).toEqual({ kind: "cardNeed", request: expect.stringContaining("A gauge with a history line."), card: "T1" });
+    expect(asked[0].request).not.toContain("my own name");
+    expect(asked[0]).not.toHaveProperty("name");
   });
 
   it("the card's view says it waits for the component its worker asked for, and the worker's folded words and warning come apart", async () => {
@@ -347,7 +361,7 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
     await waitFor("bound", () => record.workerCards![0]!.taskId);
     r.peek.projectWorker(ledger({ status: "done", run: 1, text: 'x <component name="gpu-gauge">a gauge</component>' }), true);
     await new Promise((resolve) => setImmediate(resolve));
-    expect(record.workerCards![0]).toMatchObject({ wants: { name: "gpu-gauge" }, status: "done" });
+    expect(record.workerCards![0]).toMatchObject({ wants: { kind: "usage", name: "gpu-gauge" }, status: "done" });
     expect(asked).toHaveLength(0);
   });
 

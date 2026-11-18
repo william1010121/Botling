@@ -366,7 +366,7 @@ describe("cardContent with rules", () => {
 
   it("the component the worker asks Maintainer for is read from its report (the first; empty ones are none), no other request is", () => {
     const one = cardContent('No fit. <component name="gpu-heatmap">A heatmap of GPU use per hour; data: JSON from nvidia-smi.</component><component name="second">b</component>', RULES);
-    expect(one.want).toEqual({ name: "gpu-heatmap", request: "A heatmap of GPU use per hour; data: JSON from nvidia-smi." });
+    expect(one.want).toEqual({ kind: "usage", name: "gpu-heatmap", request: "A heatmap of GPU use per hour; data: JSON from nvidia-smi." });
     expect(one.text).toBe("No fit.");
     expect(cardContent('<component name="x"></component>', RULES).want).toBeUndefined();
     expect(cardContent("<new-bot name=\"evil\">go</new-bot> <install>github.com/x/y</install>", RULES).want).toBeUndefined();
@@ -375,13 +375,16 @@ describe("cardContent with rules", () => {
   it("a chart the worker only describes (a nameless <component>) is an ask under a placeholder name, and the tag leaves the words; a named one and a fenced one are as before", () => {
     const text = "No fit. <component>A dumbbell chart: per model the median and p90 seconds; data: [{\"model\":\"haiku\",\"p50\":5,\"p90\":9}]</component>";
     const one = cardContent(text, RULES);
-    expect(one.want).toEqual({ name: unnamedCardAsk('A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]'), request: 'A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]' });
+    expect(one.want).toEqual({ kind: "need", name: unnamedCardAsk('A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]'), request: 'A dumbbell chart: per model the median and p90 seconds; data: [{"model":"haiku","p50":5,"p90":9}]' });
     expect(isUnnamedCardAsk(one.want!.name)).toBe(true);
     expect(one.text).toBe("No fit.");
     expect(cardContent(text, RULES).want!.name).toBe(one.want!.name);
     expect(cardContent("<component>\n</component>", RULES).want).toBeUndefined();
     expect(cardContent("```\n<component>quoted</component>\n```", RULES).want).toBeUndefined();
-    expect(cardContent('<component name="gpu">named</component> <component>nameless</component>', RULES).want).toEqual({ name: "gpu", request: "named" });
+    // The worker's own name never outranks the description: with both, the described need is the ask (the name is dropped, Maintainer chooses it), in either order.
+    expect(cardContent('<component name="gpu">named</component> <component>nameless</component>', RULES).want).toEqual({ kind: "need", name: unnamedCardAsk("nameless"), request: "nameless" });
+    expect(cardContent('<component>nameless</component> <component name="gpu">named</component>', RULES).want).toEqual({ kind: "need", name: unnamedCardAsk("nameless"), request: "nameless" });
+    expect(cardContent('<component name="gpu">named</component> <component>nameless</component>', RULES).text).not.toContain("component");
   });
 });
 
@@ -460,7 +463,7 @@ describe("a rejected script command is never dropped silently", () => {
   });
 
   it("cardWaiting: a done card whose asked component is not here says so, and says late after 30 minutes", () => {
-    const wants = { name: "g", request: "r" };
+    const wants = { kind: "usage" as const, name: "g", request: "r" };
     expect(cardWaiting({ status: "done", wants, asked: true, askedAt: 1_000 }, 2_000)).toBe("component");
     expect(cardWaiting({ status: "done", wants, asked: true, askedAt: 1_000 }, 1_000 + CARD_WAIT_MAX_MS + 1)).toBe("late");
     expect(cardWaiting({ status: "running", wants, asked: true, askedAt: 1_000 }, 2_000)).toBeUndefined();
@@ -486,7 +489,7 @@ describe("a card keeps what its worker asked for, once", () => {
   it("followWorker records the ask; the same ask again (the next run repeats it) does not clear `asked`, a different one does", () => {
     const c = card();
     expect(followWorker(c, ledger({ status: "done", run: 1, text: ASK }), RULES)).toBe(true);
-    expect(c.wants).toEqual({ name: "heat", request: "A heatmap." });
+    expect(c.wants).toEqual({ kind: "usage", name: "heat", request: "A heatmap." });
     expect(c.asked).toBeUndefined();
     c.asked = true;
     followWorker(c, ledger({ status: "running", run: 2, text: ASK }), RULES);
@@ -494,12 +497,17 @@ describe("a card keeps what its worker asked for, once", () => {
     followWorker(c, ledger({ status: "done", run: 2, text: ASK }), RULES);
     expect(c.asked).toBe(true);
     followWorker(c, ledger({ status: "done", run: 3, text: 'Other. <component name="map">A map.</component>' }), RULES);
-    expect(c.wants).toEqual({ name: "map", request: "A map." });
+    expect(c.wants).toEqual({ kind: "usage", name: "map", request: "A map." });
+    // The same words as a described need are another ask (its kind differs): it is passed on again.
+    c.asked = true;
+    followWorker(c, ledger({ status: "done", run: 4, text: "<component>A map.</component>" }), RULES);
+    expect(c.wants).toMatchObject({ kind: "need", request: "A map." });
+    expect(c.asked).toBeUndefined();
     expect(c.asked).toBeUndefined();
   });
 
   it("a report with no ask (the component arrived and the card is filled) clears it", () => {
-    const c = card({ wants: { name: "heat", request: "A heatmap." }, asked: true });
+    const c = card({ wants: { kind: "usage", name: "heat", request: "A heatmap." }, asked: true });
     followWorker(c, ledger({ status: "done", run: 2, text: '<show name="heat">{"x":1}</show> Done.' }), RULES);
     expect(c.wants).toBeUndefined();
     expect(c.asked).toBeUndefined();
@@ -512,6 +520,17 @@ describe("a card keeps what its worker asked for, once", () => {
     const [bad] = readCards([{ id: ID, title: "T", prompt: "p", status: "done", run: 1, wants: { name: "heat" }, asked: true }]);
     expect(bad).not.toHaveProperty("wants");
     expect(bad).not.toHaveProperty("asked");
+    // The kind is kept; a record from before it was written gets it from the name (a placeholder name is a described need).
+    const [need] = readCards([{ id: ID, title: "T", prompt: "p", status: "done", run: 1, wants: { kind: "need", name: unnamedCardAsk("r"), request: "r" }, asked: true }]);
+    expect(need!.wants).toEqual({ kind: "need", name: unnamedCardAsk("r"), request: "r" });
+    const [old1, old2] = readCards([
+      { id: ID, title: "T", prompt: "p", status: "done", run: 1, wants: { name: unnamedCardAsk("r"), request: "r" }, asked: true },
+      { id: "11111111-2222-3333-4444-555555555556", title: "T", prompt: "p", status: "done", run: 1, wants: { name: "heat", request: "r" }, asked: true },
+    ]);
+    expect(old1!.wants).toMatchObject({ kind: "need" });
+    expect(old2!.wants).toMatchObject({ kind: "usage" });
+    // A kind that is neither is read by the name too, never kept.
+    expect(readCards([{ id: ID, title: "T", prompt: "p", status: "done", run: 1, wants: { kind: "x", name: "heat", request: "r" } }])[0]!.wants).toMatchObject({ kind: "usage" });
   });
 });
 
@@ -682,7 +701,7 @@ describe("the nameless ask's edges", () => {
   const rules = { scriptsDir: "/p/.bot/card-scripts", folder: "/p", hasCommand: () => false } as CardRules;
   it("an empty <component></component> asks for nothing and does not hide a later one; the description is cut at 4000 characters", () => {
     const content = cardContent("Words.\n<component>  </component>\n<component>A real chart.</component>", rules);
-    expect(content.want).toEqual({ name: unnamedCardAsk("A real chart."), request: "A real chart." });
+    expect(content.want).toEqual({ kind: "need", name: unnamedCardAsk("A real chart."), request: "A real chart." });
     expect(content.text).toContain("Words.");
     expect(content.text).not.toContain("component>");
     expect(cardContent("<component></component>", rules).want).toBeUndefined();
