@@ -788,6 +788,7 @@ export function dropCopy(book: Book, rid: string, now: number): boolean {
   return false;
 }
 
+import { viewOf } from "./model-view";
 export * from "./model-suggest";
 export * from "./model-view";
 

@@ -1,12 +1,13 @@
 // botling.pin-area, what the app only suggests (a new card, a merge): nothing happens until the user taps. Moved out of model.ts as it
 // was (the file's size gate); model.ts re-exports it, so `import * as M from "./model"` still sees all of it.
 import { MAX_LINKED, MAX_SUGGEST, MAX_TITLE, MAX_TURNS, SUGGEST_MS, SUGGEST_TEXT, addPin, fromMessage, isId, isRid, linkFrom, logLine, oneLine, remove, type Book, type Pin, type Refusal, type Suggest, type Turn } from "./model";
+import type { SuggestView } from "./model-view";
 
 /** The suggestions still worth showing: not older than SUGGEST_MS, and (a merge) both cards still on the strip. */
 export const liveSuggest = (book: Book, now: number): Suggest[] =>
   (book.suggest ?? []).filter((item) => now - item.at < SUGGEST_MS
     && (item.kind === "new" || (book.pins.some((pin) => pin.id === item.card) && book.pins.some((pin) => pin.id === item.card2))));
-const suggestView = (book: Book, now: number): SuggestView[] =>
+export const suggestView = (book: Book, now: number): SuggestView[] =>
   liveSuggest(book, now).map((item) => ({
     id: item.id, kind: item.kind, text: item.text,
     ...(item.kind === "merge" ? { title: book.pins.find((pin) => pin.id === item.card)?.title ?? "", title2: book.pins.find((pin) => pin.id === item.card2)?.title ?? "" } : {}),

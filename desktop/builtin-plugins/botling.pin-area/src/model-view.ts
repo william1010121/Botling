@@ -1,6 +1,7 @@
 // botling.pin-area, what the strip draws (the view of a book) and the bookkeeping of a routed message. Moved out of model.ts as it was (the
 // file's size gate); model.ts re-exports it, so `import * as M from "./model"` still sees all of it.
 import { CLOSED_SHOW_MS, MAX_Q, clean, isStale, type Book, type Pin, type Source, type State, type Step, type Turn, type Update } from "./model";
+import { suggestView } from "./model-suggest";
 
 // ---- what the page draws ----
 
