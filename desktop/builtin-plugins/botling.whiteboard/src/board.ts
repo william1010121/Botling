@@ -176,6 +176,19 @@ export function drawnPicture(data: Entry | undefined): Picture | null {
 /** At most this many pictures are drawn at once (each is a frame of its own). */
 export const MOST_PICTURES = 12;
 
+/**
+ * Which bots draw their picture, at most `max`: the ones drawn already keep their frame (in the lane's order), the rest fill
+ * the room in the lane's order. A change of order at the cap's edge then never unmounts a frame that is on screen.
+ */
+export function keepPictured(previous: ReadonlySet<string>, candidates: readonly string[], max: number): Set<string> {
+  const out = new Set(candidates.filter((id) => previous.has(id)).slice(0, max));
+  for (const id of candidates) {
+    if (out.size >= max) break;
+    out.add(id);
+  }
+  return out;
+}
+
 /** "Next": the memory's "In progress" lines (no repeats). */
 export function nextSteps(data: Entry): string[] {
   const out: string[] = [];

@@ -136,6 +136,18 @@ describe("a card's new data", () => {
     expect(posted).not.toHaveBeenCalled();
   });
 
+  it("is not sent when the app has nothing to show for the card yet (its command runs again): the frame keeps what it shows", async () => {
+    const { env, frame } = await drawn();
+    announce(frame);
+    const posted = vi.spyOn(frame.contentWindow, "postMessage");
+    env.data = "null";
+    await settle(2100);
+    expect(posted).not.toHaveBeenCalled();
+    expect(frames(env)).toEqual([frame]);
+    expect(env.cardCalls).toHaveLength(1);
+    expect(frame.style.display).toBe("block");
+  });
+
   it("for a frame that does not take live data keeps the old frame at its height until the new page has loaded and painted", async () => {
     const { env, frame } = await drawn();
     env.data = '{"city":"Tokyo"}';

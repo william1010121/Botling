@@ -19,7 +19,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ageLabel, askCount, boardLanes, CARD_LINE_WIDTH, description, drawnPicture, isRunning, laneStatus, lastActive, latestLine,
-  MOST_PICTURES, nextSteps, openRanking, quietWeeks, shortLine, shortTime, shortTimeOf, waitingAsks,
+  keepPictured, MOST_PICTURES, nextSteps, openRanking, quietWeeks, shortLine, shortTime, shortTimeOf, waitingAsks,
   type Ask, type AskKind,
 } from "./board";
 import type { BoardView, Bot, Entry, Lang, Picture, Waiting } from "./types";
@@ -158,8 +158,19 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
   const openBot = open ? bots.find((bot) => bot.id === open.botId) ?? null : null;
   const cards = bots.filter((bot) => bot.role !== "main");
   const statusOf = (bot: Bot) => data?.statuses[bot.id] ?? { key: "asleep", text: "Asleep" };
-  // The first pictures on the Running lane are drawn; past MOST_PICTURES a card shows its line.
-  const pictured = new Set(lanes.running.filter((bot) => drawnPicture(byBot.get(bot.id))).slice(0, MOST_PICTURES).map((bot) => bot.id));
+  // The first pictures on the Running lane are drawn; past MOST_PICTURES a card shows its line. The bots drawn already keep
+  // their picture over one that comes up behind them (an unmounted frame would load again).
+  const drawn = useRef<ReadonlySet<string>>(new Set());
+  const pictured = keepPictured(drawn.current, lanes.running.filter((bot) => drawnPicture(byBot.get(bot.id))).map((bot) => bot.id), MOST_PICTURES);
+  // With pictures on the lane its cards stay in the page in the order they first came in, and CSS `order` puts them in the
+  // lane's order on screen: a card moved in the page loads its iframe again, and the lane's order changes with every bot's activity.
+  const placed = useRef<string[]>([]);
+  const running = pictured.size > 0 ? stableOrder(placed.current, lanes.running) : lanes.running;
+  const rank = new Map(lanes.running.map((bot, index) => [bot.id, index]));
+  useLayoutEffect(() => {
+    drawn.current = pictured;
+    placed.current = pictured.size > 0 ? running.map((bot) => bot.id) : [];
+  });
 
   // Notify: "I know". The item leaves the list (the same ignore as the right panel's x); nothing is sent to the bot.
   const notify = (ask: Ask) => { if (ask.ack) void api.ignore(ask.ack.botId, ask.ack.text).catch(api.onError); };
@@ -247,9 +258,10 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
                 <h3 className="wb-section-title"><span className="lane-dot blue" aria-hidden="true" />Running
                   <span className="wb-section-meta"> · {lanes.running.length} bot{lanes.running.length === 1 ? "" : "s"}</span></h3>
                 <div className="lane-grid">
-                  {lanes.running.map((bot) => (
+                  {running.map((bot) => (
                     <RunningCard key={bot.id} api={api} bot={bot} data={byBot.get(bot.id)} waiting={waiting} now={now} face={face(bot)}
-                      picture={pictured.has(bot.id) ? drawnPicture(byBot.get(bot.id)) : null} onPress={(element) => press(bot, element)} />
+                      picture={pictured.has(bot.id) ? drawnPicture(byBot.get(bot.id)) : null} onPress={(element) => press(bot, element)}
+                      order={pictured.size > 0 ? rank.get(bot.id) : undefined} />
                   ))}
                 </div>
               </section>
@@ -418,15 +430,15 @@ function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpe
 }
 
 /** A bot at work: its short line and what comes next. */
-function RunningCard({ api, bot, data, waiting, now, face, picture, onPress }: {
+function RunningCard({ api, bot, data, waiting, now, face, picture, onPress, order }: {
   api: BoardApi; bot: Bot; data: Entry | undefined; waiting: Waiting; now: number; face: string;
-  picture: Picture | null; onPress: (element: HTMLElement) => void;
+  picture: Picture | null; onPress: (element: HTMLElement) => void; order?: number;
 }) {
   const next = data ? nextSteps(data)[0] : undefined;
   const when = shortTime(bot.lastActivity, now);
   const line = latestLine(bot, data, waiting);
   return (
-    <button type="button" className={`wb-card run-card${picture ? ` pictured${picture.size === "2x1" ? " wide" : ""}` : ""}`} data-bot={bot.id} onClick={(event) => onPress(event.currentTarget)}
+    <button type="button" className={`wb-card run-card${picture ? ` pictured${picture.size === "2x1" ? " wide" : ""}` : ""}`} data-bot={bot.id} onClick={(event) => onPress(event.currentTarget)} style={order === undefined ? undefined : { order }}
       aria-label={[`${bot.name}'s report`, "Running", line?.text].filter(Boolean).join(", ")}>
       <span className="wb-card-head">
         <img className="wb-face" src={face} alt="" />
@@ -510,19 +522,70 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
  * component posts (answers, saves) goes nowhere.
  */
 function PictureFrame({ api, botId, picture, size, title }: { api: BoardApi; botId: string; picture: Picture; size: "1x1" | "2x1" | "2x2"; title: string }) {
-  const [url, setUrl] = useState<string | null>(null);
+  // `shown` is the page on screen; `next` a page being made for new data, loading out of sight beside it until it has loaded and
+  // been painted (two animation frames), when it takes the place: the old picture stays up while the new one is made.
+  const [shown, setShown] = useState<Page | null>(null);
+  const [next, setNext] = useState<Page | null>(null);
+  const now = useRef({ shown, next });
+  now.current = { shown, next };
+  const frame = useRef<HTMLIFrameElement>(null);
+  const live = useRef(new WeakSet<object>()); // the pages that said they take new data themselves (ccb.onData)
+  const asked = useRef(0); // the request whose answer is wanted
+  const gone = useRef(false);
   useEffect(() => {
-    let live = true;
+    gone.current = false;
+    const onMessage = (event: MessageEvent) => {
+      const message = event.data as { ccb?: unknown } | null;
+      if (message && typeof message === "object" && message.ccb === "live" && event.source) live.current.add(event.source as object);
+    };
+    window.addEventListener("message", onMessage);
+    return () => { gone.current = true; asked.current++; window.removeEventListener("message", onMessage); };
+  }, []);
+  useEffect(() => {
+    const shape = `${picture.name}\u0000${size}\u0000${botId}`;
+    const have = now.current.shown;
     let data: unknown = null;
     try { data = JSON.parse(picture.data); } catch { /* drawn with nothing */ }
-    api.tile({ component: picture.name, data, size, botId }).then((page) => { if (live) setUrl(page); }, () => {});
-    return () => { live = false; };
+    if (have && have.shape === shape && have.data === picture.data) { asked.current++; setNext(null); return; } // it shows this already
+    const target = frame.current?.contentWindow;
+    if (have && have.shape === shape && target && live.current.has(target)) {
+      // the page takes its data itself: it is sent the JSON text the card page reads, and the frame stays
+      asked.current++;
+      setNext(null);
+      setShown({ ...have, data: picture.data });
+      target.postMessage({ ccbData: JSON.stringify(data) }, "*");
+      return;
+    }
+    const mine = ++asked.current;
+    api.tile({ component: picture.name, data, size, botId }).then((url) => {
+      if (mine !== asked.current || gone.current) return; // a newer request has the say
+      const page: Page = { url, shape, data: picture.data };
+      if (now.current.shown) setNext(page); else setShown(page);
+    }, () => { /* the picture stays as it is */ });
   }, [api, botId, picture.name, picture.data, size]);
+  const painted = (page: Page) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (gone.current || now.current.next !== page) return;
+      setShown(page);
+      setNext(null);
+    }));
+  };
   return (
-    <span className={`wb-picture wb-picture-${size}`} aria-hidden={url ? undefined : true}>
-      {url && <iframe className="wb-picture-frame" sandbox="allow-scripts" src={url} title={title} tabIndex={-1} />}
+    <span className={`wb-picture wb-picture-${size}`} aria-hidden={shown ? undefined : true}>
+      {shown && <iframe key={shown.url} ref={frame} className="wb-picture-frame" sandbox="allow-scripts" src={shown.url} title={title} tabIndex={-1} />}
+      {next && <iframe key={next.url} className="wb-picture-frame wb-picture-next" sandbox="allow-scripts" src={next.url} title={title} tabIndex={-1}
+        style={{ visibility: "hidden" }} onLoad={() => painted(next)} />}
     </span>
   );
+}
+
+/** A page of a picture: its URL, the page's shape (component, size, bot) and the data it was made for (JSON text). */
+interface Page { url: string; shape: string; data: string }
+
+/** The lane's bots in the order the page already has them (new ones last), so none of their cards moves in the page. */
+function stableOrder(placed: readonly string[], lane: readonly Bot[]): Bot[] {
+  const byId = new Map(lane.map((bot) => [bot.id, bot]));
+  return [...placed.flatMap((id) => byId.get(id) ?? []), ...lane.filter((bot) => !placed.includes(bot.id))];
 }
 
 /** The main bot's latest reply (to what you asked in the board's input), at the board's end. */
