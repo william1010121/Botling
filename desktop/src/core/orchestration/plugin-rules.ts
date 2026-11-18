@@ -13,6 +13,8 @@ import { BUILTIN_RULES_SHA256 } from "./pinned-hash";
 
 export const BUILTIN_RULES_PLUGIN = "botling.orchestration";
 export const RULES_TIME_LIMIT_MS = 3_000;
+/** A limit timer that fires more than this after its due time was stuck behind core's own synchronous work; it is armed again at most this many times. */
+const STALL_SLACK_MS = 250, STALL_EXTENSIONS = 2;
 export const RULES_NOTICE = "The orchestration rules plugin did not answer in time or failed; Botling is using its own rules.";
 const FILE_MAX = 64 * 1024, SLOT_MAX = 2_000, SLOTS_MAX = 12_000;
 /** Said twice, once to the coordinator and once to its workers: an answer gives both or neither (plan §4.6), so the two sides cannot disagree. */
@@ -120,7 +122,20 @@ export class OrchestrationRulesBook {
   private async ask(): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("No answer in time.")), this.limitMs); timer.unref?.(); });
+      const late = new Promise<never>((_, reject) => {
+        let extensions = 0;
+        const arm = () => {
+          const due = Date.now() + this.limitMs;
+          timer = setTimeout(() => {
+            // A timer that fires long after it was due was held back by core's own synchronous work (a stuck event loop), not by the
+            // plugin: its answer could not be read meanwhile (switching a bot to Antigravity checks a 405 MB runtime in the same tick). The
+            // plugin gets its time again from now, at most STALL_EXTENSIONS times; one that really does not answer still ends in the notice.
+            if (Date.now() - due > STALL_SLACK_MS && extensions < STALL_EXTENSIONS) { extensions += 1; arm(); } else reject(new Error("No answer in time."));
+          }, this.limitMs);
+          timer.unref?.();
+        };
+        arm();
+      });
       const slots = await Promise.race([this.source(), late]);
       this.rules = slots ? withSlots(DEFAULT_ORCHESTRATION_RULES, slots) : DEFAULT_ORCHESTRATION_RULES;
       this.told = false;

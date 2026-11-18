@@ -7,7 +7,7 @@ import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } fr
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
@@ -373,12 +373,49 @@ export class AgyAcpProtocol {
   private fail(error: Error) { if (this.closed) return; this.close(); this.transport.onPolicy?.("error", error.message); this.fatal(error); }
 }
 
-/** Pin both executable artifacts, not a mutable settings assertion or a CLI flag. */
-export function verifyAcpRuntime(command: string) {
-  if (process.platform !== "darwin" || process.arch !== "arm64" || !isAbsolute(command)) throw new Error("Verified ACP 1.4.3 runtime required (macOS arm64). Legacy agy CLI remains disabled.");
-  for (const [path, digest] of [[command, ACP_SERVER_SHA], [join(dirname(command), "localharness_external"), ACP_HARNESS_SHA]]) {
-    if (createHash("sha256").update(readFileSync(path!)).digest("hex") !== digest) throw new Error("ACP runtime hash mismatch; no process started.");
-    execFileSync("/usr/bin/codesign", ["--verify", "--strict", path!], { stdio: "ignore", timeout: 10_000 });
+/** What `verifyAcpRuntime` touches, so a test can count the heavy steps. `memo`: the identity each file had when it last passed. */
+export interface AcpVerifyDeps {
+  platform: string; arch: string;
+  /** device, inode, size, mtime and ctime of the file (followed through a link, as the read is). Throws when it cannot be read. */
+  identity(path: string): string;
+  /** SHA-256 of the whole file (282 MB and 123 MB: the sync read and hash take about 0.4 s each on a warm cache). */
+  hash(path: string): string;
+  /** Throws unless `codesign --verify --strict` accepts the file (about 0.1 to 0.25 s each, the loop stuck meanwhile). */
+  codesign(path: string): void;
+  memo: Map<string, string>;
+}
+/** Exact (bigint) so a 64-bit inode or a timestamp to the nanosecond is not rounded to a double; the file is followed through a link, as the read and the spawn are. */
+export function fileIdentity(path: string): string {
+  const info = statSync(path, { bigint: true });
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+}
+const realAcpDeps: AcpVerifyDeps = {
+  platform: process.platform, arch: process.arch, memo: new Map(),
+  identity: fileIdentity,
+  hash: (path) => createHash("sha256").update(readFileSync(path)).digest("hex"),
+  codesign: (path) => { execFileSync("/usr/bin/codesign", ["--verify", "--strict", path], { stdio: "ignore", timeout: 10_000 }); },
+};
+
+/**
+ * Pin both executable artifacts, not a mutable settings assertion or a CLI flag.
+ *
+ * Every route check, delivery and head start of a message to an Antigravity head calls this, and it is all synchronous: hashing 405 MB and
+ * two `codesign` runs stuck core's event loop for about 0.75 s a call and three to five calls a message, longer than the 3 s the
+ * orchestration rules ask has (switching a bot to Antigravity said "the rules plugin did not answer in time"). A file that passed is
+ * checked again in full only when its identity (device, inode, size, mtime, ctime) is not the one that passed: a write, a replacement or a
+ * touch changes ctime, which a process cannot set back, so the pin still holds at each use. A refusal is never remembered. The identity is taken
+ * before the bytes are read, so a file replaced while it is hashed is not the one remembered. What passed is keyed by path and by the digest it
+ * had to match (a file that passed as the harness does not pass as the server).
+ */
+export function verifyAcpRuntime(command: string, deps: AcpVerifyDeps = realAcpDeps) {
+  if (deps.platform !== "darwin" || deps.arch !== "arm64" || !isAbsolute(command)) throw new Error("Verified ACP 1.4.3 runtime required (macOS arm64). Legacy agy CLI remains disabled.");
+  for (const [path, digest] of [[command, ACP_SERVER_SHA], [join(dirname(command), "localharness_external"), ACP_HARNESS_SHA]] as const) {
+    const seen = `${deps.identity(path)}|${digest}`;
+    if (deps.memo.get(path) === seen) continue;
+    deps.memo.delete(path);
+    if (deps.hash(path) !== digest) throw new Error("ACP runtime hash mismatch; no process started.");
+    deps.codesign(path);
+    deps.memo.set(path, seen);
   }
 }
 
