@@ -2,13 +2,13 @@
 // usage (component-via-cards, 2026-11-18). Two layers: the knowledge a bot is told (`componentKnowledgeFor`, `knowledgeFull`, `knowledgeChanges`), and a real
 // bot (`BotCards`) with a library: what its wake note holds, what a card worker is given, and when the old whole list is still told.
 import { describe, expect, it } from "vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Core } from "../../src/core/server";
 import type { Bot } from "../../src/core/bot";
 import { saveProjectRow } from "../../src/core/projects";
 import { componentKnowledgeFor, knowledgeChanges, knowledgeFull, VIA_CARDS_NOTE } from "../../src/core/components/library";
-import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardInstructions } from "../../src/core/worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardInstructions, cardSystemPrompt } from "../../src/core/worker-cards";
 import { tempDir } from "../helpers";
 import { writeLibrary } from "../fixtures/components";
 
@@ -45,6 +45,16 @@ describe("componentKnowledgeFor with the cards", () => {
     // The bot's own list changes nothing of what it is told (its cached front stays put).
     expect(componentKnowledgeFor(fake(names, ["inline-chart"]), [], false, true)).toEqual(k);
     expect(componentKnowledgeFor(fake(names, ["inline-chart"]), ["status", "todo", "web-preview"], false, true)).toEqual(k);
+  });
+
+  it("a bot with the inline guidance (examples) writes only <card> for blocks and charts: the inline blocks are not in its note, and no example is promised", () => {
+    const k = componentKnowledgeFor(fake(NAMES), ["status", "網頁預覽卡片", "inline-chart", "inline-report-block"], true, true);
+    expect(k.own.map((entry) => entry.name)).toEqual(["網頁預覽卡片"]);
+    expect(k.viaCards).toEqual({ hidden: 6 });
+    expect(k.examples).toBeUndefined();
+    expect(knowledgeFull(k)).not.toContain("carry examples for");
+    expect(knowledgeFull(k)).not.toContain("- inline-chart");
+    expect(knowledgeFull(k)).not.toContain("- inline-report-block");
   });
 
   it("without the cards it is the whole list, as before", () => {
@@ -169,10 +179,57 @@ describe("a bot with the cards", () => {
       expect(brief.others).toContain("- gitlog: Git log card: how many commits there are; More shows one commit.");
       expect(brief.others).not.toContain("Detail command");
       expect(brief.components).not.toContain("- choices:");
-      const text = cardInstructions({ title: "Todos", prompt: "Show my todos." }, brief);
-      expect(text).toContain("Show my todos.");
+      expect(cardInstructions({ title: "Todos", prompt: "Show my todos." })).toContain("Show my todos.");
+      const text = cardSystemPrompt(brief);
       expect(text).toContain('Data: {"items": ["buy milk"]}');
       expect(text).toContain(join(folder, ".bot", "card-scripts"));
+    } finally { await core.shutdown(); }
+  });
+
+  it("the catalog brief gives every usable component one line, even one the whole-usage brief leaves out, and its whole usage as a file the worker reads", async () => {
+    const { core, flux, folder } = bot(null);
+    try {
+      const brief = flux.cards.cardCatalogBrief();
+      expect(brief.usageDir).toBe(join(folder, ".bot", "card-usage"));
+      expect(brief.others).toBe("");
+      // One line each: the bot's own, the built-ins and the shelf (gitlog is nobody's own); `choices` is nobody's to pick.
+      for (const line of ["- status (JSON): ", "- todo (JSON): ", "- inline-chart (JSON): ", "- gitlog (command): "]) expect(brief.components, line).toContain(line);
+      expect(brief.components).not.toContain("- choices");
+      // Lines only: the usage itself is in the file.
+      expect(brief.components).not.toContain('Data: {"items": ["buy milk"]}');
+      expect(readFileSync(join(brief.usageDir, "todo.md"), "utf8")).toContain('Data: {"items": ["buy milk"]}');
+      expect(readFileSync(join(brief.usageDir, "gitlog.md"), "utf8")).toContain("- gitlog: ");
+      expect(existsSync(join(brief.usageDir, "choices.md"))).toBe(false);
+      const text = cardSystemPrompt(brief);
+      expect(text).toContain(`${brief.usageDir}/<name>.md`);
+      expect(text).toContain("Components you may use, one line each:");
+    } finally { await core.shutdown(); }
+  });
+
+  it("a component whose usage is too big for the whole-usage brief (grouped-bar-errorbar, 2026-11-18: no data format in the worker's instructions) is still read in full from its file", async () => {
+    const big = `Grouped bars with error bars.\nSizes: 2x2\nData: ${JSON.stringify({ groups: ["a"], series: [{ name: "s", values: [1], err: [0.1] }] })}\n${"filler line of usage\n".repeat(4000)}`;
+    const { core, flux } = bot(null, "flux-big", { "grouped-bar-errorbar": big });
+    try {
+      // Not on the bot's list, and bigger than CARD_BRIEF_MAX: the whole-usage brief gives it a line or nothing at all, never its data format.
+      const whole = flux.cards.cardBrief();
+      expect(whole.components).not.toContain('"series"');
+      const brief = flux.cards.cardCatalogBrief();
+      expect(brief.components).toContain("- grouped-bar-errorbar (JSON): Grouped bars with error bars.");
+      expect(readFileSync(join(brief.usageDir, "grouped-bar-errorbar.md"), "utf8")).toContain('"series"');
+    } finally { await core.shutdown(); }
+  });
+
+  it("the usage files follow the library: a changed usage is rewritten, a component that is gone loses its file", async () => {
+    const { core, flux, folder } = bot(null, "flux-files", { extra: "Extra card.\nData: {}" });
+    try {
+      const dir = join(folder, ".bot", "card-usage");
+      flux.cards.cardCatalogBrief();
+      expect(existsSync(join(dir, "extra.md"))).toBe(true);
+      writeFileSync(join(dir, "stale-component.md"), "old");
+      writeFileSync(join(dir, "notes.txt"), "not a usage file");
+      flux.cards.cardCatalogBrief();
+      expect(existsSync(join(dir, "stale-component.md"))).toBe(false);
+      expect(existsSync(join(dir, "notes.txt"))).toBe(true);
     } finally { await core.shutdown(); }
   });
 
@@ -222,7 +279,7 @@ describe("a bot with the cards", () => {
       for (const i of [0, 1, 2, 3, 4].filter((index) => !whole.includes(index))) { expect(brief.others).toContain(`- big-${i}: Big ${i}: a card.`); expect(brief.components).not.toContain(`END-big-${i}`); }
       expect(brief.components).toContain("- inline-chart:");
       // The instructions are not cut again: the whole components went in as they were.
-      expect(cardInstructions({ title: "t", prompt: "p" }, brief)).not.toContain("…cut");
+      expect(cardSystemPrompt(brief)).not.toContain("…cut");
     } finally { await core.shutdown(); }
   });
   it("the one-line list of the rest of the library has its own limit; the lines beyond it are counted", async () => {

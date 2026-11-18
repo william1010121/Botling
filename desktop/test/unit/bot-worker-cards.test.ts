@@ -25,6 +25,7 @@ vi.mock("../../src/core/agent/head", async (original) => ({ ...await original<an
 vi.mock("../../src/core/agent/codex", async (original) => ({ ...await original<any>(), CodexHead: class extends fixture.Head {} }));
 vi.mock("../../src/core/agent/agy-acp", () => ({ verifyAcpRuntime() {}, AgyAcpHead: class extends fixture.Head {} }));
 import { Bot } from "../../src/core/bot";
+import { CARD_WORKER } from "../../src/core/agent/claude-workers";
 import { mainProfile } from "../../src/core/store/workspace";
 import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
@@ -88,8 +89,12 @@ describe("a reply with <card>: the worker starts", () => {
     expect(r.handoff).toHaveBeenCalledTimes(1);
     const [tool, args] = r.handoff.mock.calls[0]!;
     expect(tool).toBe("app_handoff");
-    expect(args).toMatchObject({ name: "Prices", group: "Prices", model: "haiku" });
+    expect(args).toMatchObject({ name: "Prices", group: "Prices", model: "haiku", effort: "low" });
+    // The symbol (no JSON can carry it) makes it a card worker: lean process, the card rules as its system prompt.
+    expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBe(true);
     expect(String(args.instructions)).toContain("Collect the prices of the three plans.");
+    // Only the card's own part is the message; the fixed rules are its system prompt (ClaudeWorkers `cardSystem`), not repeated per card.
+    expect(String(args.instructions)).not.toContain("You are a card worker");
     expect(record.workerCards![0]).toMatchObject({ title: "Prices", taskId: "T1", status: "running", run: 1, at: "Checking.\n".length });
   });
 
@@ -399,6 +404,8 @@ describe("redo with Opus: a new Opus worker takes over the card", () => {
     expect(done).toEqual({ taskId: "T2", run: 1 });
     const [, args] = handoffCalls(r)[1]!;
     expect(args).toMatchObject({ model: "opus", effort: "medium", group: "Prices" });
+    // The redo is no card worker: no lean flags, tools or card system prompt of the haiku worker (its rules come in its message).
+    expect((args as Record<symbol, unknown>)[CARD_WORKER]).toBeUndefined();
     expect(String(args.instructions)).toContain("Collect the prices.");
     expect(String(args.instructions)).toContain(JSON.stringify("Plans: A $5."));
     expect(String(args.instructions)).toContain(JSON.stringify('{"series":[5]}'));

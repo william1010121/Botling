@@ -41,6 +41,12 @@ export interface HeadConfig {
   /** Appended to claude's system prompt. */
   systemPrompt?: string | null;
   /**
+   * A lean process (a card worker, which only gathers a few numbers): no MCP server but the app's own (`--strict-mcp-config`), no skills or
+   * slash commands (`--disable-slash-commands`), only the project's own settings files (`--setting-sources project`), and no plugins. Each of
+   * these costs start-up time and prompt tokens it does not use. The `--settings` of this config (allow rules, hooks) still apply. None in harmless mode.
+   */
+  lean?: boolean;
+  /**
    * Development and live tests: no MCP servers, no CLAUDE.md/hooks/plugins (`--safe-mode`), no
    * session written to ~/.claude, and only `harmlessTools` (default none) exist at all.
    */
@@ -141,7 +147,9 @@ export function headArguments(config: HeadConfig): string[] {
   // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
   // as text for minutes instead of answering (Phase 2a).
   if (config.systemPrompt && !config.harmless) args.push("--append-system-prompt", config.systemPrompt);
-  if (!config.harmless) for (const dir of config.pluginDirs ?? []) args.push("--plugin-dir", dir);
+  const lean = !!config.lean && !config.harmless;
+  if (lean) args.push("--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "project");
+  if (!config.harmless && !lean) for (const dir of config.pluginDirs ?? []) args.push("--plugin-dir", dir);
   if (!config.harmless) for (const dir of config.addDirs ?? []) args.push("--add-dir", dir);
   if (app) args.push("--mcp-config", JSON.stringify({ mcpServers: { [app.server]: { type: "sdk", name: app.server } } }));
   if (config.harmless) {

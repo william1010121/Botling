@@ -1,15 +1,16 @@
 // Worker cards (worker-cards.ts): the records a reply's `<card>` tags make, how a stored one is read back, what a report is kept
 // as on a card (words and JSON displays only), and how a card follows its worker's ledger record.
 import { describe, expect, it } from "vitest";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
 import {
-  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS,
+  CARDS_PER_REPLY, CARD_BRIEF_MAX, CARD_CATALOG_MAX, CARD_SHOWS_MAX, cardPictures, writeCardUsage, CARD_TEXT_MAX, cardContent, cardInstructions, cardOfWorker, cardSystemPrompt, cardScriptCommand, cardWaiting, cardHasWorker, cardRedoInstructions, rebindCard, CARD_REDO_EFFORT, CARD_REDO_MODEL, followWorker, newCards, projectCard, readCards, splitCardWarning, takeRejection, CARD_WAIT_MAX_MS,
   type CardRules, type WorkerCardRecord,
 } from "../../src/core/worker-cards";
+import { CARD_CHART_RULE, INLINE_EXAMPLES } from "../../src/core/inline-blocks";
 
 const ID = "11111111-2222-3333-4444-555555555555";
 let n = 0;
@@ -88,6 +89,15 @@ describe("what the worker is told and what a report is kept as", () => {
     expect(content.shows).toEqual([]);
     expect(content.shows.every((show) => !("command" in show))).toBe(true);
     expect(content.text).not.toMatch(/<card/);
+  });
+
+  it("a report with several components keeps all of them, in the order written (several bar charts side by side)", () => {
+    const report = 'Three runs:\n<show name="inline-chart">{"kind":"bars","title":"A","items":[{"label":"x","value":1}]}</show>\n<show name="inline-chart">{"kind":"bars","title":"B","items":[{"label":"x","value":2}]}</show>\n<show name="inline-report-block">{"type":"kpi","title":"C","items":[]}</show>\nDone.';
+    const { shows, text } = cardContent(report);
+    expect(shows.map((show) => show.name)).toEqual(["inline-chart", "inline-chart", "inline-report-block"]);
+    expect(shows.map((show) => JSON.parse(show.data).title)).toEqual(["A", "B", "C"]);
+    expect(text).toContain("Three runs:");
+    expect(text).not.toMatch(/<show/);
   });
 
   it("is cut to the limits (at most CARD_SHOWS_MAX components)", () => {
@@ -179,28 +189,69 @@ describe("projectCard: the chat record that holds the worker's card", () => {
 
 const RULES: CardRules = { scriptsDir: "/p/repo/.bot/card-scripts", folder: "/p/repo", hasCommand: (name) => name === "gpu-monitor" };
 
-describe("cardInstructions with the component brief", () => {
+describe("what a card worker is told: its own card in its message, the fixed rules in its system prompt", () => {
   const brief = { components: "- inline-chart: a chart\n  Usage: JSON {kind}\n- git-log: commits\n  Command: git log", others: "- eeg-board: EEG", scriptsDir: "/p/repo/.bot/card-scripts" };
 
-  it("carries the prompt, every component with its usage, the rest of the library, the scripts folder and the rules (one <show>, a script command, a picture, a component request)", () => {
-    const text = cardInstructions({ title: "Commits", prompt: "Show the last commits of /p/repo." }, brief);
-    expect(text.startsWith("Show the last commits of /p/repo.")).toBe(true);
+  it("the system prompt carries every component with its usage, the rest of the library, the scripts folder and the rules (one <show>, a script command, a picture, a component request)", () => {
+    const text = cardSystemPrompt(brief);
+    expect(text).toContain("You are a card worker");
     expect(text).toContain("Usage: JSON {kind}");
     expect(text).toContain("Command: git log");
     expect(text).toContain("- eeg-board: EEG");
     expect(text).toContain("/p/repo/.bot/card-scripts/<short-name>/");
-    expect(text).toMatch(/exactly one <show name="component">/);
+    expect(text).toMatch(/one <show name="component">JSON as its usage says<\/show> for each figure the card needs/);
     expect(text).toContain("matplotlib");
     expect(text).toContain('<component name="short-english-name">');
     expect(text).toContain("read-only script");
   });
 
-  it("without a brief (no component library yet) it is the prompt and where the answer goes, nothing else", () => {
-    expect(cardInstructions({ title: "T", prompt: "p" })).not.toContain("You are a card worker");
+  it("the first message holds the card only (the prompt and where the answer goes), none of the fixed rules", () => {
+    const text = cardInstructions({ title: "Commits", prompt: "Show the last commits of /p/repo." });
+    expect(text.startsWith("Show the last commits of /p/repo.")).toBe(true);
+    expect(text).toContain('card titled "Commits"');
+    for (const fixed of ["You are a card worker", "Usage: JSON", "matplotlib", "card-scripts"]) expect(text).not.toContain(fixed);
+  });
+
+  it("tells it first to use data the card already gives and call no tool", () => {
+    const text = cardSystemPrompt(brief);
+    const rule = text.split("\n").find((line) => line.startsWith("0. "))!;
+    expect(rule).toMatch(/already holds every number/);
+    expect(rule).toMatch(/run no tool/);
+    expect(rule).toMatch(/answer at once/);
+    // It comes before the step that gathers data.
+    expect(text.indexOf("0. If the card text")).toBeLessThan(text.indexOf("1. Gather"));
+  });
+
+  it("is the same text whatever the card, so it caches: only the card's own message differs", () => {
+    expect(cardSystemPrompt(brief)).toBe(cardSystemPrompt({ ...brief }));
+    const a = cardInstructions({ title: "TitleAlpha", prompt: "PromptAlpha" }), b = cardInstructions({ title: "TitleBeta", prompt: "PromptBeta" });
+    expect(a).not.toBe(b);
+    // The fixed text takes nothing from a card (it is built from the brief alone), and the card's text takes nothing from the brief.
+    for (const own of ["PromptAlpha", "TitleAlpha", "PromptBeta", "TitleBeta"]) expect(cardSystemPrompt(brief)).not.toContain(own);
+    expect(cardSystemPrompt(brief).length).toBeGreaterThan(a.length * 3);
+  });
+
+  it("lets it end with several <show> blocks (several charts to compare), in order, at most CARD_SHOWS_MAX; one figure is one <show>", () => {
+    const text = cardSystemPrompt(brief);
+    expect(text).toMatch(/several in a row when it needs several \(for example three bar charts to compare side by side/);
+    expect(text).toContain(`at most ${CARD_SHOWS_MAX}`);
+    expect(text).toMatch(/one figure is one <show>/);
+    expect(text).not.toContain("exactly one <show");
+    expect(text).toContain("end with one <show> for each, in the order they should read");
+  });
+
+  it("carries the chart rule and the inline component examples (moved from the head's guidance), fixed text before the component list", () => {
+    const text = cardSystemPrompt(brief);
+    expect(text).toContain(CARD_CHART_RULE);
+    expect(text).toContain("Charts: first decide what the figure must show (groups side by side, time axis, error bars, measured vs estimated).");
+    expect(text).toContain("(kind bars, dumbbell, waterfall or line) only if it shows that clearly; otherwise draw it with Python matplotlib as a PNG");
+    expect(text).toContain(INLINE_EXAMPLES);
+    for (const kind of ['"kind":"bars"', '"kind":"waterfall"', '"kind":"dumbbell"', '"kind":"line"', '"type":"kpi"', '"type":"options"']) expect(text, kind).toContain(kind);
+    expect(text.indexOf(INLINE_EXAMPLES)).toBeLessThan(text.indexOf("Components you may use"));
   });
 
   it("an over-long usage list is cut, with a note", () => {
-    const text = cardInstructions({ title: "T", prompt: "p" }, { ...brief, components: "x".repeat(CARD_BRIEF_MAX + 5_000) });
+    const text = cardSystemPrompt({ ...brief, components: "x".repeat(CARD_BRIEF_MAX + 5_000) });
     expect(text).toContain("…cut");
     expect(text.length).toBeLessThan(CARD_BRIEF_MAX + 5_000);
   });
@@ -379,7 +430,7 @@ describe("a rejected script command is never dropped silently", () => {
   });
 
   it("cardInstructions says every script the command runs must live in <project>/.bot/card-scripts/<component>/ (copy it there; arguments are fine)", () => {
-    const text = cardInstructions({ title: "C", prompt: "p" }, { components: "- a: b", others: "", scriptsDir: "/p/repo/.bot/card-scripts" });
+    const text = cardSystemPrompt({ components: "- a: b", others: "", scriptsDir: "/p/repo/.bot/card-scripts" });
     expect(text).toMatch(/command[^\n]*must[^\n]*\/p\/repo\/\.bot\/card-scripts\/<short-name>\//);
     expect(text).toMatch(/copy/i);
   });
@@ -444,6 +495,10 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
     expect(text).toMatch(/check the data yourself/);
     expect(text).toContain("/p/.bot/card-scripts/<short-name>/");
     expect(text).toMatch(/replaces the card's drawing in place/);
+    // The redo worker is no card worker (no card system prompt): the card worker's rules are in its message, before the redo order.
+    expect(text).toContain("You are a card worker");
+    expect(text.indexOf("You are a card worker")).toBeLessThan(text.indexOf("(App: REDO."));
+    expect(text.indexOf("Collect the plan prices.")).toBeLessThan(text.indexOf("You are a card worker"));
   });
 
   it("quotes what the first worker left as data (a line break or a quote cannot close it), cuts a huge JSON, and says none when there are no components", () => {
@@ -514,5 +569,123 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
     expect(kept).toMatchObject({ model: "opus", earlier: ["T1", "T0"] });
     const [plain] = readCards([{ id: ID, title: "t", prompt: "p", status: "done", run: 1, model: 7, earlier: [1] }]);
     expect(plain!.model).toBeUndefined(); expect(plain!.earlier).toBeUndefined();
+
+
+describe("the catalog brief's system prompt (progressive disclosure)", () => {
+  const catalog = { components: "- inline-chart (JSON): a chart\n- grouped-bar-errorbar (JSON): grouped bars with error bars", others: "", scriptsDir: "/p/repo/.bot/card-scripts", usageDir: "/p/repo/.bot/card-usage" };
+
+  it("says one line each, where the whole usage of each is, and to read the picked ones in one step (all in the same turn)", () => {
+    const text = cardSystemPrompt(catalog);
+    expect(text).toContain("Components you may use, one line each:");
+    expect(text).toContain("- grouped-bar-errorbar (JSON): grouped bars with error bars");
+    expect(text).toContain("the file /p/repo/.bot/card-usage/<name>.md");
+    expect(text).toMatch(/Read the usage file of every component you picked, all in the same turn \(one Read each, side by side, never one after the other\), before you write its JSON/);
+    expect(text).toContain("the examples below need no read for the kinds and types they show");
+    // The whole-usage brief says none of it.
+    const whole = cardSystemPrompt({ ...catalog, usageDir: undefined });
+    expect(whole).not.toContain("card-usage");
+    expect(whole).not.toContain("Read the usage file");
+    expect(whole).toContain("Components you may use, each with its usage:");
+  });
+
+  it("is a fixed text for every card, and a catalog over CARD_CATALOG_MAX is cut with the way to the rest", () => {
+    expect(cardSystemPrompt(catalog)).toBe(cardSystemPrompt({ ...catalog }));
+    const cut = cardSystemPrompt({ ...catalog, components: "x".repeat(CARD_CATALOG_MAX + 1_000) });
+    expect(cut).toContain("(…cut: ls /p/repo/.bot/card-usage lists every component's usage file)");
+    expect(cut.length).toBeLessThan(CARD_CATALOG_MAX + 1_000 + cardSystemPrompt(catalog).length);
+  });
+});
+
+describe("writeCardUsage", () => {
+  it("writes one file per component, leaves one that is already right alone, rewrites a changed one and removes the .md of a component that is gone (other files stay)", () => {
+    const dir = join(tempDir("card-usage"), "card-usage");
+    writeCardUsage(dir, [{ name: "a", text: "usage a" }, { name: "網頁預覽卡片", text: "usage b" }]);
+    expect(readFileSync(join(dir, "a.md"), "utf8")).toBe("usage a");
+    expect(readFileSync(join(dir, "網頁預覽卡片.md"), "utf8")).toBe("usage b");
+    utimesSync(join(dir, "a.md"), new Date(1_000_000), new Date(1_000_000));
+    writeFileSync(join(dir, "notes.txt"), "mine");
+    writeCardUsage(dir, [{ name: "a", text: "usage a" }, { name: "c", text: "usage c" }]);
+    // Unchanged: not rewritten (its modified time is the old one).
+    expect(statSync(join(dir, "a.md")).mtimeMs).toBe(1_000_000);
+    writeCardUsage(dir, [{ name: "a", text: "usage a2" }, { name: "c", text: "usage c" }]);
+    expect(readFileSync(join(dir, "a.md"), "utf8")).toBe("usage a2");
+    expect(existsSync(join(dir, "網頁預覽卡片.md"))).toBe(false);
+    expect(readdirSync(dir).sort()).toEqual(["a.md", "c.md", "notes.txt"]);
+  });
+  it("skips a name that is no plain file name (a path, a dot file)", () => {
+    const dir = join(tempDir("card-usage"), "u");
+    writeCardUsage(dir, [{ name: "../evil", text: "x" }, { name: ".hidden", text: "x" }, { name: "a/b", text: "x" }, { name: "ok", text: "y" }]);
+    expect(readdirSync(dir)).toEqual(["ok.md"]);
+  });
+});
+
+describe("a picture the worker only linked in its words (Markdown image) is still the card's result", () => {
+  const project = () => {
+    const folder = tempDir("card-picture");
+    mkdirSync(join(folder, ".bot", "artifacts"), { recursive: true });
+    writeFileSync(join(folder, ".bot", "artifacts", "duration-by-model.png"), "png");
+    writeFileSync(join(folder, ".bot", "artifacts", "photo.JPG"), "jpg");
+    writeFileSync(join(folder, ".bot", "artifacts", "notes.txt"), "text");
+    const outside = tempDir("card-picture-outside");
+    writeFileSync(join(outside, "other.png"), "png");
+    return { folder, outside, rules: { scriptsDir: join(folder, ".bot", "card-scripts"), folder, hasCommand: () => false } as CardRules };
+  };
+
+  it("becomes an inline-report-block image show (src = the real path, the caption = its alt), and the link leaves the words", () => {
+    const { folder, rules } = project();
+    const png = join(realpathSync(folder), ".bot", "artifacts", "duration-by-model.png");
+    const content = cardContent(`各模型完成任務的時間（越短越好）。\n\n![duration by model](file://${join(folder, ".bot", "artifacts", "duration-by-model.png")})`, rules);
+    expect(content.shows).toHaveLength(1);
+    expect(content.shows[0]!.name).toBe("inline-report-block");
+    expect(JSON.parse(content.shows[0]!.data)).toEqual({ type: "image", src: png, alt: "duration by model", caption: "duration by model" });
+    expect(content.text).toBe("各模型完成任務的時間（越短越好）。");
+    expect(content.text).not.toContain("![");
+  });
+
+  it("takes a plain absolute path and a JPEG too, several in order, after the shows the worker wrote", () => {
+    const { folder, rules } = project();
+    const a = join(folder, ".bot", "artifacts", "duration-by-model.png"), b = join(folder, ".bot", "artifacts", "photo.JPG");
+    const content = cardContent(`<show name="inline-chart">{"kind":"bars","title":"T","items":[]}</show>\n![one](${a})\n![two](file://${b})`, rules);
+    expect(content.shows.map((show) => show.name)).toEqual(["inline-chart", "inline-report-block", "inline-report-block"]);
+    expect(content.shows.slice(1).map((show) => JSON.parse(show.data).alt)).toEqual(["one", "two"]);
+  });
+
+  it("leaves a link alone that is no picture of the project's: outside it, missing, not a PNG / JPEG, a relative path or a path with ..", () => {
+    const { folder, outside, rules } = project();
+    const inside = join(folder, ".bot", "artifacts");
+    const text = [`![a](file://${join(outside, "other.png")})`, `![b](file://${inside}/missing.png)`, `![c](file://${inside}/notes.txt)`, "![d](artifacts/x.png)", `![e](${inside}/../artifacts/duration-by-model.png)`, "![f](https://example.com/x.png)"].join("\n");
+    const content = cardContent(text, rules);
+    expect(content.shows).toEqual([]);
+    expect(content.text).toBe(text);
+  });
+
+  it("does not follow a link inside the project that leads out of it (real paths)", () => {
+    const { folder, outside, rules } = project();
+    symlinkSync(join(outside, "other.png"), join(folder, ".bot", "artifacts", "link.png"));
+    const content = cardContent(`![x](file://${join(folder, ".bot", "artifacts", "link.png")})`, rules);
+    expect(content.shows).toEqual([]);
+  });
+
+  it("without rules (no project folder) the words are as they were; and cardPictures keeps the words when it finds nothing", () => {
+    const { folder } = project();
+    const text = `![x](file://${join(folder, ".bot", "artifacts", "duration-by-model.png")})`;
+    expect(cardContent(text).shows).toEqual([]);
+    expect(cardContent(text).text).toBe(text);
+    expect(cardPictures("no picture\n\n\n\nhere", folder)).toEqual({ words: "no picture\n\n\n\nhere", found: [] });
+  });
+
+  it("the same picture linked twice is one show, and the shows stay within CARD_SHOWS_MAX", () => {
+    const { folder, rules } = project();
+    const a = join(folder, ".bot", "artifacts", "duration-by-model.png");
+    expect(cardContent(`![x](${a}) and again ![y](${a})`, rules).shows).toHaveLength(1);
+    const many = Array.from({ length: CARD_SHOWS_MAX }, (_, i) => `<show name="c${i}">{"i":${i}}</show>`).join("") + `![x](${a})`;
+    expect(cardContent(many, rules).shows).toHaveLength(CARD_SHOWS_MAX);
+  });
+
+  it("the system prompt makes the <show> of the image component the rule, and names the project's artifacts folder", () => {
+    const text = cardSystemPrompt({ components: "- inline-report-block (JSON): x", others: "", scriptsDir: "/p/repo/.bot/card-scripts" });
+    expect(text).toContain('end with <show name="inline-report-block">{"type":"image","src":"/full/path.png","alt":"caption"}</show>');
+    expect(text).toContain("/p/repo/.bot/artifacts/<name>.png");
+    expect(text).toContain("Never leave a picture only as a Markdown link");
   });
 });

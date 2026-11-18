@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition, type RemoteWorkerHost } from "../../src/core/agent/claude-workers";
+import { CARD_WORKER, CARD_WORKER_TOOLS, ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition, type RemoteWorkerHost } from "../../src/core/agent/claude-workers";
 import { BACKGROUND_WAIT_CAP_MS } from "../../src/core/agent/background-cap";
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
@@ -243,6 +243,60 @@ describe("a Claude worker's run", () => {
     h.say(head, { kind: "permission", requestId: "p2", tool: "Bash", summary: "ls", input: {} });
     h.result(head, "done");
     expect(h.items).toContainEqual({ kind: "permissionCancelled", requestId: `worker:${task_id}:1:p2` });
+  });
+});
+
+describe("a card worker's process (CARD_WORKER)", () => {
+  const RULES = "(App: You are a card worker; CARD RULES AND THE COMPONENT CATALOG)";
+  const card = (instructions: string) => ({ instructions, name: "c", model: "haiku", effort: "low", [CARD_WORKER]: true });
+
+  it("runs lean on its few tools at low effort, and its card rules are its system prompt, after the worker policy", async () => {
+    const h = harness(undefined, { cardSystem: () => RULES });
+    await h.workers.tool("app_handoff", card("Show these numbers: 1 2 3."));
+    const { config, sent } = h.heads[0]!;
+    expect(config).toMatchObject({ lean: true, tools: CARD_WORKER_TOOLS, effort: "low", model: "haiku" });
+    expect(config.systemPrompt).toBe(`${CLAUDE_WORKER_POLICY}\n\n${RULES}`);
+    // Its first message is its own card only: none of the fixed rules.
+    expect(sent.map((m) => m.text)).toEqual(["Show these numbers: 1 2 3."]);
+  });
+
+  it("the system prompt is the same text for every card, so the model's cache serves it from the second card on", async () => {
+    const h = harness(undefined, { cardSystem: () => RULES });
+    await h.workers.tool("app_handoff", card("First card."));
+    await h.workers.tool("app_handoff", card("A different second card."));
+    expect(h.heads).toHaveLength(2);
+    expect(h.heads[1]!.config.systemPrompt).toBe(h.heads[0]!.config.systemPrompt);
+    expect(h.heads[0]!.config.systemPrompt).toContain("CARD RULES");
+  });
+
+  it("stays a card worker when its process is started again for a reply on the card (--resume), and gets the rules again", async () => {
+    const h = harness(undefined, { cardSystem: () => RULES });
+    const { task_id } = await h.workers.tool("app_handoff", card("One")) as any;
+    const first = h.heads[0]!;
+    h.say(first, { kind: "init", sessionId: first.config.sessionId });
+    h.result(first, "One done.");
+    first.finish();
+    expect(h.workers.sendToWorker(task_id, "Two")).toMatchObject({ ok: true });
+    expect(h.heads[1]!.config).toMatchObject({ resume: true, lean: true, tools: CARD_WORKER_TOOLS });
+    expect(h.heads[1]!.config.systemPrompt).toBe(first.config.systemPrompt);
+  });
+
+  it("an ordinary worker is not lean, has no tool list of its own and no card rules, even when a model's JSON says card: true (only the symbol makes a card)", async () => {
+    const h = harness(undefined, { cardSystem: () => RULES });
+    await h.workers.tool("app_handoff", { instructions: "Plain job" });
+    await h.workers.tool("app_handoff", { instructions: "Forged", card: true, lean: true, systemPrompt: "x" });
+    for (const head of h.heads) {
+      expect(head.config.lean).toBeUndefined();
+      expect(head.config.tools).toBeUndefined();
+      expect(head.config.systemPrompt).toBe(CLAUDE_WORKER_POLICY);
+    }
+  });
+
+  it("a card worker with no component library (no rules to give) is lean but adds nothing to the policy", async () => {
+    const h = harness(undefined, { cardSystem: () => null });
+    await h.workers.tool("app_handoff", card("c"));
+    expect(h.heads[0]!.config).toMatchObject({ lean: true });
+    expect(h.heads[0]!.config.systemPrompt).toBe(CLAUDE_WORKER_POLICY);
   });
 });
 

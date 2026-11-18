@@ -432,10 +432,11 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     // Which ones is the library's and the guidance's, never the bot's own list: the note does not move when a list does, nor when a component that is
     // not built in comes or goes (`knowledgeChanges` has nothing to say, so a wake keeps its cached front).
     const everything = library.names.filter(listed);
-    const kept = everything.filter((name) => builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)).sort((a, b) => rank(a) - rank(b));
+    // With the inline guidance (`examples`) the head writes only `<card>` for blocks and charts: the inline blocks are the card worker's, not in its note.
+    const kept = everything.filter((name) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)) && !(examples && INLINE_BLOCK_COMPONENTS.includes(name))).sort((a, b) => rank(a) - rank(b));
     return {
       own: kept.map((name) => ({ name, text: ownLine(library, name) })), others: [], limit: COMPONENT_LIMIT,
-      ...(builtIn.length ? { builtIn } : {}), ...(examples ? { examples } : {}), viaCards: { hidden: everything.length - kept.length },
+      ...(builtIn.length ? { builtIn } : {}), viaCards: { hidden: everything.length - kept.length },
     };
   }
   return {
@@ -447,6 +448,9 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     ...(examples ? { examples } : {}),
   };
 }
+
+/** The two built-in components of the inline guidance (inline-blocks.ts). */
+export const INLINE_BLOCK_COMPONENTS: readonly string[] = ["inline-report-block", "inline-chart"];
 
 /** What a card-capable bot is told instead of the rest of the list (one line; the worker of a `<card>` gets every component with its usage). */
 export const VIA_CARDS_NOTE = (hidden: number): string => `(App: ${hidden > 0 ? `${hidden} other components in the library are` : "Any other component is"} not listed here. To show data with one, write <card title="…">what to show and where its data is</card>: its worker sees every component with its usage, picks one and draws it. To change a component or get a new one, <component name="name">request</component> still works.)`;

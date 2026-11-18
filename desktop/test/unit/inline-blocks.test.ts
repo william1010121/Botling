@@ -11,11 +11,13 @@ import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
 import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
-import { INLINE_BLOCK_GUIDANCE, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
+import { CARD_CHART_RULE, CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_EXAMPLES, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
 import { botPrompts, desktopPrompts, type ReportTool } from "../../src/core/prompts";
+import { CARD_TAG_RULE } from "../../src/core/card-rule";
+import { cardSystemPrompt } from "../../src/core/worker-cards";
 import { REPORT_SECTION, reportSections } from "../report-section";
 import { tempDir } from "../helpers";
 
@@ -184,6 +186,46 @@ describe("the guidance in the prompt", () => {
     expect(INLINE_BLOCK_GUIDANCE).not.toMatch(/a data chart \(matplotlib figure\)/);
     expect(REPORT_RULE_BY_SIZE).not.toMatch(/a data figure/);
     expect(REPORT_RULE_BY_SIZE).toContain("a chart into ONE inline chart (inline-chart) or a matplotlib PNG shown inline (the chart rule)");
+  });
+});
+
+describe("a Claude head with app workers writes only <card> (the guidance moved to the card worker)", () => {
+  const head = (engine: "claude" | "codex" | "agy", workers: boolean, inlineBlocks = true, role: "main" | "manager" | "bot" = "manager") =>
+    desktopPrompts(botPrompts({ profile: profile(role), engine, inlineBlocks }), profile(role), engine, workers, reportSections(tool), undefined, inlineBlocks).system;
+
+  it("has the <card> rule and the rule for when to use it, and neither the chart rule nor the examples", () => {
+    for (const role of ["main", "manager", "bot"] as const) {
+      const text = head("claude", true, true, role);
+      expect(text).toContain(CARD_TAG_RULE);
+      expect(text).toContain(CARD_WHEN_RULE);
+      expect(text).not.toContain(INLINE_BLOCK_GUIDANCE);
+      expect(text).not.toContain("<show name=\"inline-chart\">{chart}</show>");
+      expect(text).not.toContain(INLINE_EXAMPLES.split("\n")[0]!);
+      expect(text).not.toContain("Charts: first decide what the figure must show");
+    }
+    for (const word of ["numbers against a baseline", "a comparison or options", "a chart", "progress by group", "a timeline", "ONE <card>", "several side by side"]) expect(CARD_WHEN_RULE).toContain(word);
+    expect(CARD_WHEN_RULE).toMatch(/never a markdown table, a long list or a report page/);
+  });
+  it("is much shorter than the guidance it replaced (head prompt tokens down by about 700)", () => {
+    const after = head("claude", true);
+    expect(after.replace(CARD_WHEN_RULE, () => INLINE_BLOCK_GUIDANCE).length - after.length).toBeGreaterThan(1_500);
+    expect(CARD_WHEN_RULE.length).toBeLessThan(INLINE_BLOCK_GUIDANCE.length / 2);
+  });
+  it("keeps the guidance where a head cannot write <card>: native Claude subagents, Codex, and any bot without the guidance", () => {
+    expect(head("claude", false)).toContain(INLINE_BLOCK_GUIDANCE);
+    expect(head("claude", false)).not.toContain(CARD_WHEN_RULE);
+    expect(head("codex", true)).toContain(INLINE_BLOCK_GUIDANCE);
+    expect(head("codex", true)).not.toContain(CARD_WHEN_RULE);
+    expect(head("claude", true, false)).not.toContain(CARD_WHEN_RULE);
+    expect(head("claude", true, false)).not.toContain("Inline blocks");
+  });
+  it("the card worker's fixed system prompt has the chart rule and every example the head lost, once", () => {
+    const text = cardSystemPrompt({ components: "- inline-chart: a chart", others: "", scriptsDir: "/p/.bot/card-scripts" });
+    expect(text).toContain(CARD_CHART_RULE);
+    expect(text).toContain(INLINE_EXAMPLES);
+    expect(text.split(INLINE_EXAMPLES).length).toBe(2);
+    // The guidance and the worker's examples are one text: a change is made once.
+    expect(INLINE_BLOCK_GUIDANCE.endsWith(INLINE_EXAMPLES)).toBe(true);
   });
 });
 

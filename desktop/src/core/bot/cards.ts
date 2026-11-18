@@ -10,16 +10,16 @@ import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { inlineBlocksFor } from "../inline-blocks";
-import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, safeName, type ComponentKnowledge } from "../components/library";
+import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
 import type { BotStore } from "../store/bot-store";
 import { toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
-import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, readCards, splitCardWarning, cardWaiting, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
+import { CARD_BRIEF_MAX, CARD_OTHERS_MAX, cardScriptCommand, writeCardUsage, readCards, splitCardWarning, cardWaiting, type CardBrief, type CardRules, type CardShow } from "../worker-cards";
 
 export class BotCards {
   constructor(private readonly host: Bot, private readonly ctx: BotContext) {}
@@ -282,6 +282,25 @@ export class BotCards {
     while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
     const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
     return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
+  }
+
+  /**
+   * The catalog brief (progressive disclosure): one line for every component the card may show (the bot's own, the built-ins and the rest of the library:
+   * nothing is left without a line, whatever its usage weighs), and each one's whole usage in `<project>/.bot/card-usage/<name>.md`, which the worker reads for the
+   * components it picked, in one step. Null when the usage files cannot be written (the caller then uses `cardBrief`, the usages up front).
+   */
+  cardCatalogBrief(): CardBrief | null {
+    const context = this.context;
+    if (!context) return null;
+    const library = context.library;
+    const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
+    const builtIn = library.builtInNames();
+    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
+    const names = library.names.filter(usable).sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const scriptsDir = this.cardRules().scriptsDir;
+    const usageDir = join(dirname(scriptsDir), "card-usage");
+    try { writeCardUsage(usageDir, names.map((name) => ({ name, text: library.catalog([name]) }))); } catch { return null; }
+    return { components: names.map((name) => ownLine(library, name)).join("\n"), others: "", scriptsDir, usageDir };
   }
 
   /**
