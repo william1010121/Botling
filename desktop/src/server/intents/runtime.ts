@@ -38,6 +38,8 @@ export interface IntentRuntimeOptions {
   /** EventTapOptions `serverEvents` / `mirrorBotUpdates` (botlingd: every server event and bot update in `srv:`). */
   serverEvents?: "settings" | "all";
   mirrorBotUpdates?: boolean;
+  /** EventTapOptions `coalesceMs` (botlingd: a burst of `bot.updated` / `subagent.updated` of one object is written once). */
+  coalesceMs?: number;
   authorize?: Authorize;
   audit?: Audit;
   /** The content index (src/server/content): a finished line's files are noted in its entry's transaction. */
@@ -97,6 +99,7 @@ export class IntentRuntime {
       onServerEvent: options.onServerEvent,
       ...(options.serverEvents ? { serverEvents: options.serverEvents } : {}),
       ...(options.mirrorBotUpdates ? { mirrorBotUpdates: true } : {}),
+      ...(options.coalesceMs ? { coalesceMs: options.coalesceMs } : {}),
     });
     this.deps = { scope: this.scope, engine: options.engine, worker: this.worker, now: this.now, log, uploads: options.uploads ?? null, pluginRowsChanged: options.pluginRowsChanged, pluginGranted: options.pluginGranted, callIns: this.callIns, callHost: this.callHost };
     const slotLog = dbSlotLog(this.scope, log);

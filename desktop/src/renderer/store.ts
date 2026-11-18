@@ -249,7 +249,9 @@ export class WorkspaceStore {
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   // The plugin catalog's view goes to the Plugins page itself (PluginStore.tsx `usePluginStore`).
   if (event.type === "plugins.emit" || event.type === "plugins.store") return view;
-  if (event.type === "components.updated") return { ...view, components: event.components };
+  // A partial list (the server left out its biggest templates to fit one frame) updates what it names and keeps the rest
+  // until a whole list arrives; a deleted component stays until then too (a resync brings the whole list).
+  if (event.type === "components.updated") return { ...view, components: event.partial ? { ...view.components, ...event.components } : event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
   if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };
   if (event.type === "plugins.openTab") return { ...view, openTab: { plugin: event.plugin, view: event.view, botId: event.botId, seq: (view.openTab?.seq ?? 0) + 1 } };

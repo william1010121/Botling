@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceStore } from "../../src/renderer/store";
-import type { BotView, EventEnvelope, MessageView, ResultOf } from "../../src/contract";
+import { EventEnvelope as EventEnvelopeSchema, type BotView, type EventEnvelope, type MessageView, type ResultOf } from "../../src/contract";
 
 const botA: BotView = { id: "A", name: "A", role: "main", avatar: "circle", folder: "/a", phase: "awake", working: true, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
 const botB: BotView = { ...botA, id: "B", name: "B", role: "bot", working: false };
@@ -134,6 +134,47 @@ describe("selected chat subscriptions", () => {
   });
 });
 
+
+describe("a partial components.updated", () => {
+  const info = (template: string) => ({ template, version: 1, updated: false, sizes: ["s"], icon: null, title: null });
+  const start = async () => {
+    const store = new WorkspaceStore(async () => ({ ...snap("e1", 1), components: { big: info("<big/>"), small: info("<small/>") } }));
+    await store.resync();
+    return store;
+  };
+
+  it("updates the components it names and keeps the ones it left out", async () => {
+    const store = await start();
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "components.updated", partial: true, components: { small: info("<small2/>"), extra: info("<x/>") } } });
+    const shown = store.getView().components;
+    expect(Object.keys(shown).sort()).toEqual(["big", "extra", "small"]);
+    expect(shown.big.template).toBe("<big/>");
+    expect(shown.small.template).toBe("<small2/>");
+  });
+
+  it("a whole list (no partial) replaces them, as before", async () => {
+    const store = await start();
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "components.updated", components: { small: info("<small2/>") } } });
+    expect(Object.keys(store.getView().components)).toEqual(["small"]);
+  });
+
+  it("a snapshot after it brings the whole list back", async () => {
+    let call = 0;
+    const store = new WorkspaceStore(async () => (call++ === 0 ? { ...snap("e1", 1), components: { big: info("<big/>"), small: info("<small/>") } } : { ...snap("e1", 3), components: { small: info("<small3/>") } }));
+    await store.resync();
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "components.updated", partial: true, components: { small: info("<small2/>") } } });
+    expect(Object.keys(store.getView().components).sort()).toEqual(["big", "small"]);
+    await store.resync();
+    expect(Object.keys(store.getView().components)).toEqual(["small"]);
+  });
+
+  it("the contract accepts partial: true only", () => {
+    const envelope = (partial: unknown) => ({ v: 10, epoch: "e1", seq: 1, event: { type: "components.updated", components: {}, partial } });
+    expect(EventEnvelopeSchema.safeParse(envelope(true)).success).toBe(true);
+    expect(EventEnvelopeSchema.safeParse(envelope(false)).success).toBe(false);
+    expect(EventEnvelopeSchema.safeParse({ v: 10, epoch: "e1", seq: 1, event: { type: "components.updated", components: {} } }).success).toBe(true);
+  });
+});
 
 describe("chat selection during an outstanding snapshot", () => {
   it.each(["resolve", "reject"] as const)("opens the latest selection before the old request settles (%s)", async (outcome) => {

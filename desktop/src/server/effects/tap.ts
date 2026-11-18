@@ -60,6 +60,13 @@ export interface EventTapOptions {
   serverEvents?: "settings" | "all";
   /** `bot.updated` also goes into the `srv:` stream (botlingd: the window's bot list follows every bot, not only open ones). */
   mirrorBotUpdates?: boolean;
+  /**
+   * Snapshot events (`bot.updated`, `subagent.updated`) that wait alone are written after this many ms instead of at once, so a
+   * burst of redraws of one bot costs one entry per bot, the latest (0, the default: no wait; botlingd sets it). Any other event
+   * waiting, or any command that runs meanwhile, writes them at once; a snapshot still waiting behind an older one of the same
+   * object (same bot, same sub-agent) replaces it either way: the latest state wins and nothing else is lost.
+   */
+  coalesceMs?: number;
 }
 
 /** The bot a contract event belongs to, or null for a server event. */
@@ -67,6 +74,13 @@ export function botOfEvent(event: ContractEvent): string | null {
   if (event.type === "bot.updated") return event.bot.id;
   const botId = (event as { botId?: unknown }).botId;
   return typeof botId === "string" ? botId : null;
+}
+
+/** The object a snapshot event redraws (a bot, a sub-agent of a bot), or null for an event that is not a snapshot. */
+export function snapshotKey(event: ContractEvent): string | null {
+  if (event.type === "bot.updated") return `b\u0000${event.bot.id}`;
+  if (event.type === "subagent.updated") return `s\u0000${event.botId}\u0000${event.subagent.id}`;
+  return null;
 }
 
 function bodyOf(event: ContractEvent): Record<string, unknown> {
@@ -78,6 +92,10 @@ export class EventTap {
   private pending: ContractEvent[] = [];
   private scheduled = false;
   private holds = 0;
+  /** The wait before snapshot events are written (`coalesceMs`), and the timer while one runs. */
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  /** An event that is not a snapshot waits: nothing is held back for coalescing. */
+  private urgent = false;
   private readonly now: () => number;
 
   constructor(private readonly options: EventTapOptions) {
@@ -109,8 +127,31 @@ export class EventTap {
       this.store(tx, event);
       return;
     }
-    this.pending.push(event);
+    this.enqueue(event);
     this.schedule();
+  }
+
+  /**
+   * Puts `event` in `pending`; a snapshot of an object that already has one waiting takes its place (latest wins), but only
+   * when nothing but snapshots came after that one: with another kind of event in between, the newer state would be written
+   * before it, so it queues behind it instead and both snapshots are written.
+   */
+  private enqueue(event: ContractEvent): void {
+    const key = snapshotKey(event);
+    if (key === null) {
+      this.urgent = true;
+      this.pending.push(event);
+      return;
+    }
+    for (let i = this.pending.length - 1; i >= 0; i -= 1) {
+      const other = snapshotKey(this.pending[i]);
+      if (other === null) break;
+      if (other === key) {
+        this.pending[i] = event;
+        return;
+      }
+    }
+    this.pending.push(event);
   }
 
   /**
@@ -130,8 +171,25 @@ export class EventTap {
   }
 
   private schedule(): void {
-    if (this.scheduled || this.holds > 0 || !this.pending.length) return;
+    if (this.holds > 0 || !this.pending.length) return;
+    if (this.timer) {
+      if (!this.urgent) return;
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.scheduled = false;
+    }
+    if (this.scheduled) return;
     this.scheduled = true;
+    const wait = this.options.coalesceMs ?? 0;
+    if (wait > 0 && !this.urgent) {
+      this.timer = setTimeout(() => { this.timer = null; this.submitFlush(); }, wait);
+      this.timer.unref?.();
+      return;
+    }
+    this.submitFlush();
+  }
+
+  private submitFlush(): void {
     // An empty command: TxScope.onEnter writes what waits.
     this.options.scope.submit(() => undefined).catch((error) => {
       this.scheduled = false;
@@ -142,7 +200,9 @@ export class EventTap {
   /** Writes the waiting events into `tx` (the start of every command). */
   flush(tx: Db): void {
     this.scheduled = false;
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     if (!this.pending.length) return;
+    this.urgent = false;
     const taken = this.pending.splice(0);
     // Rolled back with the command they rode in: they wait again, ahead of anything newer.
     this.options.scope.onRollback(() => {

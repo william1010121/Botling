@@ -476,7 +476,11 @@ describe("D0: a redraw of the state the log already holds is not stored", () => 
   it("subagent.updated: identical is skipped, any change is stored; the srv: stream and the bot's stream decide on their own", async () => {
     const { store, scope, tap } = await tapSetup();
     const update = (overrides?: Record<string, unknown>) => ({ type: "subagent.updated", botId: "alpha", subagent: subagent(overrides) }) as unknown as ContractEvent;
-    await send(scope, tap, update(), update(), update({ status: "completed" }), update({ status: "completed" }));
+    // one write each: events of one sub-agent that wait together are written as the latest only (server-tap-jank.test.ts)
+    await send(scope, tap, update());
+    await send(scope, tap, update());
+    await send(scope, tap, update({ status: "completed" }));
+    await send(scope, tap, update({ status: "completed" }));
     expect(count(store, "bot:alpha", "subagent.updated")).toBe(2);
     expect(verifyStream(store.db, A)).toMatchObject({ ok: true });
   });
