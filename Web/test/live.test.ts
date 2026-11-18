@@ -265,6 +265,34 @@ describe("a card that refreshes by itself", () => {
     expect(runs()).toHaveLength(1);
   });
 
+  it("keeps what runs a card while its new element is made but not on the page yet (the old one taken off first)", () => {
+    const first = draw(card());
+    vi.advanceTimersByTime(300);
+    first.remove();
+    // The same message drawn anew: made now, put on the page a moment later.
+    const again = messageElement(message([card()]), components);
+    vi.advanceTimersByTime(250);
+    document.body.append(again);
+    again.querySelector<HTMLElement>(".command-card")!.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 300, width: 300, height: 100, x: 0, y: 10, toJSON() {} }) as DOMRect;
+    vi.advanceTimersByTime(2500);
+    expect(runs()).toHaveLength(1);
+  });
+
+  it("counts a card's interval again from its new element once the old one is gone (nothing is left of its old count)", () => {
+    // Another card keeps the timer going meanwhile.
+    document.body.append(messageElement({ ...message([card({ every: 60 })]), id: "k1" }, components));
+    const first = draw(card());
+    vi.advanceTimersByTime(1000);
+    first.remove();
+    vi.advanceTimersByTime(500);
+    // Without the forgotten count the new card would be overdue (its first count ended at 2.25 s) and run at once.
+    draw(card());
+    vi.advanceTimersByTime(1500);
+    expect(runs()).toEqual([]);
+    vi.advanceTimersByTime(1500);
+    expect(runs()).toHaveLength(1);
+  });
+
   it("stops its timer once no card is on the page, and starts it again for the next one", () => {
     const row = draw(card());
     expect(vi.getTimerCount()).toBeGreaterThan(0);
@@ -275,6 +303,9 @@ describe("a card that refreshes by itself", () => {
     expect(vi.getTimerCount()).toBe(0);
     draw(card());
     expect(vi.getTimerCount()).toBeGreaterThan(0);
+    // A second card shares the one timer.
+    draw(card({ every: 5 }));
+    expect(vi.getTimerCount()).toBe(1);
     vi.advanceTimersByTime(2500);
     expect(runs()).toHaveLength(1);
   });
