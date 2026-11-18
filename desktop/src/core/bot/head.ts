@@ -211,7 +211,7 @@ export class BotHead {
       const siteTools = this.options.siteToolsFolder ? { siteToolsGuard: { folder: this.options.siteToolsFolder } } : {};
       // app_routines comes on the same server, also for the native fallback (which gets only that tool).
       const appMcp = config.harmless ? null : { server: CLAUDE_APP_SERVER, tools: workers ? CLAUDE_APP_TOOLS : CLAUDE_ROUTINE_TOOLS };
-      head = new ClaudeHead({ ...config, ...siteTools, monitorWorker: false, ...(appMcp ? { appMcp } : {}), ...(workers ? { agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
+      head = new ClaudeHead({ ...config, ...siteTools, ...(appMcp ? { appMcp } : {}), ...(workers ? { agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
         onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
         ...(appMcp ? { onAppTool: async (name: string, args: Record<string, unknown>) => name === "app_routines" ? this.routinesTool(args)
           : isBotTool(name) ? this.botTool(name, args, "coordinator") : workers ? workers.tool(name, args) : Promise.reject(new Error(`Unknown app tool ${name}.`)) } : {}),

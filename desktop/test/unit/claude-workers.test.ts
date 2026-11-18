@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition, type RemoteWorkerHost } from "../../src/core/agent/claude-workers";
+import { BACKGROUND_WAIT_CAP_MS } from "../../src/core/agent/background-cap";
 import { claudeHarness } from "../claude-workers-fake";
 import { parseLine } from "../../src/core/agent/stream";
 import { API_RETRY_NOTE } from "../../src/core/api-retry";
@@ -38,7 +39,7 @@ describe("a Claude worker's run", () => {
     const r: any = await h.workers.tool("app_handoff", { name: "Research", instructions: "Look up the API" });
     expect(r).toMatchObject({ accepted: true, run: 1 });
     const head = h.heads[0]!;
-    expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", monitorWorker: true, persistSession: true });
+    expect(head.config).toMatchObject({ cwd: h.cwd, resume: false, model: "sonnet", persistSession: true });
     expect(head.config.appMcp?.tools.map((tool: { name: string }) => tool.name)).toEqual(["app_notify_owner", "app_browser_tabs", "app_browser_open", "app_browser_requests", "app_browser_extract", "app_note_outline", "app_note_read", "app_note_search"]);
     expect(head.config.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(head.config.sessionId).not.toBe("coordinator");
@@ -643,6 +644,344 @@ describe("background work its process left running", () => {
     const on = waits(h).at(-1)!.on;
     expect(on).toMatchObject({ kind: "command", title: "Write deploy record and update TODO", queued: 1 });
     expect(on.since).toBeLessThanOrEqual(before);
+  });
+});
+
+describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the row says so while it runs)", () => {
+  const used = { kind: "toolUse", id: "mon1", tool: "Monitor", title: "Monitor", detail: "tail -f deploy.log", parent: null, input: { command: "tail -f deploy.log" } };
+  const started = { kind: "backgroundStarted", id: "mon1", description: "watch the deploy log", monitor: false };
+  const ended = { kind: "subagentEnded", id: "mon1", status: "completed", summary: null };
+  const waits = (h: ReturnType<typeof harness>) => h.items.filter((i) => i.kind === "subagentWaitingOn");
+  const open = async () => {
+    const h = harness(undefined, { keepAliveMs: 10 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Watch the deploy" }) as any;
+    return { h, task_id, head: h.heads[0]! };
+  };
+
+  it("keeps the run at work while its Monitor lives, says Monitor running, and reports once the Monitor's wake turn is done", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; waiting for the deploy.");
+    await wait(30);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ id: task_id, on: { kind: "monitorRunning", title: "watch the deploy log", queued: 0 } });
+    expect(head.finished).toBe(false);
+    // The Monitor ends; its wake turn is the run's own and ends it, with both turns' words.
+    h.say(head, ended);
+    expect(waits(h).at(-1)).toEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+    h.result(head, "The deploy finished: ok.");
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; waiting for the deploy.");
+    expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+  });
+
+  it("a background command that is not a Monitor still ends the run at its first result", async () => {
+    const { h, head } = await open();
+    h.say(head, { kind: "toolUse", id: "bg1", tool: "Bash", title: "Bash", detail: "sleep 30", parent: null, input: {} });
+    h.say(head, { kind: "backgroundStarted", id: "bg1", description: "sleep", monitor: false });
+    h.result(head, "Started it in the background.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    expect(waits(h)).toEqual([]);
+  });
+
+  it("a Monitor on a socket or an MCP server (monitor: true) holds the run too", async () => {
+    const { h, head } = await open();
+    h.say(head, { kind: "backgroundStarted", id: "ws1", description: "watch the socket", monitor: true });
+    h.result(head, "Watching.");
+    await wait(20);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the socket" } });
+  });
+
+  it("a failed turn is not held back for its Monitor", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "It broke.", false);
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+  });
+
+  it("a Monitor past the 50-minute cap and a minute no longer holds the report", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    const task = (h.workers as any).adapter.procs.get(task_id).background.get("mon1");
+    task.since = Date.now() - 52 * 60_000;
+    h.result(head, "Monitor started.");
+    await wait(20);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    // Not held for an instant either: its row never said Monitor running.
+    expect(waits(h)).toEqual([]);
+  });
+
+  it("its process ending while the Monitor lives delivers the held report instead of an error", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the log shows nothing yet.");
+    await wait(20);
+    expect(h.reports).toEqual([]);
+    head.exit(0, true);
+    await wait(30);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; the log shows nothing yet.");
+  });
+
+  it("the report goes out after the grace when the Monitor's wake turn never starts, once", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      await wait(10);
+      expect(h.reports).toEqual([]);
+      await wait(80);
+      expect(h.reports.map((r) => r.run)).toEqual([1]);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      // A result that comes after the run ended is nobody's report.
+      h.result(head, "Late wake turn.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a wake turn that outlasts the grace is not cut off: its result ends the run with both turns' words", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      h.say(head, { kind: "toolUse", id: "t1", tool: "Bash", title: "Bash", detail: "tail", parent: null, input: {} });
+      await wait(150); // several graces, the turn is still at work
+      expect(h.reports).toEqual([]);
+      h.result(head, "The deploy finished: ok.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  // monitor-fix2: a held good report is never lost, and the oldest Monitor's cap decides once (WorkerProcess.tla MonExpire).
+  const HOLD_MS = BACKGROUND_WAIT_CAP_MS + 60_000;
+  const monitorAgain = { kind: "backgroundStarted", id: "mon2", description: "watch the disk", monitor: true };
+  const secondEnded = { kind: "subagentEnded", id: "mon2", status: "completed", summary: null };
+  const thirdStarted = { kind: "backgroundStarted", id: "mon3", description: "watch the queue", monitor: true };
+  /** Its first Monitor `left` ms short of the cap (the timer on it is armed by the report). */
+  const nearCap = (h: ReturnType<typeof harness>, task_id: string, left: number) => {
+    (h.workers as any).adapter.procs.get(task_id).background.get("mon1").since = Date.now() - HOLD_MS + left;
+  };
+  const failedSummary = (h: ReturnType<typeof harness>) => h.items.filter((i) => i.kind === "subagentEnded").at(-1)!;
+
+  it("a failed wake turn delivers the held good report together with the error (not the error alone)", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    await wait(20);
+    expect(h.reports).toEqual([]);
+    h.say(head, ended);
+    h.result(head, "API Error: 400 prompt is too long", false);
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    expect(failedSummary(h)).toMatchObject({ status: "failed", summary: expect.stringContaining("API Error: 400 prompt is too long") });
+    expect(failedSummary(h).summary).toContain("Monitor started; the deploy is queued.");
+    expect(h.reports[0]!.text).toContain("Monitor started; the deploy is queued.");
+  });
+
+  it("a report that went out with a failed wake turn is not kept for the next run: that run's report is its own", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    h.say(head, ended);
+    h.result(head, "API Error: 400 prompt is too long", false);
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    await h.workers.tool("app_send_message", { task_id, message: "Again" });
+    // The kept-alive process may have gone to sleep by now: the next run is on the last process either way.
+    h.result(h.heads.at(-1)!, "Second run done.");
+    await wait(20);
+    expect(h.reports).toHaveLength(2);
+    expect(h.reports[1]!.text).toContain("Second run done.");
+    expect(h.reports[1]!.text).not.toContain("Monitor started; the deploy is queued.");
+  });
+
+  it("the held words are in the report once, whether the grace or its process's end lets it go", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "40";
+    const once = (text: string, part: string) => text.split(part).length - 1;
+    try {
+      const grace = await open();
+      grace.h.say(grace.head, used); grace.h.say(grace.head, started);
+      grace.h.result(grace.head, "Monitor started; the deploy is queued.");
+      grace.h.say(grace.head, ended);
+      await wait(100);
+      expect(grace.h.reports).toHaveLength(1);
+      expect(once(grace.h.reports[0]!.text, "Monitor started; the deploy is queued.")).toBe(1);
+      const exited = await open();
+      exited.h.say(exited.head, used); exited.h.say(exited.head, started);
+      exited.h.result(exited.head, "Monitor started; the deploy is queued.");
+      exited.head.exit(0, true);
+      await wait(30);
+      expect(exited.h.reports).toHaveLength(1);
+      expect(once(exited.h.reports[0]!.text, "Monitor started; the deploy is queued.")).toBe(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a wake turn the API turns away and tries again keeps the held report: the retry's report carries both", () => withRetryDelays("20,20,20", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    h.say(head, ended);
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    await wait(60);
+    expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy", API_RETRY_NOTE]);
+    expect(h.reports).toEqual([]);
+    h.result(head, "The deploy finished: ok.");
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; the deploy is queued.");
+    expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+  }));
+
+  it("every try failing after a held report still hands the held report over with the failure", () => withRetryDelays("15", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    h.say(head, ended);
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    await wait(50);
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    await wait(20);
+    expect(h.reports).toHaveLength(1);
+    expect(failedSummary(h)).toMatchObject({ status: "failed" });
+    expect(failedSummary(h).summary).toContain("Monitor started; the deploy is queued.");
+  }));
+
+  it("its process ending while an API retry waits hands over the held report with the exit", () => withRetryDelays("500", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    h.say(head, ended);
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    head.exit(0, true);
+    await wait(30);
+    expect(h.reports).toHaveLength(1);
+    expect(h.reports[0]!.text).toContain("Monitor started; the deploy is queued.");
+  }));
+
+  it("a Monitor's wake turn that ends well while an API retry waits is kept for the Monitor, and no try follows it", () => withRetryDelays("60", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    // The Monitor's next event wakes the model before the try: that turn's report is kept for the live Monitor.
+    h.result(head, "Still deploying.");
+    await wait(120);
+    expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy"]);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the deploy log" } });
+  }));
+
+  it("the cap that let the report go still holds after an API retry: a newer Monitor does not keep the retry's report", () => withRetryDelays("20", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "30";
+    try {
+      const { h, task_id, head } = await open();
+      h.say(head, used); h.say(head, started);
+      nearCap(h, task_id, 40);
+      h.say(head, monitorAgain);
+      h.result(head, "Monitor started.");
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      await wait(80);
+      expect(h.reports).toEqual([]);
+      apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+      await wait(50);
+      expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy", API_RETRY_NOTE]);
+      h.result(head, "The deploy finished: ok.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  }));
+
+  it("the oldest Monitor's cap lets the report go once, though a newer Monitor still runs; nothing holds or reports again", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    nearCap(h, task_id, 40);
+    h.say(head, monitorAgain);
+    h.result(head, "Monitor started.");
+    await wait(10);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the deploy log" } });
+    await wait(80);
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    expect(waits(h).at(-1)).toEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+    const rows = waits(h).length;
+    // Released: a later Monitor, the other one ending and a late wake turn add neither a row nor a second report.
+    h.say(head, thirdStarted); h.say(head, secondEnded);
+    h.result(head, "Late wake turn.");
+    await wait(30);
+    expect(h.reports).toHaveLength(1);
+    expect(waits(h)).toHaveLength(rows);
+  });
+
+  it("the oldest Monitor's cap passing during a turn: that turn's result ends the run, a newer Monitor does not hold it again", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "30";
+    try {
+      const { h, task_id, head } = await open();
+      h.say(head, used); h.say(head, started);
+      nearCap(h, task_id, 40);
+      h.say(head, monitorAgain);
+      h.result(head, "Monitor started.");
+      // The wake turn is under way when the cap runs out: the grace, not a cut-off.
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      h.say(head, { kind: "toolUse", id: "t1", tool: "Bash", title: "Bash", detail: "tail", parent: null, input: {} });
+      await wait(100);
+      expect(h.reports).toEqual([]);
+      const rows = waits(h).length;
+      // A Monitor that starts now is no reason to hold what the cap has let go: no "Monitor running" row for it.
+      h.say(head, thirdStarted);
+      expect(waits(h)).toHaveLength(rows);
+      h.result(head, "The deploy finished: ok.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+      expect(waits(h).at(-1)).toEqual({ kind: "subagentWaitingOn", id: task_id, on: null });
+      h.result(head, "Another turn.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a wake turn that outlasts the grace does not let the report go for good: a Monitor it starts still holds it", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "30";
+    try {
+      const { h, head } = await open();
+      h.say(head, used); h.say(head, started);
+      h.result(head, "Monitor started.");
+      h.say(head, ended);
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      h.say(head, { kind: "toolUse", id: "t1", tool: "Bash", title: "Bash", detail: "tail", parent: null, input: {} });
+      await wait(100); // the grace ran out under the turn: only the cap lets a report go for good
+      expect(h.reports).toEqual([]);
+      h.say(head, monitorAgain);
+      h.result(head, "Wake turn done; watching the disk too.");
+      await wait(30);
+      expect(h.reports).toEqual([]);
+      expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the disk" } });
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  });
+
+  it("a steer while the Monitor runs goes into the run as usual", async () => {
+    const { h, task_id, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started.");
+    await wait(20);
+    expect(h.workers.sendToWorker(task_id, "Also check the disk")).toEqual({ ok: true, how: "steered", run: 1 });
+    expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy", "Also check the disk"]);
   });
 });
 

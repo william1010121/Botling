@@ -7,34 +7,31 @@ function transport() {
   const writes: any[] = [], items: any[] = [];
   const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
   child.stdin.on("data", chunk => writes.push(JSON.parse(String(chunk))));
-  const head = new ClaudeHead({ command: "/test/claude", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], bypassPermissions: true, monitorWorker: false },
+  const head = new ClaudeHead({ command: "/test/claude", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], bypassPermissions: true },
     { onItem: i => items.push(i), onExit() {} }, { platform: "test", verified: true, spawn: () => ({ pid: 1, child, terminate: async () => ({ killed: [], forced: false }) }) } as any);
   head.start();
   const receive = (value: unknown) => child.stdout.write(JSON.stringify(value) + "\n");
   return { head, writes, items, receive };
 }
 
-describe("coordinator-only Claude monitors", () => {
-  it("registers the pre-execution hook before delivering user input, including bypass mode", () => {
+describe("Claude monitors (a worker may use the Monitor tool too, 2026-11-18)", () => {
+  it("registers its tool policy before delivering user input, bypass mode included, and no hook denies Monitor", () => {
     const t = transport();
     t.head.send("authorized work", "u1");
     expect(t.writes).toHaveLength(1);
-    expect(t.writes[0].request).toMatchObject({ subtype: "initialize", hooks: { PreToolUse: [{ matcher: "^Monitor$", hookCallbackIds: ["botling-monitor-owner"] }, { matcher: "^(Bash|Monitor)$", hookCallbackIds: ["botling-background-cap"] }] } });
+    // Only the background wait cap watches Monitor now (50 minutes, background-cap.ts); nothing denies it.
+    expect(t.writes[0].request).toMatchObject({ subtype: "initialize", hooks: { PreToolUse: [{ matcher: "^(Bash|Monitor)$", hookCallbackIds: ["botling-background-cap"] }] } });
+    expect(JSON.stringify(t.writes[0])).not.toContain("botling-monitor-owner");
     t.receive({ type: "control_response", response: { subtype: "success", request_id: t.writes[0].request_id, response: {} } });
     expect(t.writes[1]).toMatchObject({ type: "user", uuid: "u1" });
   });
-  it("denies child execution with original intent and leaves coordinator permissions undecided", () => {
+  it("a Monitor call from a worker or a nested agent is not answered with a denial", () => {
     const t = transport();
-    const hook = (input: any, id: string) => {
-      t.receive({ type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: "botling-monitor-owner", input: { hook_event_name: "PreToolUse", tool_name: "Monitor", tool_input: { command: "echo intent", timeout: 600 }, ...input } } });
-      return t.writes.at(-1).response;
-    };
-    const denied = hook({ agent_id: "child-7" }, "h1");
-    expect(denied).toMatchObject({ request_id: "h1", response: { hookSpecificOutput: { permissionDecision: "deny" } } });
-    expect(denied.response.hookSpecificOutput.permissionDecisionReason).toContain("echo intent");
-    expect(denied.response.hookSpecificOutput.permissionDecisionReason).toContain("existing approval");
-    expect(hook({}, "h2").response).toEqual({});
-    expect(t.items).toEqual([]);
+    t.head.send("go", "u1");
+    t.receive({ type: "control_response", response: { subtype: "success", request_id: t.writes[0].request_id, response: {} } });
+    const before = t.writes.length;
+    t.receive({ type: "control_request", request_id: "h1", request: { subtype: "hook_callback", callback_id: "botling-monitor-owner", input: { hook_event_name: "PreToolUse", tool_name: "Monitor", agent_id: "child-7", tool_input: { command: "echo intent" } } } });
+    expect(t.writes.slice(before).some((w) => JSON.stringify(w).includes("deny"))).toBe(false);
   });
 });
 
@@ -65,12 +62,6 @@ it("does not show an interrupted owner's cached execution as running", () => {
   const view = backgroundTaskView({ id: "m", kind: "monitor", title: "Coordinator monitor", status: "interrupted", startedAt: 1,
     monitor: { ownerSession: "owner", threadId: "th", turnId: "t", execution: "running", callback: "none" } });
   expect(view?.monitor).toMatchObject({ execution: "interrupted", callback: "uncertain" });
-});
-
-import { claudeMonitorDecision } from "../../src/core/agent/monitor-policy";
-it("blocks an app-managed Claude child even without a nested-agent ID, but leaves other tools alone", () => {
-  expect(claudeMonitorDecision({ hook_event_name: "PreToolUse", tool_name: "Monitor", tool_input: { command: "echo child" } }, true)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
-  expect(claudeMonitorDecision({ hook_event_name: "PreToolUse", tool_name: "Read", agent_id: "child" }, true)).toEqual({});
 });
 
 it("Stop before hook acknowledgement never releases that turn's queued command", () => {

@@ -293,7 +293,7 @@ async function recordEditor(rec: Recording, scenario: Scenario, dir: string): Pr
   const heads = PROMPTS[scenario].map((text, i) => {
     const id = `editor-${i + 1}`;
     let head: InstanceType<typeof ClaudeHead>;
-    head = new ClaudeHead({ ...route.launch!, monitorWorker: true, sessionId: randomUUID(), resume: false }, {
+    head = new ClaudeHead({ ...route.launch!, sessionId: randomUUID(), resume: false }, {
       onItem: (item) => {
         const tagged = { ...item, editor: id } as Item;
         items.push(tagged); rec.item(tagged);

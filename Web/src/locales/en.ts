@@ -149,6 +149,8 @@ export const en = {
   "subagent.wait.agent": "background agent: {title}",
   "subagent.wait.process": "its earlier process to end",
   "subagent.waitingOn": "Waiting for {what}",
+  "subagent.monitorRunning": "Monitor running: {title}",
+  "subagent.monitorRunningNote": "Its Monitor is still running; the worker reports when it ends.",
   "subagent.notDelivered": "Not delivered yet",
   "subagent.notDeliveredOn": "Not delivered yet — waiting for {what}",
   "subagent.minutes": "{n} min",

@@ -115,3 +115,15 @@ describe("a worker whose words wait for its background work, as drawn", () => {
     expect(out).not.toContain(">Running<");
   });
 });
+
+describe("a worker whose own Monitor runs, as drawn", () => {
+  it("says Monitor running (not Running, not waiting for words) and how long it has run", () => {
+    const watching = bot({ id: "board", subagentRows: [row({ id: "board-deploy-watch", startedAt: NOW - 40 * MIN,
+      waitingOn: { kind: "monitorRunning", title: "watch the deploy log", since: NOW - 12 * MIN, queued: 0 } })] });
+    const out = renderToStaticMarkup(createElement(RailWorkerList, { botId: "board", list: railWorkers(watching, [watching], NOW, marks), name: "board", now: NOW, lang: null, actions }));
+    expect(out).toContain('class="rail-wk-row running waiting"');
+    expect(out).toContain('Monitor running: watch the deploy log</span>・12m');
+    expect(out).not.toContain(">Running<");
+  });
+});
+

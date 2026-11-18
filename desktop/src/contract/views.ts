@@ -148,9 +148,11 @@ export type TaskView = z.infer<typeof TaskView>;
  * background (a command, a Monitor, a background agent) after the app closed its input. `since`: when that started
  * (ms); `queued`: messages not delivered yet. "apiRetry": its turn waits to be tried again after an API error that passes
  * (core/api-retry.ts); `title` is the whole line ("API 暫時擋住，30 秒後重試（1/3）").
+ * "monitorRunning": the worker's own Monitor still runs, so its run is not finished and its report waits (`title`: what the
+ * Monitor watches, `since`: when it started); no words wait for it (`queued` 0).
  */
 export const WaitingOnView = z.strictObject({
-  kind: z.enum(["command", "monitor", "agent", "process", "apiRetry"]),
+  kind: z.enum(["command", "monitor", "agent", "process", "apiRetry", "monitorRunning"]),
   title: z.string().max(400),
   since: z.number(),
   queued: z.number().int().nonnegative(),
