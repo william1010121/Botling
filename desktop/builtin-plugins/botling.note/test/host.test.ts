@@ -20,6 +20,7 @@ function fake(notes: Record<string, unknown> = {}) {
     },
     storage: { dir: "/s", get: (key: string) => stored.get(key), set: (key: string, value: unknown) => { stored.set(key, value); } },
     ui: { expose: (method: string, fn: (params: unknown) => unknown) => { exposed.set(method, fn); return () => {}; }, emit: vi.fn() },
+    bots: { list: vi.fn(async () => [{ id: "main", name: "Botling", role: "main", awake: true }, { id: "b1", name: "EEG\n(x)", role: "bot", awake: false }, { id: "", name: "No id", role: "bot", awake: false }]) },
     events: { on: (event: string, fn: (data: never) => void) => { events.set(event, fn); return () => {}; } },
   };
   return { api: api as unknown as BotlingApi & typeof api, exposed, events, stored };
@@ -28,7 +29,7 @@ function fake(notes: Record<string, unknown> = {}) {
 it("exposes what the Note tab asks for, and hears the note events and the bot's turns (for the margin comments)", () => {
   const { api, exposed, events } = fake();
   activate(api);
-  expect([...exposed.keys()].sort()).toEqual(["assetUrls", "cards", "components", "importAsset", "localizeImages", "marginAsk", "marginCancel", "marginDelete", "marginFold", "marginList", "outline", "parse", "read", "runCard", "viewGet", "viewSet", "write"]);
+  expect([...exposed.keys()].sort()).toEqual(["assetUrls", "bots", "cards", "components", "importAsset", "localizeImages", "marginAsk", "marginCancel", "marginDelete", "marginFold", "marginList", "outline", "parse", "read", "runCard", "viewGet", "viewSet", "write"]);
   expect([...events.keys()].sort()).toEqual(["messagePosted", "noteCardChanged", "noteChanged", "noteConflict", "turnFinished", "turnStarted"]);
 });
 
@@ -72,4 +73,12 @@ it("passes a note's change and conflict on to that bot's frames", () => {
   (events.get("noteChanged") as (data: unknown) => void)({ botId: "B1", mtime: 9 });
   (events.get("noteConflict") as (data: unknown) => void)({ botId: "B1", file: "/k.md", reason: "older" });
   expect(api.ui.emit.mock.calls).toEqual([["noteChanged", { botId: "B1", mtime: 9 }, { botId: "B1" }], ["noteConflict", { botId: "B1", file: "/k.md", reason: "older" }, { botId: "B1" }]]);
+});
+
+it("bots: the left column's bots as { id, name } (one clean line, no sub bots: bots.list has none), for the @Name chips", async () => {
+  const { api, exposed } = fake();
+  activate(api);
+  expect(await exposed.get("bots")!({})).toEqual([{ id: "main", name: "Botling" }, { id: "b1", name: "EEG (x)" }]);
+  api.bots.list.mockRejectedValueOnce(new Error("no"));
+  await expect(exposed.get("bots")!({}) as Promise<unknown>).rejects.toThrow("no");
 });

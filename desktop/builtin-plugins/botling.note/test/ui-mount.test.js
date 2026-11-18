@@ -49,7 +49,7 @@ const COMPONENTS = { components: [{ name: "weather", title: "天氣", command: n
 const SHOW = /^<show name="([^"]+)">(.*)<\/show>$/;
 
 function makeEnv(text) {
-  const env = { text, mtime: 1, view: null, calls: [], handlers: {}, writeResult: null, stop: null };
+  const env = { text, mtime: 1, view: null, calls: [], commands: [], bots: null, handlers: {}, writeResult: null, stop: null };
   env.cardsOf = (t) => t.split("\n").flatMap((l, line) => {
     const m = SHOW.exec(l);
     return m ? [{ line, name: m[1], key: `k${line}`, exists: true, status: "static", data: m[2], command: null, every: null }] : [];
@@ -60,6 +60,8 @@ function makeEnv(text) {
     host: {
       call: async (method, params) => {
         // the margin comments (旁註) have their own tests (ui-margin.test.js); none here, and their calls stay out of the goldens
+        // (the bots of the left column, for the @Name chips, are asked for at every load: they stay out of the goldens too)
+        if (method === "bots") return env.bots ?? [];
         if (method.startsWith("margin")) return method === "marginList" ? { threads: [] } : null;
         env.calls.push(method === "write" ? `write ${JSON.stringify(params.text)} base=${params.base}` : method === "viewSet" ? `viewSet ${JSON.stringify(params.view)}` : method);
         if (method === "read") return { text: env.text, mtime: env.mtime };
@@ -80,6 +82,7 @@ function makeEnv(text) {
     },
     on: (name, fn) => { env.handlers[name] = fn; return () => { delete env.handlers[name]; }; },
     notify() {},
+    commands: { execute: (id, ...args) => { env.commands.push([id, ...args]); } },
     card: async ({ component }) => `https://card.invalid/${component}`,
     snapshot: async () => ({ ref: "note-assets/frozen1.png", url: "https://asset.invalid/frozen1.png" }),
   };
@@ -497,5 +500,27 @@ describe("the Note page, mounted from source", () => {
     expect(lineEl(env, "theirs")).toBeTruthy();
     expect(q(env, ".nb-st").textContent).toBe("Saved");
     await pin(env, "11b-conflict-took-theirs");
+  });
+
+  it("@Name: a bot's name in a cell is a chip; a click opens that bot's chat (botling.openChat) and does not start editing the line", async () => {
+    const env = makeEnv("Weekly TODO\n1. Youtube Video * 1\n2. @EEG 的進度 and @nobody\n");
+    env.bots = [{ id: "bot-eeg", name: "EEG" }];
+    await open(null, env);
+    const chip = q(env, "a.n-bot");
+    expect(chip.dataset.bot).toBe("bot-eeg");
+    expect(chip.textContent).toBe("@EEG");
+    expect(lineEl(env, "@nobody").querySelectorAll("a.n-bot")).toHaveLength(1);
+    click(chip);
+    expect(env.commands).toEqual([["botling.openChat", "bot-eeg"]]);
+    expect(textarea(env)).toBeNull();
+  });
+
+  it("@Name: an app that gives no bot list (or fails) leaves the note as plain text", async () => {
+    const env = makeEnv("see @EEG\n");
+    env.bots = null;
+    env.ccb.host.call = ((call) => async (method, params) => (method === "bots" ? Promise.reject(new Error("unavailable")) : call(method, params)))(env.ccb.host.call);
+    await open(null, env);
+    expect(q(env, "a.n-bot")).toBeNull();
+    expect(lineEl(env, "see @EEG")).toBeTruthy();
   });
 });

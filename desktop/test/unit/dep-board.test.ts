@@ -237,7 +237,7 @@ describe("the plugins that ship with the app", () => {
     expect(areas).toHaveLength(23);
     expect(board.featureAreas.flatMap((area) => area.features)).toHaveLength(63);
     expect(board.featureAreas.find((area) => area.id === "api.usage")).toMatchObject({ plugins: ["botling.usage"], features: [{ id: "api.usage.view", member: "view", plugins: ["botling.usage"] }] });
-    expect(board.plugins.find((plugin) => plugin.name === "botling.note")).toMatchObject({ uses: ["composer.insertQuote"], features: ["api.bots.send", "api.notes.outline", "api.notes.read", "api.notes.write"] });
+    expect(board.plugins.find((plugin) => plugin.name === "botling.note")).toMatchObject({ uses: ["composer.insertQuote"], features: ["api.bots.list", "api.bots.send", "api.notes.outline", "api.notes.read", "api.notes.write"] });
     expect(board.plugins.filter((plugin) => !plugin.app && plugin.features.length === 0).map((plugin) => plugin.name)).toEqual(["botling.cards", "botling.design", "botling.orchestration", "botling.report"]);
     expect(board.plugins.find((plugin) => plugin.name === "botling.chat")!.features).toEqual([]);
     // Every plugin that ships reads as declared (the board shows "Declares nothing" only for installed ones), on, and none is failed.

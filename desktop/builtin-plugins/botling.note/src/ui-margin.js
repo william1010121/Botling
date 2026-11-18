@@ -7,7 +7,7 @@
 // Where a passage is now: by the id of its cell in note.db (notes.outline), then by its text; a passage that is gone leaves its card at
 // the bottom marked "原文找不到", one in a route that is not shown leaves it hidden. Design: MARGIN.md.
 
-import { inline, openHref } from "./ui-text.js";
+import { inline, openAnchor } from "./ui-text.js";
 import { MARGIN_CSS } from "./ui-margin-css.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -72,7 +72,7 @@ function mdEl(src, ccb, botId) {
     const a = e.target.closest?.("a");
     if (!a) return;
     e.preventDefault();
-    openHref(ccb, botId, a.getAttribute("href"));
+    openAnchor(ccb, botId, a);
   });
   return box;
 }

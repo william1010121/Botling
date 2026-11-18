@@ -69,6 +69,10 @@ export function activate(api: BotlingApi) {
       return need("runCard")(botOf(params), String(params.key ?? ""), opts);
     }),
     expose("components", (params) => need("components")(botOf(params))),
+    // The bots of the left column (`bots.list`: no sub bots), for the @Name chips that open a bot's chat: { id, name }, the name one clean line.
+    expose("bots", async () => (await api.bots.list())
+      .map((bot) => ({ id: String(bot.id ?? "").slice(0, 200), name: String(bot.name ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 200) }))
+      .filter((bot) => bot.id && bot.name)),
     // How the app cuts a text into cells and branches (notes.parse `cells` / `branches`); null from an app whose parse has
     // none: the editor then follows its own bundled copy of the rules (desktop/src/core/note-cells.ts, the same file).
     expose("parse", async (params) => {
