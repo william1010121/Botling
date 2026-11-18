@@ -241,8 +241,8 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
-/* New data drawing behind the frame on screen (keepFrames), until it is ready to take its place. */
-.component-frame.incoming { visibility: hidden; pointer-events: none; }
+/* A new drawing behind the frame on screen (keepFrames), until its page says it is ready to take that one's place. Invisible, not hidden: a hidden frame may not be given any painted frames, and it has to paint to be ready. */
+.component-frame.incoming { opacity: 0; pointer-events: none; }
 .component-frame { flex: 1; min-width: 280px; height: 52px; border: none; background: transparent; color-scheme: dark; }
 .component-side { flex-shrink: 0; min-width: 36px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .flag {
@@ -258,8 +258,11 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* A component whose data comes from a command: its bar, the ask to allow it, its error. */
-.command-card { margin-top: 10px; min-width: 280px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px 8px; }
+.command-card { position: relative; margin-top: 10px; min-width: 280px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px 8px; }
 .command-card > .component { margin-top: 4px; }
+.command-when.failed { color: var(--error); }
+/* A failed run that kept the last result, on a card with no bar: over the picture's corner, taking no room. */
+.command-stale { position: absolute; right: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 2px 8px; border-radius: 8px; font-size: 11px; color: var(--error); background: var(--chip); pointer-events: auto; }
 .command-bar { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 12px; color: var(--muted); }
 .command-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
 .command-text::before { content: "$ "; }

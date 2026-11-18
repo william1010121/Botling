@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { aboutLine, aboutSizes, ComponentLibrary, componentKnowledgeFor, knowledgeChanges, knowledgeFull, refreshSeconds, safeName, spelledSize } from "../../src/core/components/library";
-import { ComponentCommands, dataFromOutput, detailCommandLine, detailValues, execute, placeholders } from "../../src/core/components/commands";
+import { ComponentCommands, type CommandOutcome, dataFromOutput, detailCommandLine, detailValues, execute, placeholders } from "../../src/core/components/commands";
 import { displayCommand, ImageRegistry } from "../../src/core/components/service";
 import { alive, pidsIn, sleep, tempDir, until } from "../helpers";
 
@@ -97,6 +97,30 @@ describe("a component's command", () => {
     expect(outcome).toMatchObject({ timedOut: true, error: "The command took longer than 1 seconds, so it was stopped." });
     expect(Date.now() - started).toBeLessThan(5_000);
     await until(() => pidsIn(pids).length === 2 && pidsIn(pids).every((pid) => !alive(pid)), { timeout: 5_000, what: "the command's group to be gone" });
+  });
+
+  it("a failed run keeps the last good data of the same command, so its card keeps its picture (a card that never had data has none)", async () => {
+    const folder = tempDir("command");
+    let outcome: CommandOutcome = { data: `{"a":1}`, ranAt: 1 };
+    const commands = new ComponentCommands(join(folder, "approved.json"), async () => outcome);
+    commands.approve("echo 1", folder);
+    commands.approve("echo 2", folder);
+    await commands.run("m/0", "echo 1", folder);
+    outcome = { error: "boom", ranAt: 2 };
+    await commands.run("m/0", "echo 1", folder, true);
+    expect(commands.state("m/0", "echo 1", null, folder)).toMatchObject({ status: "failed", data: `{"a":1}`, error: "boom", ranAt: 2 });
+    // Again and again: still that data, until a run gives new data.
+    await commands.run("m/0", "echo 1", folder, true);
+    expect(commands.state("m/0", "echo 1", null, folder)).toMatchObject({ status: "failed", data: `{"a":1}` });
+    outcome = { data: `{"a":2}`, ranAt: 3 };
+    await commands.run("m/0", "echo 1", folder, true);
+    expect(commands.state("m/0", "echo 1", null, folder)).toMatchObject({ status: "done", data: `{"a":2}`, error: null });
+    // Never had data: nothing to keep. Another command in the card's place does not inherit the old command's data.
+    outcome = { error: "boom", ranAt: 4 };
+    await commands.run("m/1", "echo 1", folder);
+    expect(commands.state("m/1", "echo 1", null, folder)).toMatchObject({ status: "failed", data: null });
+    await commands.run("m/0", "echo 2", folder, true);
+    expect(commands.state("m/0", "echo 2", null, folder)).toMatchObject({ status: "failed", data: null });
   });
 
   it("runs only once allowed for that folder, keeps each card's last run, and fills Detail commands with checked values only", async () => {

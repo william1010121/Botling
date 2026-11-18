@@ -89,6 +89,9 @@ describe("a pinned panel and a floating card that do not take live data", () => 
     const next = holder().querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
     expect(next.srcdoc).toContain(`{"cpu":2}`);
     next.dispatchEvent(new Event("load"));
+    paints.paint();
+    expect(frame.isConnected).toBe(true);
+    say(next, { ccb: "ready", height: 90 });
     expect(frame.isConnected).toBe(true);
     paints.paint();
     expect([...holder().querySelectorAll(".component-frame")]).toEqual([next]);
@@ -120,6 +123,65 @@ describe("a pinned panel and a floating card that do not take live data", () => 
     const count = watch(frame);
     layer.update(state(`{"cpu":2}`, floating(`{"cpu":2}`)));
     staysUntilDrawn(body, frame, count, paints);
+  });
+});
+
+describe("a pinned panel and a floating card given a new page or a failed run", () => {
+  const pin = (data: string, extra: Partial<PinView> = {}): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }), ...extra });
+  const state = (pins: PinView[], extra: Partial<BoardState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins, pinChoices: [], ...extra }) as BoardState;
+  const v2: Record<string, ComponentInfo> = { cpu: { template: "<pre>v2</pre>", version: 2, working: false, updated: false, hasPrevious: false } };
+  const framesIn = (holder: HTMLElement) => [...holder.querySelectorAll<HTMLIFrameElement>(".component-frame")];
+  const floating = (shown: PinView): Partial<BoardState> => ({ floating: [{ botID: "b", botName: "B", pin: { ...shown, float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" } }] });
+
+  beforeEach(() => {
+    document.body.innerHTML = `<main id="scroller"></main><div id="pin-area"></div><div id="composer-slot"></div>`;
+  });
+
+  it("an opened pin whose template changes keeps its drawing, as tall, until the new page is ready; a failed run keeps it too", () => {
+    const paints = holdPaints();
+    const area = new PinArea(document.getElementById("pin-area")!);
+    area.update(state([pin(`{"cpu":1}`)]));
+    document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
+    const sheet = () => document.querySelector<HTMLElement>(".pin-sheet")!;
+    const [frame] = framesIn(sheet());
+    say(frame, { ccb: "size", height: 150 });
+    // A failed run: the same drawing, the notice over its corner (a pinned card has no bar), no collapse to an error box.
+    area.update(state([pin(`{"cpu":1}`, { display: card({ data: `{"cpu":1}`, every: null, status: "failed", error: "boom" }) })]));
+    expect(framesIn(sheet())).toEqual([frame]);
+    expect(sheet().querySelector(".command-error")).toBeNull();
+    expect(sheet().querySelector<HTMLElement>(".command-stale")?.title).toBe("boom");
+    // Another template: behind the shown frame, which keeps its height; not shown by a bare load or a size.
+    area.update(state([pin(`{"cpu":1}`)], { components: v2 }));
+    const next = sheet().querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(framesIn(sheet())).toEqual([frame, next]);
+    expect(sheet().querySelector(".command-stale")).toBeNull();
+    next.dispatchEvent(new Event("load"));
+    say(next, { ccb: "size", height: 60 });
+    paints.paint();
+    expect(framesIn(sheet())).toEqual([frame, next]);
+    expect(frame.style.height).toBe("150px");
+    say(next, { ccb: "ready", height: 60 });
+    paints.paint();
+    expect(framesIn(sheet())).toEqual([next]);
+    expect(next.style.height).toBe("60px");
+  });
+
+  it("a floating card whose template changes keeps its drawing until the new page is ready", () => {
+    const paints = holdPaints();
+    const layer = new FloatLayer(document.body);
+    layer.update(state([], floating(pin(`{"cpu":1}`))));
+    const body = () => document.querySelector<HTMLElement>(".float-card")!;
+    const [frame] = framesIn(body());
+    say(frame, { ccb: "size", height: 90 });
+    layer.update(state([], { ...floating(pin(`{"cpu":1}`)), components: v2 }));
+    const next = body().querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(framesIn(body())).toEqual([frame, next]);
+    next.dispatchEvent(new Event("load"));
+    paints.paint();
+    expect(frame.isConnected).toBe(true);
+    say(next, { ccb: "ready", height: 70 });
+    paints.paint();
+    expect(framesIn(body())).toEqual([next]);
   });
 });
 

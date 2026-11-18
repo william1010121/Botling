@@ -6,10 +6,14 @@ import { onScreen, whenShownAgain, windowVisible } from "./visible";
 import { escapeHTML } from "./util";
 import type { ChoiceView, ComponentInfo, DisplayView } from "./types";
 import { resizeFrame, type ComponentFrame } from "./component-page";
-import { whenNear, builtFrames, keepReading } from "./component-frames";
+import { whenNear, builtFrames, keepReading, settleHeight, rememberedHeight } from "./component-frames";
 
-/** How long a frame drawing new data behind the shown one may take before it is shown anyway, in ms. */
-export const redrawWait = 2000;
+/**
+ * How long a frame drawing a new page behind the shown one may take before it is given up, in ms: the shown one stays then,
+ * and the next redraw tries again. Never "shown anyway": a page that is not ready (still loading, not painted, pictures not
+ * decoded, no size) would show blank or short for a moment.
+ */
+export const redrawWait = 10_000;
 
 /** Runs `work` after the next frame is painted (at once where there are no frames, as in a test). */
 function afterPaint(work: () => void): void {
@@ -18,10 +22,12 @@ function afterPaint(work: () => void): void {
 }
 
 /**
- * New data for `shown`, a frame that reads its data only as it loads (no ccb.onData): `next`, a
- * frame with the new page, loads hidden right over it, and once it has loaded and painted it
- * takes `shown`'s place in one step. So a card that refreshes never shows a blank frame: the
- * old drawing stays until the new one is ready. Newer data while `next` loads replaces `next`.
+ * New data or a new page for `shown`, a frame that reads its data only as it loads (no ccb.onData), or whose template,
+ * version or pictures changed: `next`, a frame with the new page, loads hidden right over it. It takes `shown`'s place in
+ * one step, and only when its page says (`{ccb: "ready", height}`, component-page.ts `readyScript`) that it is loaded, painted,
+ * its pictures decoded and it has a size: the empty page a frame starts with, a `load` event, or the clock are not that. Until
+ * then the old drawing stays as it is, and its shell keeps its height; `next`'s size writes no height. A page that does not get
+ * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads replaces `next`.
  */
 export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   shown.ccbIncoming?.remove();
@@ -29,6 +35,7 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   next.ccbPending = null;
   next.classList.remove("pending");
   next.classList.add("incoming");
+  next.setAttribute("aria-hidden", "true");
   // Over the shown frame, as big as it is; hidden and out of the way until it is ready.
   next.style.position = "absolute";
   next.style.left = `${shown.offsetLeft}px`;
@@ -36,16 +43,23 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   next.style.width = `${shown.offsetWidth}px`;
   next.style.setProperty("height", shown.style.height || `${shown.offsetHeight}px`, "important");
   shown.ccbIncoming = next;
+  // What the shown frame was drawn from before this, so a drawing given up asks for it again at the next redraw.
+  shown.ccbShownDrawn ??= { drawn: shown.ccbDrawn, data: shown.ccbData };
   // It shows that data from now on: a redraw with it again changes nothing.
   shown.ccbDrawn = next.ccbDrawn;
   shown.ccbData = next.ccbData;
   let done = false;
-  const swap = () => {
-    if (done) return;
+  const finish = () => {
     done = true;
     clearTimeout(timer);
+    next.ccbReady = null;
+  };
+  const swap = (height: number) => {
+    if (done) return;
+    finish();
     if (shown.ccbIncoming !== next) return;
     shown.ccbIncoming = null;
+    shown.ccbShownDrawn = undefined;
     if (!next.isConnected) return;
     if (!shown.isConnected) return next.remove();
     next.ccbAnswer = shown.ccbAnswer;
@@ -54,17 +68,32 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     next.ccbStatus = shown.ccbStatus ?? next.ccbStatus;
     if (shown.ccbSize && next.ccbSize !== shown.ccbSize) resizeFrame(next, shown.ccbSize);
     for (const name of ["position", "left", "top", "width"]) next.style.removeProperty(name);
-    // As tall as it said it is, or else as the shown one.
-    if (next.style.getPropertyPriority("height") === "important") next.style.height = shown.style.height;
+    // As tall as it measured (the last size it said, else the one it said it was ready at): the one height that counts.
+    const measured = next.ccbSized ?? height;
+    next.style.removeProperty("height");
+    settleHeight(next, measured);
     // Not moved in the page (it would load again): the old one goes and the new one shows.
     const box = shown.getBoundingClientRect();
     shown.remove();
     next.classList.remove("incoming");
-    const height = parseFloat(next.style.height);
-    if (height > 0) keepReading(next, box, height);
+    next.removeAttribute("aria-hidden");
+    keepReading(next, box, measured);
   };
-  const timer = setTimeout(swap, redrawWait);
-  next.addEventListener("load", () => afterPaint(swap), { once: true });
+  // Given up: the old drawing stays, and what it was drawn from comes back, so the next redraw draws the page again.
+  const giveUp = () => {
+    if (done) return;
+    finish();
+    if (shown.ccbIncoming !== next) return;
+    shown.ccbIncoming = null;
+    if (shown.ccbShownDrawn) {
+      shown.ccbDrawn = shown.ccbShownDrawn.drawn;
+      shown.ccbData = shown.ccbShownDrawn.data;
+      shown.ccbShownDrawn = undefined;
+    }
+    next.remove();
+  };
+  const timer = setTimeout(giveUp, redrawWait);
+  next.ccbReady = (height) => afterPaint(() => swap(height));
   shown.after(next);
   if (page != null) next.srcdoc = page;
 }
@@ -192,7 +221,7 @@ export function commandCard(
   messageID: string,
   index: number,
   draw: () => HTMLElement | null,
-  options: { send?: CommandSend; bar?: boolean; lazy?: boolean } = {},
+  options: { send?: CommandSend; bar?: boolean; lazy?: boolean; heightKey?: string } = {},
 ): HTMLElement {
   const card = document.createElement("div");
   card.className = "command-card";
@@ -204,6 +233,8 @@ export function commandCard(
   const run = (extra: { force?: boolean; live?: boolean }) =>
     options.send ? options.send({ ...shown, ...extra }) : post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
+  // The last run failed but its result is still there (the core keeps it): the card keeps showing it, as it was.
+  const keptAfterFailure = status === "failed" && hasData;
   // Runs again by itself every so often while on screen (its about.md's Refresh line).
   if (display.command && typeof display.every === "number" && display.every > 0) {
     const key = `${messageID}/${index}`;
@@ -230,6 +261,12 @@ export function commandCard(
     when.textContent = every
       ? [display.ranAt ? t("command.ran", { when: display.ranAt }) : "", every].filter(Boolean).join(" · ")
       : status === "running" ? t("command.running") : display.ranAt ? t("command.ran", { when: display.ranAt }) : "";
+    // A failed run that kept the last result: the bar's own spot says so (nothing around the picture moves), the reason on hover.
+    if (keptAfterFailure) {
+      when.textContent = [t("command.failedKept"), display.ranAt ? t("command.ran", { when: display.ranAt }) : ""].filter(Boolean).join(" · ");
+      when.classList.add("failed");
+      when.title = display.error ?? "";
+    }
     bar.append(when);
     if (status !== "approve") {
       const refresh = document.createElement("button");
@@ -279,7 +316,7 @@ export function commandCard(
     }
     ask.append(actions);
     card.append(ask);
-  } else if (status === "failed") {
+  } else if (status === "failed" && !keptAfterFailure) {
     const problem = document.createElement("div");
     problem.className = "command-error";
     problem.setAttribute("role", "alert");
@@ -289,9 +326,18 @@ export function commandCard(
     detail.textContent = display.error ?? "";
     problem.append(title, detail);
     card.append(problem);
-  } else if (status === "done" || (status === "running" && hasData)) {
+  } else if (status === "done" || ((status === "running" || status === "failed") && hasData)) {
     const component = draw();
     if (component) card.append(component);
+    // Without a bar (a pinned card's) the notice sits over the picture's corner, taking no room.
+    if (keptAfterFailure && !(display.command && options.bar !== false)) {
+      const notice = document.createElement("div");
+      notice.className = "command-stale";
+      notice.setAttribute("role", "status");
+      notice.textContent = t("command.failedKept");
+      notice.title = display.error ?? "";
+      card.append(notice);
+    }
   } else {
     // Allowed and not run yet (ask once per command and folder), or running for the first time.
     // In the chat's history only once it comes near the visible chat: opening a long chat after
@@ -300,6 +346,9 @@ export function commandCard(
     const waiting = document.createElement("div");
     waiting.className = "command-waiting";
     waiting.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${escapeHTML(t("command.runningFirst"))}</span>`;
+    // As tall as the component was when it was last drawn, so its first drawing takes the place without moving what is below.
+    const remembered = options.heightKey ? rememberedHeight(options.heightKey) : 0;
+    if (remembered > 0) waiting.style.minHeight = `${remembered}px`;
     const first = () => {
       if (requestedRuns.has(key)) return;
       requestedRuns.add(key);
