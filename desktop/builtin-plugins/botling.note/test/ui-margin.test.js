@@ -111,6 +111,14 @@ const click = (el) => mouse(el, "click");
 const type = (ta, value) => { ta.value = value; ta.dispatchEvent(new InputEvent("input", { bubbles: true })); };
 const byText = (root, sel, text) => [...root.querySelectorAll(sel)].find((b) => b.textContent.includes(text) || b.title.includes(text));
 const writes = (env) => env.calls.filter((c) => c === "write");
+// a margin comment is a pill in the rail; pressing it opens the comment as a popover (.nm-float) over the page
+const pill = (env, id = "c-0001") => q(env, `.nm-rail .nm-card[data-thread="${id}"]`);
+const pop = (env) => q(env, ".nm-float");
+async function openPop(env, id = "c-0001") {
+  click(pill(env, id).querySelector(".nm-head"));
+  await settle();
+  return pop(env);
+}
 
 describe("margin comments on the Note page", () => {
   it("ask from a cell: the box opens outside the note's text, the question goes out, the card says it is answering, the answer lands in the card and never in the note", async () => {
@@ -133,12 +141,14 @@ describe("margin comments on the Note page", () => {
     expect(env.margin.asked[0]).toMatchObject({ question: "為什麼標籤一樣？", anchor: { kind: "cell", scope: "cell", cell: "c0", label: "Note #c0" } });
     expect(env.margin.asked[0].anchor.quote).toContain("Old check");
     expect(q(env, ".nm-draft")).toBeNull();
-    const card = q(env, '.nm-card[data-thread="c-0001"]');
+    const card = pill(env);
     expect(card.querySelector(".nm-st").textContent).toBe("回答中");
-    expect(card.querySelector(".nm-wait")).not.toBeNull();
     expect(card.textContent).toContain("為什麼標籤一樣？");
+    const waiting = await openPop(env);
+    expect(waiting.querySelector(".nm-wait")).not.toBeNull();
+    expect(waiting.textContent).toContain("為什麼標籤一樣？");
     await env.answer("c-0001", "因為只比標籤。\n\n- 第一點\n- 第二點");
-    const done = q(env, '.nm-card[data-thread="c-0001"]');
+    const done = pop(env);
     expect(done.querySelector(".nm-st").textContent).toBe("已回答");
     expect(done.querySelector(".nm-wait")).toBeNull();
     expect(done.querySelectorAll(".nm-md li")).toHaveLength(2);
@@ -201,20 +211,24 @@ describe("margin comments on the Note page", () => {
     expect(q(env2, ".nm-card[data-thread]")).toBeNull();
   });
 
-  it("comments are still there when the Note is opened again: the card, its answer, the mark on the passage; fold and delete are kept by the host", async () => {
+  it("comments are still there when the Note is opened again: the pill, the mark on the passage, the answer once opened; delete needs a second press", async () => {
     const env = await open(NOTE, [thread()]);
-    const card = q(env, '.nm-card[data-thread="c-0001"]');
-    expect(card.textContent).toContain("因為只比標籤");
+    const card = pill(env);
+    expect(card.classList.contains("nm-folded")).toBe(true); // always a one-line pill until pressed
+    expect(card.textContent).not.toContain("因為只比標籤");
+    expect(pop(env)).toBeNull();
     expect(qa(env, ".nl").find((el) => el.textContent.includes("same tag")).classList.contains("nm-hl")).toBe(true);
     click(card.querySelector(".nm-fold"));
     await settle();
-    expect(env.margin.folded).toEqual([["c-0001", true]]);
-    expect(q(env, '.nm-card[data-thread="c-0001"]').classList.contains("nm-folded")).toBe(true);
-    // deleting needs a second press
-    click(q(env, '.nm-card[data-thread="c-0001"] .nm-head'));
+    expect(pop(env).textContent).toContain("因為只比標籤");
+    expect(pill(env)).toBe(card); // the pill in the rail is not rebuilt
+    click(byText(pop(env), ".nm-foot button", "收起"));
     await settle();
-    expect(env.margin.folded.at(-1)).toEqual(["c-0001", false]);
-    const del = byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "刪除");
+    expect(pop(env)).toBeNull();
+    expect(env.margin.folded).toEqual([]); // open / closed is the frame's own state, not stored
+    // deleting needs a second press
+    await openPop(env);
+    const del = byText(pop(env), ".nm-foot button", "刪除");
     click(del);
     expect(env.margin.deleted).toEqual([]);
     expect(del.textContent).toBe("確定刪除？");
@@ -222,6 +236,7 @@ describe("margin comments on the Note page", () => {
     await settle();
     expect(env.margin.deleted).toEqual(["c-0001"]);
     expect(q(env, ".nm-card[data-thread]")).toBeNull();
+    expect(pop(env)).toBeNull();
     expect(q(env, ".nm-rail")).toBeNull();
     expect(env.text).toBe(NOTE);
     expect(writes(env)).toEqual([]);
@@ -242,14 +257,15 @@ describe("margin comments on the Note page", () => {
 
   it("follow-up in the floating window: the card keeps a stub, the window sends the follow-up, 釘回側欄 brings the card back", async () => {
     const env = await open(NOTE, [thread()]);
-    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "在視窗追問"));
+    await openPop(env);
+    click(byText(pop(env), ".nm-foot button", "在視窗追問"));
     await settle();
     const win = q(env, ".nm-win");
     expect(win).not.toBeNull();
     expect(win.closest(".note-doc")).toBeNull();
     expect(win.textContent).toContain("因為只比標籤");
-    const card = q(env, '.nm-card[data-thread="c-0001"]');
-    expect(card.querySelector(".nm-stub")).not.toBeNull();
+    expect(pop(env)).toBeNull(); // the popover gives way to the window
+    const card = pill(env);
     expect(card.querySelector(".nm-st").textContent).toBe("視窗追問中");
     expect(card.querySelector(".nm-foot")).toBeNull();
     type(win.querySelector("textarea"), "那 bundle id 呢？");
@@ -269,8 +285,8 @@ describe("margin comments on the Note page", () => {
     click(byText(q(env, ".nm-win"), ".nm-ib", "釘回側欄"));
     await settle();
     expect(q(env, ".nm-win")).toBeNull();
-    const back = q(env, '.nm-card[data-thread="c-0001"]');
-    expect(back.querySelector(".nm-stub")).toBeNull();
+    const back = await openPop(env);
+    expect(pill(env).querySelector(".nm-st").textContent).toBe("2 輪");
     expect(back.textContent).toContain("CFBundleIdentifier");
     expect(back.textContent).toContain("前面還有 1 輪");
     expect(env.text).toBe(NOTE);
@@ -280,7 +296,8 @@ describe("margin comments on the Note page", () => {
     const env = await open(NOTE, [thread()]);
     await settle(1500);
     expect(writes(env)).toEqual([]);
-    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "存成 cell"));
+    await openPop(env);
+    click(byText(pop(env), ".nm-foot button", "存成 cell"));
     await settle(800);
     expect(writes(env)).toHaveLength(1);
     expect(env.text).toContain("same build.\n<!-- cell -->\n因為只比標籤。\n\n- 第一點\n- 第二點\n<!-- cell -->\nsecond cell");
@@ -292,10 +309,11 @@ describe("margin comments on the Note page", () => {
 
   it("Cmd+Z typed in a comment box is the box's, not the note's undo", async () => {
     const env = await open(NOTE, [thread()]);
-    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "存成 cell"));
+    await openPop(env);
+    click(byText(pop(env), ".nm-foot button", "存成 cell"));
     await settle(800);
     const saved = env.text;
-    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "在視窗追問"));
+    click(byText(pop(env), ".nm-foot button", "在視窗追問"));
     await settle();
     const ta = q(env, ".nm-win textarea");
     const ev = new KeyboardEvent("keydown", { key: "z", metaKey: true, bubbles: true, cancelable: true });
@@ -316,13 +334,14 @@ describe("margin comments on the Note page", () => {
     env.root = root;
     current = env;
     await settle(10);
-    const chips = qa(env, ".nm-card a.n-bot");
+    await openPop(env);
+    const chips = qa(env, ".nm-float a.n-bot");
     expect(chips.map((a) => a.textContent)).toEqual(["@EEG", "@EEG"]);
     for (const chip of chips) click(chip);
     // once per press (the margin sits inside the note's body, whose own click handler must not open it a second time)
     expect(env.commands).toEqual([["botling.openChat", "bot-eeg"], ["botling.openChat", "bot-eeg"]]);
     env.commands.length = 0;
-    click(byText(q(env, '.nm-card[data-thread="c-0001"]'), ".nm-foot button", "在視窗追問"));
+    click(byText(pop(env), ".nm-foot button", "在視窗追問"));
     await settle();
     const inWin = qa(env, ".nm-win a.n-bot");
     expect(inWin).toHaveLength(2);

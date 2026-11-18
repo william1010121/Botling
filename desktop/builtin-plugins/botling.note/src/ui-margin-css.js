@@ -1,6 +1,7 @@
 // botling.note, margin comments (旁註): the stylesheet. The same tokens as the rest of the note (--n-*), so light / dark follow the app.
 // Layout: with a comment the page gets `nm-on` and room on its right; the cards sit in `.nm-rail` (absolute, tops set
 // by ui-margin.js so they line up with their passage and never overlap) and thin elbow lines in `.nm-links` join them to the text.
+// An opened comment is a popover (`.nm-float`, position: fixed, outside the rail): it never makes the column taller or moves the note.
 // A frame narrower than 760 px has no margin: the cards sit under the note. The ask box is not a margin card: it sits in the flow
 // of the note right under its cell (`.nm-inline`), in any width, and makes no room on the right.
 export const MARGIN_CSS = `
@@ -18,6 +19,11 @@ export const MARGIN_CSS = `
 .nm-card { position: absolute; left: 0; right: 0; pointer-events: auto; background: var(--n-paper); color: var(--n-text); border: 1px solid var(--n-border);
   border-radius: 10px; box-shadow: var(--n-shadow); overflow: hidden; font-size: 13px; line-height: 1.65; }
 .nm-rail.nm-narrow .nm-card { position: static; border-left: 3px solid var(--n-accent); }
+/* The opened comment: a popover over the page (ui-margin.js placeFloat sets left / top / width / max-height in the viewport). It takes no room in the note:
+   the pill in the rail keeps its place, and the long answer scrolls inside the card while the header and the action row stay in view. */
+.nm-card.nm-float { position: fixed; left: 0; top: 0; right: auto; z-index: 38; display: flex; flex-direction: column; box-sizing: border-box; max-height: calc(100vh - 96px); outline: 0; }
+.nm-float > .nm-head, .nm-float > .nm-foot { flex: none; }
+.nm-float > .nm-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .nm-card.nm-active { border-color: color-mix(in srgb, var(--n-accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-accent) 12%, transparent), var(--n-shadow); }
 .nm-card.nm-draft { border-style: dashed; border-color: color-mix(in srgb, var(--n-accent) 65%, transparent); background: var(--n-pop); }
 .nm-card.nm-stale .nm-chip.nm-st { color: var(--n-warn); background: var(--n-warn-bg); }
