@@ -2,7 +2,7 @@
 // Unix socket the way a front end does (hello, sub, cmd, req, content.*), frame by frame. No window, no Electron.
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +30,8 @@ export function mainBotOf(dataDir: string): string {
 export function testRoot(name: string): string {
   const base = process.env.BOTLING_TEST_TMP || (existsSync("/Volumes/My-SSD/botling-work") ? "/Volumes/My-SSD/botling-work/tmp" : tmpdir());
   mkdirSync(base, { recursive: true });
-  return mkdtempSync(join(base, `${name}-`));
+  // The real path: a macOS tmpdir is under /var, a link to /private/var, and the server reports the folders it reads by their real path.
+  return realpathSync(mkdtempSync(join(base, `${name}-`)));
 }
 
 /** The environment botlingd gets: none of this process's Botling variables (a test never reads the user's data). */

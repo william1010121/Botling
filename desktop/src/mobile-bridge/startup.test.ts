@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfiguredMobile } from './start';
@@ -10,7 +10,7 @@ import { okResponse } from '../contract';
 import { MAIN_BOT_ID } from '../core/store/records';
 vi.mock('./bridge', async original => ({ ...await original<typeof import('./bridge')>(), startBridge: vi.fn(() => ({ close: vi.fn() })) }));
 const dirs: string[] = [];
-const temp = () => { const d = mkdtempSync(join(tmpdir(), 'mobile-startup-')); dirs.push(d); return d; };
+const temp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'mobile-startup-'))); dirs.push(d); return d; };
 const core = () => ({ mobileCommand: vi.fn(), shutdown: vi.fn(async () => {}) });
 function config(root: string) {
   const dir = join(root, 'mobile'); mkdirSync(dir, { mode: 0o700 });

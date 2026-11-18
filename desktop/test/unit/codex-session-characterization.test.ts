@@ -45,7 +45,8 @@ class Tape {
       if (typeof v === "string" && v.length > 700) return `<${v.length} chars sha1:${sha(v)}>`;
       return v;
     });
-    return json.replace(UUID, (id) => {
+    // The table was recorded on Linux, where `shell()` (agent/codex-types.ts) is /bin/sh; on macOS the same code says /bin/zsh.
+    return json.replace(/\["\/bin\/zsh","-c",/g, '["/bin/sh","-c",').replace(UUID, (id) => {
       const key = id.toLowerCase();
       if (!this.uuids.has(key)) this.uuids.set(key, `<uuid${this.uuids.size + 1}>`);
       return this.uuids.get(key)!;

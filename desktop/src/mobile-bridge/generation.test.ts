@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, realpathSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadMobileGeneration, generationBytes } from './generation';
 import { handler, tokenHash, type BridgeOptions } from './bridge';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 function assets() {
-  const root = mkdtempSync(join(tmpdir(), 'mobile-generation-'));
+  // The real path: loadMobileGeneration refuses a root that is reached through a link (macOS tmpdir /var -> /private/var).
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'mobile-generation-')));
   writeFileSync(join(root, 'index.html'), '<script src="./web.js"></script>');
   writeFileSync(join(root, 'web.js'), 'fetch("/api/mobile/command"); const page="/mobile/chat.html";');
   return root;

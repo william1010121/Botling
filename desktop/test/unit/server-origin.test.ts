@@ -894,7 +894,7 @@ describe("M5-04a: real RosterStore authorization and legacy serverId wiring", ()
     await store.close();
 
     const daemon = await Botlingd.start({
-      env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "0", BOTLING_SERVER_BACKUP_CHECK_MS: "0" }),
+      env: botlingdEnv(dir, { BOTLING_SERVER_PORT: "0", BOTLING_SERVER_BACKUP_CHECK_MS: "0", BOTLING_SERVER_SOCKET: join(root, "legacy.sock") }), // data dir + name passes the 103-byte macOS socket limit on a runner
       outDir: join(desktop, "out"),
       log: () => undefined,
     });

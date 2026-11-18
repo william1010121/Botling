@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,8 +42,9 @@ let root = "";
 let outside = "";
 
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), "where-script-"));
-  outside = mkdtempSync(join(tmpdir(), "where-script-outside-"));
+  // Real paths: the script runs with cwd = root and shows a file inside the root relative to it (macOS tmpdir /var is a link to /private/var).
+  root = realpathSync(mkdtempSync(join(tmpdir(), "where-script-")));
+  outside = realpathSync(mkdtempSync(join(tmpdir(), "where-script-outside-")));
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "alpha.ts"), ALPHA);
   writeFileSync(join(root, "src", "beta.ts"), BETA);

@@ -15,5 +15,6 @@ it("on Linux the Antigravity runtime is reported unavailable with a macOS-only m
 
 it("on Linux launching the Antigravity ACP runtime refuses instead of calling codesign", () => {
   setPlatform("linux");
-  expect(() => verifyAcpRuntime("/opt/agy/agy_acp_server.par")).toThrow("macOS arm64");
+  // The platform is read once when agy-acp loads (realAcpDeps), so the stub above only reaches code that asks again; the check takes it as a dependency.
+  expect(() => verifyAcpRuntime("/opt/agy/agy_acp_server.par", { platform: "linux", arch: "x64" } as never)).toThrow("macOS arm64");
 });
