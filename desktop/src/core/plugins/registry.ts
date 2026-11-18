@@ -199,10 +199,11 @@ export class PluginRegistry {
 
   /**
    * `builtIns`: the folder of the plugins shipped with the app (none in some tests). `overrides`: where newer builds of them may be pushed
-   * (`<core data>/builtin-overrides`, overrides.ts; none: nothing is looked at).
+   * (`<core data>/builtin-overrides`, overrides.ts; none: nothing is looked at). `developerMode`: a pushed copy runs only while this says
+   * true (the app's developer mode); the default says false.
    */
-  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null, overrides: string | null = null) {
-    this.pushedCopies = overrides && builtIns ? new PushedCopies(overrides, (text) => { if (this.scanned) this.pushedNote(text); else this.startupNotes.push(text); }) : null;
+  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null, overrides: string | null = null, developerMode: () => boolean = () => false) {
+    this.pushedCopies = overrides && builtIns ? new PushedCopies(overrides, (text) => { if (this.scanned) this.pushedNote(text); else this.startupNotes.push(text); }, developerMode) : null;
     this.state = readState(stateFile);
     this.rescan();
   }
@@ -596,8 +597,11 @@ export class PluginRegistry {
       let folder = shippedFolder;
       let pushed: InstalledPlugin["pushed"];
       if (builtIn && this.pushedCopies) {
-        const shipped = loadPlugin(shippedFolder, "builtIn");
-        const copy = shipped.ok && shipped.manifest.name === name ? this.pushedCopies.find(name, { folder: shippedFolder, version: shipped.manifest.version }) : null;
+        // The shipped manifest is read only when a stamp is there (the plugin check walks the folder: not at every scan for every plugin).
+        const copy = this.pushedCopies.find(name, shippedFolder, () => {
+          const shipped = loadPlugin(shippedFolder, "builtIn");
+          return shipped.ok && shipped.manifest.name === name ? shipped.manifest.version : null;
+        });
         if (copy) { folder = copy.folder; pushed = { shippedVersion: copy.shippedVersion, pushedAt: copy.pushedAt }; }
       }
       // The folder it is read from decides the name rule, never the name the manifest claims.

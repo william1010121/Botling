@@ -22,7 +22,7 @@ function plugin(root: string, name: string, version: string, marker: string) {
 const running: Plugins[] = [];
 afterEach(async () => { for (const plugins of running.splice(0)) await plugins.shutdown(); });
 
-async function setup() {
+async function setup(developerMode: (() => boolean) | null = () => true) {
   const dir = tempDir("builtin-overrides-host");
   const shipped = join(dir, "builtin");
   plugin(shipped, "botling.catchup", "1.2.0", "shipped");
@@ -55,7 +55,7 @@ async function setup() {
       };
     },
   };
-  const plugins = new Plugins({ dataDir: dir, world, node, hostScript: "host.mjs", sealer: testSealer("test-key"), builtIns: join(dir, "builtin") });
+  const plugins = new Plugins({ dataDir: dir, world, node, hostScript: "host.mjs", sealer: testSealer("test-key"), builtIns: join(dir, "builtin"), ...(developerMode ? { developerMode } : {}) });
   running.push(plugins);
   await plugins.start();
   await until(() => plugins.host.running);
@@ -114,5 +114,29 @@ describe("a pushed built-in plugin in the running app", () => {
     expect(existsSync(join(dir, "builtin-overrides", "botling.catchup.push.json"))).toBe(false);
     expect(readdirSync(join(dir, "builtin-overrides")).filter((entry) => entry.startsWith("botling.catchup@"))).toEqual([]);
     expect(logs.some((text) => text.includes("older than this build"))).toBe(true);
+  });
+
+  it("developer mode off: the push is never loaded, and turning it on later swaps the plugin in once", async () => {
+    let on = false;
+    const { dir, plugins, loads, logs, push } = await setup(() => on);
+    push("1.2.0", "pushed");
+    plugins.scan();
+    plugins.scan();
+    expect(loads()).toHaveLength(1);
+    expect(logs.filter((text) => text.includes("developer mode is off"))).toHaveLength(1);
+    on = true;
+    plugins.scan();
+    await until(() => loads().length === 2);
+    expect(loads()[1]!.params!.plugins![0]!.main.startsWith(join(dir, "builtin-overrides"))).toBe(true);
+    plugins.scan();
+    expect(loads()).toHaveLength(2);
+  });
+
+  it("a core that gives no developer mode runs no pushed copy at all", async () => {
+    const { plugins, loads, push } = await setup(null);
+    push("1.2.0", "pushed");
+    plugins.scan();
+    expect(loads()).toHaveLength(1);
+    expect(plugins.view().plugins.find((entry) => entry.name === "botling.catchup")!.version).toBe("1.2.0");
   });
 });

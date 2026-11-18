@@ -68,6 +68,7 @@ export class CorePluginWorld {
       node: host?.node ?? null,
       hostScript: host?.hostScript ?? "",
       builtIns: host?.builtIns ?? null,
+      developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
       sealer: host?.sealer ?? null,
       boundSecrets: host?.boundSecrets,
       timing: host?.timing,

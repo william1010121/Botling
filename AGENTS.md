@@ -28,7 +28,7 @@
   full suite (`npm test`, `npm run test:unit`), e2e, live or packaged tests, or a package build
   during development. The full suite runs once, before a release.
 - **Built-in plugin hot update:** after a merge, `desktop/scripts/push-builtin-plugin.sh <name>` (e.g. `botling.catchup`) puts the plugin's
-  new build into the running app's `builtin-overrides`; no app build, no restart (`desktop/builtin-plugins/README.md`, `src/core/plugins/overrides.ts`).
+  new build into the running app's `builtin-overrides` (honored only while the app's Developer mode is on); no app build, no restart (`desktop/builtin-plugins/README.md`, `src/core/plugins/overrides.ts`).
   The core (`desktop/src/core` server, main process) and `botling.orchestration` still need a new build.
 - **Dev build:** `npm run dist:dir` (the unpacked app, about 15 s). Put its output and caches on a
   volume with free space: `BOTLING_DIST_DIR`, `electron_config_cache`, `ELECTRON_BUILDER_CACHE`

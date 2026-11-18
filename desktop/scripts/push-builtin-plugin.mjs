@@ -133,6 +133,16 @@ async function buildHere(desktopDir, name) {
   return { folder: join(scratch, name), done: () => rmSync(scratch, { recursive: true, force: true }) };
 }
 
+/** How many agent commands (`ccb.contributes.agentCommands`) the built plugin declares. */
+function agentCommandsOf(folder) {
+  try {
+    const list = JSON.parse(readFileSync(join(folder, "package.json"), "utf8"))?.ccb?.contributes?.agentCommands;
+    return Array.isArray(list) ? list.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * Builds `name`, checks it and pushes it. `build(name)` and `check(folder)` are the real ones unless a test gives its own. Nothing is
  * put in place unless the build and the check both pass; an earlier push stays as it was.
@@ -152,7 +162,11 @@ export async function pushBuiltinPlugin({ name, desktopDir, dataDir, build, chec
   try {
     const problems = (check ?? ((folder) => checkWithCli(desktopDir, folder)))(built);
     if (problems.length) throw new Error(`${name}: the built plugin fails the plugin check, nothing was pushed:\n  ${problems.join("\n  ")}`);
-    return placeOverride({ built, name, root: join(dataDir, "builtin-overrides"), ...(now !== undefined ? { now } : {}) });
+    const placed = placeOverride({ built, name, root: join(dataDir, "builtin-overrides"), ...(now !== undefined ? { now } : {}) });
+    // A command the app runs as its own flag (botling.report's --render-report) is found in the build's own folder before the app is
+    // ready, with no registry: a push does not move it (src/core/plugins/app-command.ts has its own override folder for that).
+    if (agentCommandsOf(built) > 0) log(`${name}: it declares agent commands that the app runs from its own build's folder; a push does not change those (see src/core/plugins/app-command.ts, plugin-overrides). Its panels and program part are updated.`);
+    return placed;
   } finally {
     done();
   }
@@ -180,7 +194,7 @@ async function main(argv) {
   const desktopDir = resolve(here, "..");
   const result = await pushBuiltinPlugin({ name, desktopDir, dataDir });
   console.log(`${name}: ${result.changed ? "pushed" : "already pushed (same build)"} ${result.dir} to ${root}`);
-  console.log("The running app takes it at its next scan (about 2 s): no rebuild, no restart. A newer app build drops it by itself; --remove drops it now.");
+  console.log("The running app takes it at its next scan (about 2 s): no rebuild, no restart. It runs only while the app's Developer mode (Settings) is on. A newer app build drops it by itself; --remove drops it now.");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

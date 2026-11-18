@@ -1,7 +1,7 @@
 // A built-in plugin updated in the running app (src/core/plugins/overrides.ts, registry.ts `rescan`, scripts/push-builtin-plugin.mjs):
 // a newer built copy pushed into <core data>/builtin-overrides runs in place of the shipped one, with the shipped one's rights, and is
 // dropped when it is not what the app was told to trust (no stamp, changed files, a link, an old build, a broken manifest).
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tempDir } from "../helpers";
@@ -9,7 +9,7 @@ import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { folderHash } from "../../src/core/plugins/catalog";
 import { frameNeedsReload, pluginStamp } from "../../src/renderer/plugin-stamp";
-import { CORE_FIXED_PLUGINS as FIXED_IN_CORE } from "../../src/core/plugins/overrides";
+import { CORE_FIXED_PLUGINS as FIXED_IN_CORE, PushedCopies } from "../../src/core/plugins/overrides";
 import { CORE_FIXED_PLUGINS, contentHash, placeOverride, pushBuiltinPlugin, removeOverride } from "../../scripts/push-builtin-plugin.mjs";
 
 /** A plugin folder with a web part, at `version`; `marker` ends up in the web file. */
@@ -20,12 +20,12 @@ function plugin(root: string, name: string, version: string, marker = "") {
   return join(root, name);
 }
 
-function setup(shippedVersion = "1.2.0") {
+function setup(shippedVersion = "1.2.0", developerMode: () => boolean = () => true) {
   const dir = tempDir("builtin-overrides");
   const shipped = join(dir, "builtin"), lib = join(dir, "plugins"), overrides = join(dir, "builtin-overrides");
   plugin(shipped, "botling.catchup", shippedVersion, "shipped");
   mkdirSync(lib, { recursive: true });
-  const registry = () => new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides);
+  const registry = () => new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides, developerMode);
   /** A newer build of the plugin pushed the way the script does (built into a scratch folder first). */
   const push = (version = "1.2.0", marker = "pushed", now = Date.now() + 2_000) => {
     const built = plugin(join(dir, `built-${marker}`), "botling.catchup", version, marker);
@@ -154,6 +154,23 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
     expect(registry().plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
   });
 
+  it("a file changed after the copy was taken (the same scan state kept) is noticed at the next scan, also when its size did not change", () => {
+    const { registry, push, overrides, shipped } = setup();
+    const made = push();
+    const plugins = registry();
+    expect(plugins.plugin("botling.catchup")!.pushed).toBeDefined();
+    const file = join(overrides, made.dir, "dist", "web.js");
+    const same = readFileSync(file, "utf8");
+    writeFileSync(file, same.replace("pushed", "tamper"));
+    expect(same.length).toBe(readFileSync(file, "utf8").length);
+    plugins.rescan(true);
+    expect(plugins.plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
+    // put the text back: it is the pushed one again, and runs again
+    writeFileSync(file, same);
+    plugins.rescan(true);
+    expect(plugins.plugin("botling.catchup")!.pushed).toBeDefined();
+  });
+
   it("a file added after the push is ignored too", () => {
     const { registry, push, overrides, shipped } = setup();
     const made = push();
@@ -188,6 +205,22 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
       expect(registry().plugin("botling.catchup")!.folder, bad).toBe(join(shipped, "botling.catchup"));
     }
     expect(existsSync(dir)).toBe(true);
+  });
+
+  it("a stamp that is too big, or of another version, or with a wrong field, is ignored", () => {
+    const { registry, push, shipped, stamp } = setup();
+    push();
+    const body = JSON.parse(readFileSync(stamp(), "utf8")) as Record<string, unknown>;
+    const bad: Record<string, unknown>[] = [
+      { ...body, v: 2 }, { ...body, pushedAt: "1" }, { ...body, pushedAt: null }, { ...body, folderHash: "abc" }, { ...body, folderHash: 5 }, { ...body, plugin: "botling.note" },
+      { ...body, pad: "x".repeat(5000) },
+    ];
+    for (const one of bad) {
+      writeFileSync(stamp(), JSON.stringify(one));
+      expect(registry().plugin("botling.catchup")!.folder, JSON.stringify(one).slice(0, 60)).toBe(join(shipped, "botling.catchup"));
+    }
+    writeFileSync(stamp(), JSON.stringify(body));
+    expect(registry().plugin("botling.catchup")!.pushed).toBeDefined();
   });
 
   it("a pushed folder or stamp anyone but the owner may write to is ignored", () => {
@@ -243,7 +276,7 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
     plugin(shipped, "botling.orchestration", "1.0.0", "shipped");
     const built = plugin(join(dir, "built-rules"), "botling.orchestration", "1.0.0", "pushed");
     placeOverride({ built, name: "botling.orchestration", root: overrides, now: Date.now() + 2_000 });
-    const plugins = new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides);
+    const plugins = new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides, () => true);
     expect(plugins.plugin("botling.orchestration")!.folder).toBe(join(shipped, "botling.orchestration"));
     expect(plugins.plugin("botling.orchestration")!.pushed).toBeUndefined();
   });
@@ -256,7 +289,7 @@ describe("the registry with a pushed copy of a built-in plugin", () => {
   it("no overrides folder given (a core with none): nothing is looked at", () => {
     const { dir, shipped, lib, push } = setup();
     push();
-    const plain = new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped);
+    const plain = new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, null, () => true);
     expect(plain.plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
   });
 
@@ -302,7 +335,7 @@ describe("the real botling.catchup, built by the build script and pushed", () =>
     const data = tempDir("real-data");
     mkdirSync(join(data, "plugins"), { recursive: true });
     const placed = placeOverride({ built: join(built, "botling.catchup"), name: "botling.catchup", root: join(data, "builtin-overrides") });
-    const registry = new PluginRegistry(join(data, "plugins"), join(data, "plugins.json"), new MemorySecretStore(), shipped, join(data, "builtin-overrides"));
+    const registry = new PluginRegistry(join(data, "plugins"), join(data, "plugins.json"), new MemorySecretStore(), shipped, join(data, "builtin-overrides"), () => true);
     const running = registry.plugin("botling.catchup")!;
     expect(running.folder).toBe(join(data, "builtin-overrides", placed.dir));
     expect(running.builtIn).toBe(true);
@@ -330,7 +363,7 @@ describe("push-builtin-plugin", () => {
     expect(existsSync(join(root, "botling.catchup.push.json"))).toBe(true);
     const shipped = tempDir("push-shipped");
     plugin(shipped, "botling.catchup", "1.2.0", "shipped");
-    const registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), new MemorySecretStore(), shipped, root);
+    const registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), new MemorySecretStore(), shipped, root, () => true);
     expect(registry.plugin("botling.catchup")!.pushed).toBeDefined();
     expect(registry.webSpecs()[0]!.source).toContain("one");
   });
@@ -355,6 +388,33 @@ describe("push-builtin-plugin", () => {
     expect(folders).toEqual([second.dir, third.dir].sort());
     expect(folders).not.toContain(first.dir);
     expect((JSON.parse(readFileSync(join(root, "botling.catchup.push.json"), "utf8")) as { dir: string }).dir).toBe(third.dir);
+  });
+
+  it("a built folder that others may write to is closed when it is placed, so the core accepts it", () => {
+    const { dir, shipped, lib, overrides } = setup();
+    const built = plugin(join(dir, "built-open"), "botling.catchup", "1.2.0", "open");
+    mkdirSync(join(built, "dist", "deep"), { recursive: true });
+    writeFileSync(join(built, "dist", "deep", "more.js"), "x");
+    chmodSync(join(built, "dist", "web.js"), 0o666);
+    chmodSync(join(built, "dist", "deep", "more.js"), 0o666);
+    chmodSync(join(built, "dist", "deep"), 0o777);
+    chmodSync(built, 0o777);
+    const placed = placeOverride({ built, name: "botling.catchup", root: overrides, now: Date.now() + 2_000 });
+    for (const path of [placed.folder, join(placed.folder, "dist"), join(placed.folder, "dist", "deep"), join(placed.folder, "dist", "web.js"), join(placed.folder, "dist", "deep", "more.js"), join(placed.folder, "package.json")]) {
+      expect(lstatSync(path).mode & 0o022, path).toBe(0);
+    }
+    const registry = new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides, () => true);
+    expect(registry.plugin("botling.catchup")!.pushed).toBeDefined();
+  });
+
+  it("placing or removing under a name that is not a plugin name touches nothing", () => {
+    const { dir, overrides } = setup();
+    const built = plugin(join(dir, "built-name"), "botling.catchup", "1.2.0", "name");
+    for (const name of ["../x", "a/b", "", "BOTLING", ".hidden", "constructor@1"]) {
+      expect(() => placeOverride({ built, name, root: overrides }), name).toThrow();
+      expect(() => removeOverride({ name, root: overrides }), name).toThrow();
+    }
+    expect(existsSync(overrides)).toBe(false);
   });
 
   it("pushing the same build twice changes nothing", async () => {
@@ -410,5 +470,119 @@ describe("push-builtin-plugin", () => {
     await pushBuiltinPlugin({ name: "botling.catchup", desktopDir: desktop, dataDir, build: stubBuild("r"), check: () => [], log: quiet });
     removeOverride({ name: "botling.catchup", root });
     expect(readdirSync(root)).toEqual([]);
+  });
+});
+
+describe("a pushed copy runs only while the app's developer mode is on", () => {
+  it("developer mode off (or not given, or failing to answer): the shipped copy runs, the push is left in place, the log says so once", () => {
+    for (const mode of [() => false, undefined, () => { throw new Error("settings unreadable"); }] as const) {
+      const { dir, shipped, lib, overrides, push, stamp } = setup();
+      const made = push();
+      const registry = mode === undefined
+        ? new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides)
+        : new PluginRegistry(lib, join(dir, "plugins.json"), new MemorySecretStore(), shipped, overrides, mode);
+      const said: string[] = [];
+      registry.onPushedNote = (text) => said.push(text);
+      for (let scan = 0; scan < 3; scan++) registry.rescan(true);
+      const running = registry.plugin("botling.catchup")!;
+      expect(running.folder).toBe(join(shipped, "botling.catchup"));
+      expect(running.pushed).toBeUndefined();
+      expect(running.manifest.version).toBe("1.2.0");
+      expect(existsSync(stamp())).toBe(true);
+      expect(existsSync(join(overrides, made.dir))).toBe(true);
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain("developer mode is off");
+    }
+  });
+
+  it("turning the mode on takes the push on the next scan, off puts the shipped copy back, each as one change", () => {
+    let on = false;
+    const { registry, push, overrides, shipped } = setup("1.2.0", () => on);
+    const made = push();
+    const plugins = registry();
+    expect(plugins.plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
+    expect(plugins.rescan()).toBe(false);
+    on = true;
+    expect(plugins.rescan()).toBe(true);
+    expect(plugins.plugin("botling.catchup")!.folder).toBe(join(overrides, made.dir));
+    expect(plugins.rescan()).toBe(false);
+    on = false;
+    expect(plugins.rescan()).toBe(true);
+    expect(plugins.plugin("botling.catchup")!.folder).toBe(join(shipped, "botling.catchup"));
+  });
+
+  it("with the mode off a stale push is not dropped either (nothing of the push is touched)", () => {
+    const { registry, push, overrides, stamp } = setup("1.2.0", () => false);
+    push("1.2.0", "stale", Date.now() - 60_000);
+    registry();
+    expect(existsSync(stamp())).toBe(true);
+    expect(readdirSync(overrides).filter((entry) => entry.startsWith("botling.catchup@"))).toHaveLength(1);
+  });
+
+  it("the mode is asked only when a stamp is there, and the shipped manifest only after it said yes", () => {
+    const { overrides, push } = setup();
+    let asked = 0, manifests = 0;
+    const copies = new PushedCopies(overrides, () => {}, () => { asked++; return true; });
+    expect(copies.find("botling.catchup", "/nowhere", () => { manifests++; return "1.2.0"; })).toBeNull();
+    expect([asked, manifests]).toEqual([0, 0]);
+    push();
+    const off = new PushedCopies(overrides, () => {}, () => { asked++; return false; });
+    off.find("botling.catchup", "/nowhere", () => { manifests++; return "1.2.0"; });
+    expect([asked, manifests]).toEqual([1, 0]);
+  });
+
+  it("a shipped manifest that cannot be read leaves the shipped folder as it is (no pushed copy)", () => {
+    const { overrides, push } = setup();
+    push();
+    expect(new PushedCopies(overrides, () => {}, () => true).find("botling.catchup", "/nowhere", () => null)).toBeNull();
+  });
+});
+
+describe("when a push counts as older than the build (the shipped folder's time against the push time)", () => {
+  /** The shipped copy laid down `at` (ms since epoch): both its folder's and its manifest's modification time. */
+  const laidDownAt = (shipped: string, at: number) => {
+    for (const path of [join(shipped, "botling.catchup"), join(shipped, "botling.catchup", "package.json")]) utimesSync(path, new Date(at), new Date(at));
+  };
+
+  it("a push up to a second before the shipped time still counts (clock and file-time rounding), more than that is older", () => {
+    const { registry, push, shipped } = setup();
+    const at = Date.now() + 3_600_000; // after the folder's own birth time, so its modification time decides
+    laidDownAt(shipped, at);
+    push("1.2.0", "near", at - 500);
+    expect(registry().plugin("botling.catchup")!.pushed).toBeDefined();
+    push("1.2.0", "far", at - 1_500);
+    const running = registry().plugin("botling.catchup")!;
+    expect(running.pushed).toBeUndefined();
+    expect(running.folder).toBe(join(shipped, "botling.catchup"));
+  });
+
+  it("an in-place update of the build (its manifest rewritten after the push) drops the push", () => {
+    const { registry, push, shipped, stamp } = setup();
+    const pushedAt = Date.now() + 10_000;
+    push("1.2.0", "mine", pushedAt);
+    expect(registry().plugin("botling.catchup")!.pushed).toBeDefined();
+    // only the manifest file is rewritten (same folder, same inode): the build's laid-down time is its modification time
+    utimesSync(join(shipped, "botling.catchup", "package.json"), new Date(pushedAt + 60_000), new Date(pushedAt + 60_000));
+    expect(registry().plugin("botling.catchup")!.pushed).toBeUndefined();
+    expect(existsSync(stamp())).toBe(false);
+  });
+});
+
+describe("push-builtin-plugin and a plugin with agent commands", () => {
+  it("says that the app's own flags run the build's copy of those commands", async () => {
+    const desktop = tempDir("push-agent-desktop");
+    plugin(join(desktop, "builtin-plugins"), "botling.report", "1.0.0", "src");
+    const dataDir = tempDir("push-agent-data");
+    const lines: string[] = [];
+    const build = async (name: string) => {
+      const folder = plugin(tempDir("push-agent-built"), name, "1.0.0", "b");
+      writeFileSync(join(folder, "package.json"), JSON.stringify({ name, version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { web: "dist/web.js", contributes: { agentCommands: [{ flag: "--render-report", script: "dist/web.js" }] } } }));
+      return folder;
+    };
+    await pushBuiltinPlugin({ name: "botling.report", desktopDir: desktop, dataDir, build, check: () => [], log: (line) => lines.push(line) });
+    expect(lines.some((line) => line.includes("agent commands"))).toBe(true);
+    const quiet: string[] = [];
+    await pushBuiltinPlugin({ name: "botling.report", desktopDir: desktop, dataDir, build: async (name) => plugin(tempDir("push-agent-plain"), name, "1.0.0", "p"), check: () => [], log: (line) => quiet.push(line) });
+    expect(quiet.some((line) => line.includes("agent commands"))).toBe(false);
   });
 });

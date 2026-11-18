@@ -13,6 +13,8 @@
 // the shipped copy between two pushes (no flash back). The script keeps the current folder and the one before it.
 //
 // What makes a pushed copy run (every one is checked at each scan; a pushed copy that fails any is ignored and the shipped one runs):
+//   - the app's developer mode is on (Settings): a pushed copy runs with a built-in's rights, above a library plugin's, and a bot can
+//     write files as this user, so it is the developer's switch and nobody else's; off, the stamp is left alone and ignored;
 //   - the plugin is one the app ships, and not one the core reads from the shipped folder itself (CORE_FIXED_PLUGINS);
 //   - the stamp is a plain file of this user, not writable by others, naming this plugin and a folder of this plugin's own;
 //   - the folder is a plain folder of this user, not writable by others, with no link in it, whose files hash to the stamp's hash
@@ -114,13 +116,24 @@ export class PushedCopies {
   /** The problems already said, by plugin, so a scan every 1.5 s says each once. */
   private said = new Map<string, string>();
 
-  constructor(private readonly root: string, private readonly say: (text: string) => void = () => {}) {}
+  /** `developerMode`: whether the app's developer mode is on, asked at each scan that finds a stamp; a throw counts as off. */
+  constructor(private readonly root: string, private readonly say: (text: string) => void = () => {}, private readonly developerMode: () => boolean = () => false) {}
 
-  /** The pushed copy that may run in place of shipped plugin `name` (`shipped`: its folder and manifest), or null. */
-  find(name: string, shipped: { folder: string; version: string }): PushedCopy | null {
+  /**
+   * The pushed copy that may run in place of shipped plugin `name` (`shippedFolder`; `shippedVersion`: its manifest's version, null when
+   * it cannot be read, and only asked once a stamp is there), or null.
+   */
+  find(name: string, shippedFolder: string, shippedVersion: () => string | null): PushedCopy | null {
     if (!NAME.test(name) || CORE_FIXED_PLUGINS.includes(name)) return null;
     const stamp = readStamp(join(this.root, stampFile(name)), name);
     if (!stamp) return null;
+    // Developer mode off: nothing of the push is touched (not even dropped), the build's copy runs, the log says so once.
+    let on = false;
+    try { on = this.developerMode() === true; } catch { on = false; }
+    if (!on) return this.refuse(name, stamp.dir, "developer mode is off (Settings → Developer mode)");
+    const shipped = { folder: shippedFolder, version: shippedVersion() };
+    if (shipped.version === null) return null;
+    const builtVersion: string = shipped.version;
     // A build newer than the push: the push is for an older install. Dropped for good, with its folders.
     if (stamp.pushedAt + TOLERANCE_MS < shippedLaidDownAt(shipped.folder)) {
       dropPush(this.root, name);
@@ -151,10 +164,10 @@ export class PushedCopies {
     const loaded = loadPlugin(folder, "builtIn");
     if (!loaded.ok) return this.refuse(name, stamp.dir, `it fails the plugin check: ${loaded.problems.join("; ")}`);
     if (loaded.manifest.name !== name) return this.refuse(name, stamp.dir, `its manifest is for "${loaded.manifest.name}"`);
-    const order = compareVersions(loaded.manifest.version, shipped.version);
-    if (order !== null && order < 0) return this.refuse(name, stamp.dir, `its version ${loaded.manifest.version} is older than the build's ${shipped.version}`);
+    const order = compareVersions(loaded.manifest.version, builtVersion);
+    if (order !== null && order < 0) return this.refuse(name, stamp.dir, `its version ${loaded.manifest.version} is older than the build's ${builtVersion}`);
     this.said.delete(name);
-    return { folder, manifest: loaded.manifest, pushedAt: stamp.pushedAt, shippedVersion: shipped.version };
+    return { folder, manifest: loaded.manifest, pushedAt: stamp.pushedAt, shippedVersion: builtVersion };
   }
 
   private refuse(name: string, dir: string, why: string): null {
