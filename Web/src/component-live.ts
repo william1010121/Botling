@@ -27,20 +27,10 @@ function afterPaint(work: () => void): void {
  * one step, and only when its page says (`{ccb: "ready", height}`, component-page.ts `readyScript`) that it is loaded, painted,
  * its pictures decoded and it has a size: the empty page a frame starts with, a `load` event, or the clock are not that. Until
  * then the old drawing stays as it is, and its shell keeps its height; `next`'s size writes no height. A page that does not get
- * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads waits behind it (only the
- * newest waits) and is drawn once `next` has taken the place, or been given up: a page slower than the refresh still gets shown.
+ * ready within `redrawWait`, or that fails, is dropped and the old drawing stays. Newer data while `next` loads replaces `next`.
  */
 export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
-  // One that is still on its way (its page has not said it is ready) is not thrown away for a newer one: a page that takes
-  // longer than the refresh interval would then never be shown. The newer one waits its turn, and only the newest waits.
-  const flying = shown.ccbIncoming;
-  if (flying?.ccbReady && flying.isConnected) {
-    shown.ccbQueued = next;
-    shown.ccbDrawn = next.ccbDrawn;
-    shown.ccbData = next.ccbData;
-    return;
-  }
-  flying?.remove();
+  shown.ccbIncoming?.remove();
   const page = next.ccbPending;
   next.ccbPending = null;
   next.classList.remove("pending");
@@ -73,8 +63,6 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     if (shown.ccbIncoming !== next) return;
     shown.ccbIncoming = null;
     shown.ccbShownDrawn = undefined;
-    const queued = shown.ccbQueued;
-    shown.ccbQueued = undefined;
     if (!next.isConnected) return;
     if (!shown.isConnected) return next.remove();
     next.ccbAnswer = shown.ccbAnswer;
@@ -95,8 +83,6 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     next.removeAttribute("inert");
     next.removeAttribute("tabindex");
     keepReading(next, box, measured);
-    // What was asked for while it was on its way is drawn behind it now.
-    if (queued && queued.ccbDrawn !== next.ccbDrawn) drawBehind(next, queued);
   };
   // Given up: the old drawing stays, and what it was drawn from comes back, so the next redraw draws the page again.
   const giveUp = () => {
@@ -109,10 +95,7 @@ export function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
       shown.ccbData = shown.ccbShownDrawn.data;
       shown.ccbShownDrawn = undefined;
     }
-    const queued = shown.ccbQueued;
-    shown.ccbQueued = undefined;
     next.remove();
-    if (queued && shown.isConnected && queued.ccbDrawn !== shown.ccbDrawn) drawBehind(shown, queued);
   };
   const timer = setTimeout(giveUp, redrawWait);
   next.ccbReady = (height) => afterPaint(() => swap(height));

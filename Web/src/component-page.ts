@@ -468,7 +468,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbQueued?: ComponentFrame; ccbReady?: ((height: number) => void) | null; ccbSized?: number; ccbShownDrawn?: { drawn: string | undefined; data: string | undefined }; ccbImages?: Record<string, string>; ccbBuild?: () => string; ccbTokens?: boolean };
+export type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbReady?: ((height: number) => void) | null; ccbSized?: number; ccbShownDrawn?: { drawn: string | undefined; data: string | undefined }; ccbImages?: Record<string, string>; ccbBuild?: () => string; ccbTokens?: boolean };
 
 /** What a frame's `ccb.setStatus(...)` is told to: `{clear}` or `{text, tone}` as the frame sent them. */
 export type StatusHandler = (message: { clear?: unknown; text?: unknown; tone?: unknown }) => void;
