@@ -5,7 +5,7 @@ import { join } from "node:path";
 // @ts-expect-error jsdom ships without .d.ts
 import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
-import { CHART_KIND_NAMES, REPORT_BLOCK_TYPES, liveList, validateCardShow } from "../../src/core/card-validate";
+import { CHART_KIND_NAMES, REPORT_BLOCK_TYPES, liveList, unknownComponentError, validateCardShow } from "../../src/core/card-validate";
 import { INLINE_EXAMPLES } from "../../src/core/inline-blocks";
 
 const cardsFolder = new URL("../../builtin-plugins/botling.cards/components", import.meta.url).pathname;
@@ -200,5 +200,35 @@ describe("validateCardShow: inline-report-block", () => {
     expect(validateCardShow("anything", '{"value":999,"max":1}')).toBeNull();
     expect(validateCardShow("constructor", "{}")).toBeNull();
     expect(validateCardShow("__proto__", "{}")).toBeNull();
+  });
+});
+
+describe("unknownComponentError: a name that is not in the library", () => {
+  const names = (count: number) => Array.from({ length: count }, (_, at) => `name-${at}`);
+
+  it("is null for a known name and says `not in the library` for any other", () => {
+    expect(unknownComponentError("status", ["status"], ["status"])).toBeNull();
+    expect(unknownComponentError("nope", ["status"], ["status"])).toContain("is not in the library");
+  });
+
+  it("hints at the component and field that mean the name, only when the library has that component (V5, V6)", () => {
+    const both = ["inline-chart", "inline-report-block"];
+    expect(unknownComponentError("progress", both, both)).toContain('for a progress block use inline-report-block with type "progress"');
+    expect(unknownComponentError("bars", both, both)).toContain('for a bars chart use inline-chart with "kind": "bars"');
+    // The component it would point to is not there: no hint to a component the worker cannot use.
+    expect(unknownComponentError("progress", ["status"], ["status"])).not.toContain("inline-report-block");
+    expect(unknownComponentError("progress", ["inline-chart"], ["inline-chart"])).not.toContain("with type");
+    expect(unknownComponentError("bars", ["status"], ["status"])).not.toContain("inline-chart");
+    expect(unknownComponentError("bars", ["inline-report-block"], ["inline-report-block"])).not.toContain("with");
+  });
+
+  it("lists at most 40 names and counts the rest (V7); exactly 40 is listed whole", () => {
+    const long = unknownComponentError("nope", names(45), names(45))!;
+    expect(long).toContain("name-39");
+    expect(long).not.toContain("name-40");
+    expect(long).toContain(", … (5 more)");
+    const exact = unknownComponentError("nope", names(40), names(40))!;
+    expect(exact).toContain("name-39");
+    expect(exact).not.toContain("more)");
   });
 });

@@ -275,7 +275,34 @@ describe("a bot with the cards", () => {
       // Maintainer adds a kind to the live template: the next report is checked against it, no restart.
       writeFileSync(own, "var MAX = 12, KINDS = ['bars', 'heatmap', 'targets'];");
       expect(rules.validate!("inline-chart", '{"kind":"targets","target":1,"items":[{"label":"a","median":1,"p90":2}]}')).toBeNull();
-      expect(rules.validate!("not-in-the-library", "{not json")).toBeNull();
+      // A component the library has but that has no schema is never checked.
+      expect(rules.validate!("status", "{not json")).toBeNull();
+    } finally { await core.shutdown(); }
+  });
+  it("the card rules refuse a component that is not in the library (names, a hint for an inline-report-block type or an inline-chart kind); the built-ins and the library's own names pass", async () => {
+    const { core, flux } = bot(null);
+    try {
+      const rules = flux.cards.cardRules();
+      const unknown = rules.validate!("not-in-the-library", "{not json")!;
+      expect(unknown).toContain("not in the library");
+      expect(unknown).toContain("inline-chart");
+      expect(rules.validate!("progress", '{"type":"progress"}')).toContain('inline-report-block with type "progress"');
+      expect(rules.validate!("PROGRESS", "{}")).toContain('inline-report-block with type "progress"');
+      expect(rules.validate!("bars", "{}")).toContain('inline-chart with "kind": "bars"');
+      // A prototype key is not a name (CS-01) and is not given a hint.
+      for (const key of ["constructor", "__proto__", "toString"]) expect(rules.validate!(key, "{}"), key).toContain("not in the library");
+      expect(rules.validate!("constructor", "{}") ?? "").not.toContain("with type");
+      for (const known of ["status", "inline-chart", "choices", "網頁預覽卡片"]) expect(rules.validate!(known, "{}") ?? "", known).not.toContain("not in the library");
+    } finally { await core.shutdown(); }
+  });
+  it("the card rules do not list a pin-only component to the worker (D4), though naming it is no error", async () => {
+    const { core, flux } = bot(null, "flux-pin-only", { "inline-chart": "Inline chart.\nBuilt-in: yes\nData: {}", pinned: "A pin.\nPin only: yes\nCommand: echo hi\n", plain: "A plain card.\nData: {}" });
+    try {
+      const rules = flux.cards.cardRules();
+      const said = rules.validate!("nope", "{}")!;
+      expect(said).toContain("plain");
+      expect(said).not.toContain("pinned");
+      expect(rules.validate!("pinned", "{}") ?? "").not.toContain("not in the library");
     } finally { await core.shutdown(); }
   });
   it("the library with only inline-chart tagged (inline-report-block without the Built-in tag, the preview card named web-preview): the tag decides, so only inline-chart is built in; the other two are no bot's own until they are tagged or on its list", async () => {

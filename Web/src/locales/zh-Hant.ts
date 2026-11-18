@@ -285,6 +285,8 @@ export const zhHant: Dictionary = {
   "questions.submit": "送出答案",
   "questions.progress": "已回答 {done}/{total}",
   "questions.count": "{n} 個問題",
+  "component.notFound": "找不到組件 {name}",
+  "component.notFoundHint": "組件庫裡沒有這個組件，所以畫不出來。請請 bot 改用別的組件來顯示。",
   "component.updating": "元件更新中",
   "component.report": "回報這個元件",
   "component.updated": "已更新",

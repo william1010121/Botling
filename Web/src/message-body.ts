@@ -412,13 +412,26 @@ function componentView(message: MessageView, display: DisplayView, index: number
     ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components, botId), { lazy: true })
     : drawComponent(message, display, index, components, botId);
   // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
-  if (!element) return element;
+  if (!element || element.classList.contains("unknown-component")) return element;
   const bars = readOnly ? [] : extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
   if (!bars.length) return element;
   const holder = document.createElement("div");
   holder.className = "pin-holder" + (bars.some((bar) => bar.dataset.holder === "pinned") ? " pinned" : "");
   holder.append(element, ...bars);
   return holder;
+}
+
+/** What a message shows for a component the library does not have: its name and one line on what to do. Exported for the test. */
+export function unknownComponentCard(name: string): HTMLElement {
+  const problem = document.createElement("div");
+  problem.className = "command-error unknown-component";
+  problem.setAttribute("role", "alert");
+  const title = document.createElement("strong");
+  title.textContent = t("component.notFound", { name: name.slice(0, 100) });
+  const hint = document.createElement("div");
+  hint.textContent = t("component.notFoundHint");
+  problem.append(title, hint);
+  return problem;
 }
 
 function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>, botId: string | null): HTMLElement | null {
@@ -444,7 +457,10 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
   const save = message.role === "bot" && !display.command && !readOnly
     ? (data: string) => post({ type: "componentSave", messageID: message.id, index, data })
     : null;
-  return componentElement(display.name, components[display.name], display.data, answer,
+  // A name the library does not have (haiku wrote `name="progress"`): a small error card, never nothing (`Object.hasOwn`: "constructor" is no component).
+  const info = Object.hasOwn(components, display.name) ? components[display.name] : undefined;
+  if (!info) return unknownComponentCard(display.name);
+  return componentElement(display.name, info, display.data, answer,
     index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display), undefined, "chat", false, save, true);
 }
 

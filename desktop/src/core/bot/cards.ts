@@ -9,7 +9,7 @@ import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } fr
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
-import { validateCardShow } from "../card-validate";
+import { unknownComponentError, validateCardShow } from "../card-validate";
 import { headWritesCards, inlineBlocksFor } from "../inline-blocks";
 import { APP_DRAWN, COMPONENT_LIMIT, componentKnowledgeFor, componentRoles, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge, type ComponentLibrary } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
@@ -234,7 +234,7 @@ export class BotCards {
   /** What a card's report is checked against: the folder its scripts may live in, the components that fill themselves from a Command:, and each component's JSON (`validateCardShow`, against the live template of the library, which Maintainer may have extended). */
   cardRules(): CardRules {
     const library = this.context?.library;
-    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name), validate: (name, data) => validateCardShow(name, data, library?.template?.(name)) };
+    return { scriptsDir: join(this.owner.profile.folder, ".bot", "card-scripts"), folder: this.owner.profile.folder, hasCommand: (name) => !!library?.command(name), validate: (name, data) => (library ? unknownComponentError(name, [...library.names, ...BUILT_INS], library.names.filter((each) => !library.pinOnly(each))) : null) ?? validateCardShow(name, data, library?.template?.(name)) };
   }
 
   /** A component of a card as a `Display` (its command checked again: a chat.json that was edited gets no command it should not). */

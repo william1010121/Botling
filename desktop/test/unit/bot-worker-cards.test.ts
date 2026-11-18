@@ -26,6 +26,7 @@ vi.mock("../../src/core/agent/codex", async (original) => ({ ...await original<a
 vi.mock("../../src/core/agent/agy-acp", () => ({ verifyAcpRuntime() {}, AgyAcpHead: class extends fixture.Head {} }));
 import { Bot } from "../../src/core/bot";
 import { CARD_WORKER } from "../../src/core/agent/claude-workers";
+import { ComponentsContext } from "../../src/core/components/service";
 import { mainProfile } from "../../src/core/store/workspace";
 import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
@@ -580,6 +581,39 @@ describe("a card's worker is a small-model worker that Maintainer can be asked t
       await new Promise((resolve) => setImmediate(resolve));
       expect(record.workerCards![0]).toMatchObject({ status: "running", invalidRun: 1 });
       expect(record.workerCards![0]!.shows).toBeUndefined();
+    });
+  });
+
+  describe("a report whose <show> names a component that is not in the library (haiku, 2026-11-18: name=\"progress\", drawn as nothing)", () => {
+    const progress = 'Done.\n<show name="progress">{"type":"progress","items":[{"label":"a","value":50,"max":100}]}</show>';
+    const told = (r: ReturnType<typeof rig>) => r.handoff.mock.calls.filter(([tool]) => tool === "app_send_message");
+    // A real library with the two inline components (the bot's `options.components`: the rig has none by default).
+    function withLibrary(r: ReturnType<typeof rig>) {
+      const root = join(tempDir("card-unknown-lib"), "components");
+      for (const name of ["inline-chart", "inline-report-block"]) {
+        mkdirSync(join(root, name), { recursive: true });
+        writeFileSync(join(root, name, "template.html"), "<div></div>");
+        writeFileSync(join(root, name, "about.md"), `${name}: a component.\nData: {}`);
+      }
+      (r.b as any).options.components = new ComponentsContext(tempDir("card-unknown-ctx"), () => [root]);
+    }
+
+    it("is held back like any invalid report: the worker is told the name is not in the library, with the inline-report-block hint, once", async () => {
+      const r = rig();
+      withLibrary(r);
+      const record = await answer(r, '<card title="Progress">Show the progress.</card>');
+      await waitFor("bound", () => record.workerCards![0]!.taskId);
+      r.peek.projectWorker(ledger({ status: "done", run: 1, text: progress }));
+      const card = record.workerCards![0]!;
+      expect(card).toMatchObject({ status: "running", invalidRun: 1, invalidTold: true });
+      expect(card.shows).toBeUndefined();
+      await waitFor("the correction told", () => told(r).length === 1);
+      const message = String(told(r)[0]![1].message);
+      expect(told(r)[0]![1]).toMatchObject({ task_id: "T1" });
+      expect(message).toContain('component "progress"');
+      expect(message).toContain("not in the library");
+      expect(message).toContain('inline-report-block with type "progress"');
+      expect(message).toContain("This is your one correction.");
     });
   });
 
