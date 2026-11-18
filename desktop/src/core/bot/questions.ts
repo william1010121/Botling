@@ -177,8 +177,8 @@ export class BotQuestions {
     const on = worker ? ` for your worker "${worker}"` : "";
     this.tellHead(allowed
       ? worker
-        ? `(App: The user allowed ${what}, which Codex's reviewer refused${on}. It is allowed now. It was the worker's call, not yours: tell that worker (app_send_message) to run it again as it was and carry on.)`
-        : `(App: The user allowed ${what}, which Codex's reviewer refused. It is allowed now: run it again as it was, then carry on.)`
+        ? `(App: The user allowed ${what}, which Codex's reviewer refused${on}. It is allowed now. It was the worker's call, not yours: tell that worker (app_send_message) to run it again as it was and carry on. If it is refused again, do not retry: tell the user.)`
+        : `(App: The user allowed ${what}, which Codex's reviewer refused. It is allowed now: run it again as it was, then carry on. If it is refused again, do not retry: tell the user.)`
       : `(App: The user did not allow ${what}, which Codex's reviewer refused${on}.${words ? ` They said: ${words}` : " Do not try it again; carry on without it, or ask the user what to do instead."})`);
   }
 
@@ -281,7 +281,7 @@ export class BotQuestions {
       this.rulesGivenAfter.set(denial.rule, [...this.toolCalls.keys()].at(-1) ?? null);
       if (this.head?.running) this.head.allow(this.allowRules);
       this.tellHead(denial.subagent
-        ? `(App: The user allowed ${what}, which auto mode blocked for ${denial.subagent}. It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.)`
+        ? `(App: The user allowed ${what}, which auto mode blocked for ${denial.subagent}. It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on. If it is refused again, do not retry: tell the user.)`
         : `(App: The user allowed ${what}, which auto mode blocked. It is allowed now: run it again as it was, then carry on.)`);
     }
     this.updated();

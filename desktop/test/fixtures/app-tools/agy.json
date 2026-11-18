@@ -68,7 +68,7 @@
  },
  {
   "name": "app_handoff",
-  "description": "Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.",
+  "description": "Assign an authorized task to an app-managed Antigravity (agy) worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -85,8 +85,7 @@
     "engine": {
      "type": "string",
      "enum": [
-      "agy",
-      "codex"
+      "agy"
      ]
     }
    },
