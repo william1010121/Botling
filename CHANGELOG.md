@@ -4,6 +4,10 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 3.2.1
+
+- **Switching a bot to Antigravity no longer shows the false "orchestration rules plugin did not answer in time" notice.** The Antigravity runtime check no longer re-hashes the binary on every message.
+
 ## 3.2.0
 
 - **A sub bot can @ its sibling sub bots.** A sub bot of a project bot used to reach only the project bot; now an @ in its chat also reaches the other sub bots of the same project bot, and the answer comes back in its own chat. A choices card that a called-in bot asks in a sub bot's chat is answered there. It still cannot call another bot's sub bot.
