@@ -54,7 +54,8 @@ it("a running chat frame's picture is shown in full", async () => {
   const row = document.createElement("div"); row.innerHTML = '<iframe class="component-frame"></iframe>';
   viewer.open("owner", state(m), view, () => row, () => {});
   await settle();
-  expect(document.querySelector(".source-snapshot .source-static-frame")).not.toBeNull();
+  // The picture keeps its own full height (nothing cuts it, so a lost height would show a 150px sliver).
+  expect(document.querySelector<HTMLElement>(".source-snapshot .source-static-frame")?.style.height).toBe("600px");
   nothingCut();
 });
 
