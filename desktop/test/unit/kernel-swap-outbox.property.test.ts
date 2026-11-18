@@ -18,8 +18,8 @@
 //   4. A row's end state. Once the link is quiet and the rows are caught, a plugin whose last row names a web part that can be had runs
 //      exactly that code; a plugin whose row is gone, or has no web part, runs nothing.
 //
-// Replay: SWAP_OUTBOX_SEED=<seed> runs one seed alone; SWAP_OUTBOX_RUNS=<n> sets the run count (default 2,000 on the Mac, 10,000 on the Linux
-// host and CI: never raise the Mac's).
+// Replay: SWAP_OUTBOX_SEED=<seed> runs one seed alone; SWAP_OUTBOX_RUNS=<n> sets the run count (default 2,000 on any Mac, CI's runner included (10,000 took
+// 60 minutes there and ran into the test's own limit), 10,000 elsewhere: never raise the Mac's).
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { Kernel } from "../../../Web/src/plugin-kernel";
@@ -36,7 +36,7 @@ import { deferred, seeded } from "../kernel-driver";
 import { envCount } from "../helpers";
 import { BOT, FakeClock, FakeServer, SRV_STREAM, flush, react } from "./fe-link-harness";
 
-const RUNS = envCount("SWAP_OUTBOX_RUNS", process.platform === "darwin" && !process.env.CI ? 2_000 : 10_000);
+const RUNS = envCount("SWAP_OUTBOX_RUNS", process.platform === "darwin" ? 2_000 : 10_000);
 const FIRST_SEED = 20_261_116;
 const ONE = Number(process.env.SWAP_OUTBOX_SEED ?? "") || null;
 const seeds = () => (ONE ? [ONE] : Array.from({ length: RUNS }, (_, index) => FIRST_SEED + index));

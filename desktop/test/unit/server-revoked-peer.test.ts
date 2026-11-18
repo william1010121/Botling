@@ -214,7 +214,8 @@ describe("M4-06: what a server does when another server becomes invalid", () => 
     }, { timeout: 20_000, what: "s2 ends live session with s3 on revocation merge" });
 
     const delta = s2.log.slice(s2LogsBefore);
-    expect(delta).toContain("took 1 revocation statement");
+    // s2 takes the Revoke by the peer session's exchange ("took 1 revocation statement(s)") or by gossip ("took 1 statement(s)"), whichever comes first.
+    expect(delta).toMatch(/took 1 (revocation )?statement/);
     expect(delta).toContain(`peer ${k3.memberId}: session ended (bye revoked: that server was removed from the roster)`);
   }, 60_000);
 

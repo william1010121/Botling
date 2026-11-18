@@ -1,6 +1,7 @@
 // The content path's local part on the server (M1 step 13, protocol v1 §9A.2–§9A.4, §9A.7, D44): named files, pins,
 // references in the entry's transaction, hashing in a worker thread, `content.find` / `content.open`, `changed`.
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,13 @@ import { ContentService, contentLineHook, finishedLine, Hasher, namedFiles, path
 import { EventTap, TxScope } from "../../src/server/effects";
 import { appendEntries, ensureStream, readEntries } from "../../src/server/log";
 import { openServerStore, type Command, type ServerStore } from "../../src/server/store";
+
+/** Whether the OS temp folder can make a clone: a Mac with APFS there. A hosted CI runner's temp folder may not be (its pins are then copies,
+ *  which `pin: path` and the other tests cover); `/bin/cp -c` is asked directly so the probe does not depend on the code the tests check. */
+const tmpClones = process.platform === "darwin" && (() => {
+  const dir = mkdtempSync(join(tmpdir(), "botling-clone-probe-"));
+  try { writeFileSync(join(dir, "a"), "x"); execFileSync("/bin/cp", ["-c", join(dir, "a"), join(dir, "b")], { stdio: "ignore" }); return true; } catch { return false; } finally { rmSync(dir, { recursive: true, force: true }); }
+})();
 
 const BOT = "bot-a";
 const STREAM = `bot:${BOT}` as StreamId;
@@ -246,7 +254,7 @@ describe("pinned versions", () => {
     await hasher.close();
   });
 
-  it.runIf(process.platform === "darwin")("APFS: a rewrite leaves the old line's clone playable", async () => {
+  it.runIf(tmpClones)("APFS: a rewrite leaves the old line's clone playable", async () => {
     const file = join(media, "clip.mp4");
     const v1 = bytes("c1", 5 * 1024 * 1024);
     writeFileSync(file, v1);
@@ -321,7 +329,7 @@ describe("recovery at start", () => {
     void posted.ready;
     // The pin is recorded right after the entry's commit; then hashing stalls.
     for (let i = 0; i < 200 && rows("SELECT pin FROM content")[0]?.pin === "path"; i++) await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(rows("SELECT pin, state FROM content").map((row) => [row.pin, row.state])).toEqual([[process.platform === "darwin" ? "clone" : expect.any(String), "preparing"]]);
+    expect(rows("SELECT pin, state FROM content").map((row) => [row.pin, row.state])).toEqual([[tmpClones ? "clone" : expect.any(String), "preparing"]]);
     writeFileSync(join(svc.pinsDir, "0123456789abcdef0123456789abcdef"), "orphan");
     writeFileSync(join(svc.pinsDir, "feedfeedfeedfeedfeedfeedfeedfeed.partial"), "partial");
     // The server stopped here (the hash never came back).
