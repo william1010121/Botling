@@ -5,7 +5,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop } from "../../../test/helpers";
-import { cadence, distance, groupOf, nextRun, operationsFor, standing, zoneName } from "../src/routines-text";
+import { cadence, distance, groupOf, nextRun, operationsFor, standing, summary, zoneName } from "../src/routines-text";
 import { frameSource } from "../src/source";
 
 it("a routine's buttons follow its state: Pause while it will run, Resume while paused, Cancel until it is over", () => {
@@ -102,6 +102,13 @@ it("the shipped ui.js registers the view and draws the list, pausing and a refus
   (jobB().querySelector('button[data-op="cancel"]') as HTMLButtonElement).click();
   await vi.waitFor(() => expect(root.getElementsByClassName("routine-confirm")).toHaveLength(1));
   expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
+  // Keep closes the question and sends nothing; asking again brings it back.
+  const keep = [...root.getElementsByClassName("routine-confirm")[0]!.querySelectorAll("button")].find((button) => button.textContent === "Keep") as HTMLButtonElement;
+  keep.click();
+  await vi.waitFor(() => expect(root.getElementsByClassName("routine-confirm")).toHaveLength(0));
+  expect(calls.at(-1)).toEqual(["change", { botId: "B1", operation: "pause", id: "A" }]);
+  (jobB().querySelector('button[data-op="cancel"]') as HTMLButtonElement).click();
+  await vi.waitFor(() => expect(root.getElementsByClassName("routine-confirm")).toHaveLength(1));
   (root.getElementsByClassName("routine-confirm")[0]!.querySelector(".danger") as HTMLButtonElement).click();
   await vi.waitFor(() => expect(root.querySelector(".routines-problem")?.textContent).toBe("Not now"));
   expect(root.querySelectorAll("li")).toHaveLength(3);
@@ -132,4 +139,35 @@ it("a watch shows its command and how its last run went", async () => {
   expect(watchResult({ ...base, watch: { command: "./check.sh", state: "ok", lastRun: ran, exit: 0, timedOut: false } }, now)).toEqual({ word: "Last run OK", detail: "10 min ago", tone: "ok" });
   expect(watchResult({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: 3, timedOut: false } }, now)).toEqual({ word: "Last run failed", detail: "exit 3 · 10 min ago", tone: "bad" });
   expect(watchResult({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: null, timedOut: true } }, now)?.detail).toContain("timed out");
+});
+
+it("the one-line summary counts every group, and says need / needs by the count", () => {
+  const base = { kind: "recurring" as const, schedule: "Every day 09:00", cron: null, timezone: "system_local", status: "pending", next: null };
+  const failing = { command: "c", state: "failing" as const, lastRun: null, exit: 1, timedOut: false };
+  expect(summary([])).toBe("");
+  expect(summary([base, base, { ...base, status: "paused" }, { ...base, status: "fired" }, { ...base, status: "delivery_uncertain" }])).toBe("2 running · 1 paused · 1 needs a look · 1 finished");
+  expect(summary([{ ...base, status: "paused" }, { ...base, status: "paused" }, { ...base, watch: failing }, { ...base, status: "delivery_uncertain" }])).toBe("2 paused · 2 need a look");
+});
+
+it("a double tap on a button sends the change once", async () => {
+  const routine = { id: "A", kind: "recurring", task: "A", title: "Job A", schedule: "Every day 08:15", cron: "15 8 * * *", timezone: "system_local", status: "pending", next: null };
+  const calls: string[] = [];
+  const views = new Map<string, (root: HTMLElement) => (() => void) | void>();
+  const ccb = {
+    context: { botId: "B1" },
+    panels: { register: (id: string, fn: (root: HTMLElement) => void) => { views.set(id, fn); return () => {}; } },
+    call: async (method: string) => { calls.push(method); return { routines: [routine], error: null }; },
+  };
+  const module = await import(/* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source()).toString("base64")}`);
+  module.activate(ccb);
+  const root = document.createElement("div");
+  document.body.append(root);
+  views.get("botling.routines.panel")!(root);
+  await vi.waitFor(() => expect(root.querySelectorAll("li")).toHaveLength(1));
+  const pause = root.querySelector('button[data-op="pause"]') as HTMLButtonElement;
+  pause.click(); // two taps in one batch: the second sees the old state, only a ref stops it (L-007)
+  pause.click();
+  await vi.waitFor(() => expect(calls.filter((method) => method === "change").length).toBeGreaterThan(0));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(calls.filter((method) => method === "change")).toHaveLength(1);
 });

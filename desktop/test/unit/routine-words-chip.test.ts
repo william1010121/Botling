@@ -42,6 +42,8 @@ describe("time words", () => {
     const base = { kind: "recurring" as const, schedule: "Daily 09:00", cron: "0 9 * * *", timezone: "system_local", status: "pending", next: null };
     expect(lastLine(base, now)).toEqual({ word: "Not run yet", detail: "", tone: "off" });
     expect(lastLine({ ...base, lastRun: new Date(now - 3 * 3_600_000).toISOString(), lastResult: "sent" }, now)).toEqual({ word: "Last run sent to the bot", detail: "3 h ago", tone: "done" });
+    expect(lastLine({ ...base, lastRun: new Date(now - 5 * 60_000).toISOString(), lastResult: "failed" }, now)).toEqual({ word: "Last run failed", detail: "5 min ago", tone: "bad" });
+    expect(lastLine({ ...base, lastRun: new Date(now - 5 * 60_000).toISOString(), lastResult: "ok" }, now)).toEqual({ word: "Last run OK", detail: "5 min ago", tone: "ok" });
     expect(lastLine({ ...base, status: "delivery_uncertain" }, now)).toBeNull();
     const watch = { command: "./c.sh", state: "failing" as const, lastRun: new Date(now - 4 * 60_000).toISOString(), exit: 3, timedOut: false };
     expect(lastLine({ ...base, watch }, now)).toEqual({ word: "Last run failed", detail: "exit 3 · 4 min ago", tone: "bad" });
@@ -83,6 +85,14 @@ describe("a routine's chip", () => {
     setTaskClock(() => now + 24 * 3_600_000);
     tickTaskChips(now + 24 * 3_600_000);
     expect(once.querySelector(".task-time")!.textContent).toBe("due now");
+  });
+  it("its tooltip says how the last run went: sent, ok or failed", () => {
+    const tip = (result: "sent" | "ok" | "failed") => line([routine({ routine: { state: "scheduled", last: { at: now - 2 * 60_000, result } } })]).title;
+    expect(tip("sent")).toBe("Routine: Collect the news\nLast run sent to the bot · 2 min ago");
+    document.body.innerHTML = ""; resetTaskChips();
+    expect(tip("ok")).toBe("Routine: Collect the news\nLast run OK · 2 min ago");
+    document.body.innerHTML = ""; resetTaskChips();
+    expect(tip("failed")).toBe("Routine: Collect the news\nLast run failed · 2 min ago");
   });
   it("a task its head started keeps its own line: no cadence, no dot", () => {
     const item = line([routine({ routine: null })]);

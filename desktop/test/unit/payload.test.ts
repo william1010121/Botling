@@ -1,9 +1,9 @@
 // The ChatState the reused Web/src chat page draws, built from the contract (as ChatPayload.swift builds it).
 import { describe, expect, it } from "vitest";
-import { chatState, stamp } from "../../src/renderer/payload";
+import { chatState, routineChips, stamp } from "../../src/renderer/payload";
 import { keybindingsOf, offered, runsInHost } from "../../src/renderer/plugin-commands";
 import { apply, type WorkspaceView } from "../../src/renderer/store";
-import type { BotView, MessageView, PluginsView } from "../../src/contract";
+import type { BotView, MessageView, PluginsView, RoutineView } from "../../src/contract";
 
 const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 1, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 8, minute)).toISOString();
@@ -209,5 +209,29 @@ describe("the / menu and menus from the plugin registry (M6)", () => {
     expect(runsInHost(view, "both.b")).toBe(false);
     expect(runsInHost(view, "ccb-latex.insert")).toBe(false);
     expect(runsInHost(null, "ccb-latex.insert")).toBe(false);
+  });
+});
+
+describe("a routine's chip", () => {
+  const routine = (over: Partial<RoutineView> = {}): RoutineView => ({ id: "R1", kind: "recurring", task: "Digest: collect the news", title: "Digest", schedule: "Every day 09:00", cron: "0 9 * * *", timezone: "system_local", status: "pending", next: at(0), ...over });
+  const stateOf = (over: Partial<RoutineView>) => routineChips([routine(over)], "m1")[0]!.routine;
+  const watch = (state: "never" | "ok" | "failing") => ({ command: "./c.sh", state, lastRun: null, exit: null, timedOut: false });
+
+  it("says how the routine stands: scheduled, watching, due, or failing", () => {
+    expect(stateOf({})?.state).toBe("scheduled");
+    expect(stateOf({ watch: watch("ok") })?.state).toBe("watching");
+    expect(stateOf({ watch: watch("never") })?.state).toBe("watching");
+    expect(stateOf({ watch: watch("failing"), status: "enabled" })?.state).toBe("failing");
+    expect(stateOf({ status: "due" })?.state).toBe("due");
+    expect(stateOf({ status: "due", watch: watch("ok") })?.state).toBe("due");
+  });
+
+  it("carries when it last ran and how that went; a missing result reads as sent, no time as not yet", () => {
+    expect(stateOf({ lastRun: at(5), lastResult: "failed" })?.last).toEqual({ at: Date.parse(at(5)), result: "failed" });
+    expect(stateOf({ lastRun: at(5), lastResult: "ok" })?.last).toEqual({ at: Date.parse(at(5)), result: "ok" });
+    expect(stateOf({ lastRun: at(5) })?.last).toEqual({ at: Date.parse(at(5)), result: "sent" });
+    expect(stateOf({ lastRun: at(5), lastResult: null })?.last).toEqual({ at: Date.parse(at(5)), result: "sent" });
+    expect(stateOf({ lastRun: null, lastResult: null })?.last).toBeNull();
+    expect(stateOf({})?.last).toBeNull();
   });
 });

@@ -81,6 +81,21 @@ describe("routines", () => {
     expect(Object.keys(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineLast).sort()).toEqual([`cron:${fine}`, `cron:${wild}`]);
   });
 
+  it("a scheduled routine run before the app kept last-run times still says when it was handed to the bot (the schedule file's dispatchedAt)", async () => {
+    const dir = tempDir("routines");
+    const c = core(dir);
+    await until(() => existsSync(join(dir, "main", "bot.json")) && existsSync(join(dir, "main", "routines.cron")));
+    await c.kill();
+    const sentAt = Date.now() - 2 * 3_600_000;
+    const job = { id: "old-1", requestID: "old-1", kind: "once", state: "fired", task: "Old: ran before", timezone: "Asia/Taipei", at: swiftNow(-3 * 3_600_000), createdAt: swiftNow(-4 * 3_600_000), baseline: swiftNow(-4 * 3_600_000), dispatchedAt: swiftNow(-2 * 3_600_000) };
+    writeFileSync(join(dir, "main", "scheduled-routines.json"), JSON.stringify({ version: 1, routines: [job] }));
+    const again = core(dir);
+    const list = await until(async () => { const r = await again.call({ type: "routines.list", botId: MAIN }); return r.routines.some((x: any) => x.id === "old-1") && r; });
+    const shown = list.routines.find((r: any) => r.id === "old-1");
+    expect(shown.lastResult).toBe("sent");
+    expect(Math.abs(Date.parse(shown.lastRun) - sentAt)).toBeLessThan(5_000);
+  });
+
   it("an @once line a script appends to routines.cron reaches the bot's head once, and the core takes the line out", async () => {
     const dir = tempDir("routines");
     const c = core(dir);
