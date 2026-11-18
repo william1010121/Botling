@@ -18,21 +18,30 @@
        again while a Monitor lives, else it ends the run with the words of every turn, once;
      - once no Monitor lives, the report waits a grace for the wake turn; none starts: the report goes out as it is;
      - the timer on the oldest live Monitor's cap lets the report go when it runs out (a turn under way: the grace);
+       once a cap has let it go (`capped`), the turn under way ends the run: no Monitor, old or new, keeps it again;
      - a timer never cuts off a turn under way: its own result ends the run (0ea2a290);
-     - a failed turn is never held; the process's end sends the held report; a stop or the app's close drop it
-       (the core marks the run stopped or interrupted).
+     - a failed turn is never held, and never takes the good words kept before it: they go out with the error, or
+       with the process's end (monitor-fix2); the process's end sends the held report; a stop or the app's close
+       drop it (the core marks the run stopped or interrupted).
+   A turn may end on an API error that passes (an overload, a Cloudflare block): the run stays at work and the same
+   session tries again after a wait (`retry`; one try here: a second such error gives up and ends the run with the
+   error). The words kept so far are carried over the wait (a held report is let go of its timers) and go out with
+   the run's next report, or with its error or its process's end. Steered words, or a turn's result meanwhile, take
+   the place of the try.
 
      proc: none --Start (spawn)--> open --KeepAliveFires (idle, no fresh background)--> closed
            open | closed --ProcExit | Stop | AppClose--> exited --TreeChecked--> none (leftovers may stay: `tree`)
      run:  idle --Start--> working --Result--> idle            (ProcExit: the run ends with an error)
            idle --Start (proc closed)--> held --TreeChecked--> working (new process) | idle (error)
-     hold: none --Result (ok, a Monitor lives)--> cap --MonEnd | MonExpire (turn)--> grace --GraceFires--> none
-           cap | grace --Result--> cap (a Monitor lives) | none (the run's report: all its turns)
+     hold: none --Result (ok, a Monitor lives)--> cap --MonEnd | MonExpire (turn: capped)--> grace --GraceFires--> none
+           cap | grace --Result--> cap (a Monitor lives, not capped) | none (the run's report: all its turns)
+           cap | grace --ApiError--> none (the words carried over the retry's wait)
 
    Words are counted by where they went: `read` (an open input), `lost` (a closed input), `held` (waiting),
    `failed` (their run ended with an error before they were read), `stopped` (their run was stopped, or cut off by
    the app's close). A turn's report words are counted the same way: `said` (a turn's result), `kept` (held for a
-   Monitor), `told` (in the run's report), `dropped` (their run ended with an error, was stopped or cut off).
+   Monitor or over an API retry), `told` (in the run's report, or said with the error or the process's end that ended
+   their run), `dropped` (their run was stopped or cut off by the app's close).
    Action names match spec/reference/worker-process.ts and the driver (spec/driver/worker-process-driver.ts). *)
 EXTENDS Naturals
 
@@ -45,14 +54,17 @@ CONSTANTS
               \* and words go into whatever process is there); "bg": only the background rule left out;
               \* "stale": before ebfa0da4 (any exit's tree check, however late, acts on a held run);
               \* "cutoff": before 0ea2a290 (the hold's timer lets the report go while a wake turn is under way);
-              \* "monexit": the process's end does not send the held report (the run ends "exited")
+              \* "monexit": the process's end does not send the held report (the run ends "exited");
+              \* "droperr": before monitor-fix2 (a failed turn, or an API retry, takes the good words kept before it);
+              \* "rehold": before monitor-fix2 (after a cap let the report go during a turn, a newer Monitor keeps it again)
 
-ASSUME MaxWords \in Nat /\ MaxBg \in Nat /\ MaxWakes \in Nat /\ Bug \in {"none", "sleep", "bg", "stale", "cutoff", "monexit"}
+ASSUME MaxWords \in Nat /\ MaxBg \in Nat /\ MaxWakes \in Nat
+ASSUME Bug \in {"none", "sleep", "bg", "stale", "cutoff", "monexit", "droperr", "rehold"}
 
 VARIABLES proc, tree, run, keep, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-          hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed
+          hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed
 vars == <<proc, tree, run, keep, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-          hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+          hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 Outcomes == {"none", "report", "error", "exited", "stopped", "interrupted"}
 
@@ -72,6 +84,9 @@ TypeOK ==
                                         \* Monitor's cap, or the grace for the wake turn
   /\ turn \in BOOLEAN           \* a turn is under way since the report was kept back (its result, not a timer, ends the run)
   /\ wakes \in 0..MaxWakes
+  /\ capped \in BOOLEAN         \* the oldest Monitor's cap ran out during a turn: the report is let go (that turn ends the run)
+  /\ retry \in BOOLEAN          \* an API retry waits (its timer is armed)
+  /\ tried \in BOOLEAN          \* the run has used its try since its last good result
   /\ kept \in 0..(MaxWakes + 1) /\ said \in Nat /\ told \in Nat /\ dropped \in Nat
   /\ runs \in 0..MaxWords /\ reports \in 0..MaxWords
   /\ outcome \in Outcomes       \* how the last run that ended ended
@@ -84,16 +99,21 @@ Bg == bg + mon + old
 CanSpawn == ~Live /\ ~tree
 \* A new process takes the session: a check still under way is now an earlier process's.
 Spawned == proc' = "open" /\ bg' = 0 /\ mon' = 0 /\ old' = 0 /\ checking' = FALSE /\ older' = older + (IF checking THEN 1 ELSE 0)
-\* The run ends with its report: the turns' words kept for a Monitor and `extra` more.
+\* Nothing of the run under way is kept any more (it ended).
+Settled == hold' = "none" /\ turn' = FALSE /\ capped' = FALSE /\ retry' = FALSE /\ tried' = FALSE /\ kept' = 0
+\* The run ends with its report: the turns' words kept and `extra` more.
 SendKept(extra) ==
-  /\ run' = "idle" /\ hold' = "none" /\ turn' = FALSE /\ kept' = 0 /\ told' = told + kept + extra
+  /\ run' = "idle" /\ Settled /\ told' = told + kept + extra
   /\ reports' = reports + 1 /\ outcome' = "report"
-\* The run under way ends without its report: what was kept for a Monitor is dropped.
-Drop(how) ==
-  /\ run' = "idle" /\ hold' = "none" /\ turn' = FALSE /\ kept' = 0 /\ dropped' = dropped + kept
+\* The run under way ends without a report of its own (`how`: an error, its process's end): the good words it kept
+\* go out with it if `tell`, else they are dropped.
+EndWithout(how, tell) ==
+  /\ run' = "idle" /\ Settled
+  /\ IF tell THEN told' = told + kept /\ UNCHANGED dropped ELSE dropped' = dropped + kept /\ UNCHANGED told
   /\ reports' = reports + 1 /\ outcome' = how
-\* What a held report's timer waits for once its Monitors are `m` (monitorChanged): the oldest live one's cap, or the grace.
-Aim(m) == IF hold = "none" THEN "none" ELSE IF m > 0 THEN "cap" ELSE "grace"
+\* What a held report's timer waits for once its Monitors are `m` (monitorChanged): the oldest live one's cap, or the
+\* grace. Once a cap let it go, nothing changes it (before monitor-fix2, "rehold": as before the cap).
+Aim(m) == IF hold = "none" \/ (capped /\ Bug # "rehold") THEN hold ELSE IF m > 0 THEN "cap" ELSE "grace"
 
 -----------------------------------------------------------------------------
 
@@ -112,36 +132,55 @@ Start ==
      ELSE
        /\ failed' = failed + 1 /\ reports' = reports + 1 /\ outcome' = "error"
        /\ UNCHANGED <<proc, run, bg, mon, old, checking, older, read, held, lost>>
-  /\ UNCHANGED <<tree, stopped, hold, turn, wakes, kept, said, told, dropped, closed>>
+  /\ UNCHANGED <<tree, stopped, hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, closed>>
 
-(* Words for the run under way: into its process, or with the held words. *)
+(* Words for the run under way: into its process (in place of an API retry that waits), or with the held words. *)
 Steer ==
-  /\ run \in {"working", "held"} /\ sent < MaxWords /\ sent' = sent + 1
+  /\ run \in {"working", "held"} /\ sent < MaxWords /\ sent' = sent + 1 /\ retry' = FALSE
   /\ IF run = "held" THEN held' = held + 1 /\ UNCHANGED <<read, lost>>
      ELSE IF proc = "open" THEN read' = read + 1 /\ UNCHANGED <<held, lost>>
      ELSE lost' = lost + 1 /\ UNCHANGED <<read, held>>
   /\ UNCHANGED <<proc, tree, run, keep, bg, mon, old, checking, older, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* A turn ends with its result (`ok`: a report; else an error). While a Monitor lives a report is kept back and the
-   run stays at work; else the run ends, its report carrying every turn's words kept for it. The process stays, its
-   keep-alive armed. While a report is kept back, a result ends a turn under way (a wake turn). *)
+   run stays at work (not once a cap let it go); else the run ends, its report carrying every turn's words kept for
+   it. An error ends the run too, the words kept before it said with it. The process stays, its keep-alive armed.
+   While a report is kept back, a result ends a turn under way (a wake turn); while an API retry waits, it is the
+   result of a turn that began meanwhile (a Monitor's event): it takes the try's place. *)
 Result(ok) ==
   /\ run = "working" /\ Live /\ (hold # "none" => turn)
   /\ said' = said + (IF ok THEN 1 ELSE 0)
-  /\ IF ok /\ mon > 0 THEN
-       /\ hold' = "cap" /\ turn' = FALSE /\ kept' = kept + 1
-       /\ UNCHANGED <<run, keep, told, dropped, reports, outcome>>
+  /\ IF ok /\ mon > 0 /\ ~(capped /\ Bug # "rehold") THEN
+       /\ hold' = "cap" /\ turn' = FALSE /\ retry' = FALSE /\ tried' = FALSE /\ kept' = kept + 1
+       /\ UNCHANGED <<run, keep, capped, told, dropped, reports, outcome>>
      ELSE IF ok THEN keep' = TRUE /\ SendKept(1) /\ UNCHANGED dropped
-     ELSE keep' = TRUE /\ Drop("error") /\ UNCHANGED told
+     ELSE keep' = TRUE /\ EndWithout("error", Bug # "droperr")
   /\ UNCHANGED <<proc, tree, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped, wakes, runs, closed>>
+
+(* A turn ends on an API error that passes. With its try left, the run stays at work and waits to try again: a held
+   report is let go of its timers, the words kept are carried (before monitor-fix2, "droperr": dropped). Its try
+   used, the run ends with the error, the words kept said with it. *)
+ApiError ==
+  /\ run = "working" /\ Live /\ (hold # "none" => turn)
+  /\ IF ~tried THEN
+       /\ retry' = TRUE /\ tried' = TRUE /\ hold' = "none" /\ turn' = FALSE
+       /\ IF Bug = "droperr" THEN kept' = 0 /\ dropped' = dropped + kept ELSE UNCHANGED <<kept, dropped>>
+       /\ UNCHANGED <<run, keep, capped, told, reports, outcome>>
+     ELSE keep' = TRUE /\ EndWithout("error", Bug # "droperr")
+  /\ UNCHANGED <<proc, tree, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped, wakes, said, runs, closed>>
+
+(* The retry's wait is over: the same session is told to carry on (a turn begins; its result, or error, follows). *)
+RetryFires == retry /\ retry' = FALSE
+  /\ UNCHANGED <<proc, tree, run, keep, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
+                 hold, turn, wakes, capped, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* While its report waits, a turn begins in the same run: a Monitor's event or steered words wake the model. *)
 WakeTurn ==
   /\ hold # "none" /\ ~turn /\ wakes < MaxWakes
   /\ turn' = TRUE /\ wakes' = wakes + 1
   /\ UNCHANGED <<proc, tree, run, keep, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* The keep-alive runs out: the input of an idle process is closed, unless fresh background work runs (then the
    timer is armed again). *)
@@ -149,44 +188,46 @@ KeepAliveFires ==
   /\ keep /\ keep' = (Bg > 0 /\ proc = "open" /\ run = "idle" /\ Bug \notin {"sleep", "bg"})
   /\ proc' = IF proc = "open" /\ run = "idle" /\ (Bg = 0 \/ Bug \in {"sleep", "bg"}) THEN "closed" ELSE proc
   /\ UNCHANGED <<tree, run, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* The process leaves a command or an agent running in the background; it ends; or 6 hours pass (Age: background
    work then keeps the process no longer; every Monitor is past its cap before that). *)
 BgStart == Live /\ Bg < MaxBg /\ bg' = bg + 1
   /\ UNCHANGED <<proc, tree, run, keep, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 BgEnd == bg > 0 /\ bg' = bg - 1
   /\ UNCHANGED <<proc, tree, run, keep, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 Age == mon = 0 /\ bg + old > 0 /\ bg' = 0 /\ old' = 0
   /\ UNCHANGED <<proc, tree, run, keep, mon, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* The process starts a Monitor (a Monitor tool call, or one on a socket or MCP server). While a report waits, only
-   a turn under way starts one; the report's timer then waits on the oldest live Monitor's cap. *)
+   a turn under way starts one; the report's timer then waits on the oldest live Monitor's cap (not once a cap let
+   it go). *)
 MonStart ==
   /\ Live /\ Bg < MaxBg /\ (hold = "none" \/ turn)
   /\ mon' = mon + 1 /\ hold' = Aim(1)
   /\ UNCHANGED <<proc, tree, run, keep, bg, old, checking, older, sent, read, held, lost, failed, stopped,
-                 turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* A live Monitor ends; or a Monitor past its cap ends. Either aims the report's timer again (monitorChanged): at the
    oldest live Monitor's cap, else at the grace for the wake turn. *)
 MonEnd == mon > 0 /\ mon' = mon - 1 /\ hold' = Aim(mon - 1)
   /\ UNCHANGED <<proc, tree, run, keep, bg, old, checking, older, sent, read, held, lost, failed, stopped,
-                 turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 OldEnd == old > 0 /\ old' = old - 1 /\ hold' = Aim(mon)
   /\ UNCHANGED <<proc, tree, run, keep, bg, mon, checking, older, sent, read, held, lost, failed, stopped,
-                 turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* The oldest live Monitor runs past the cap and a minute: it holds no report any more. If the report's timer waits
-   on it, the report goes out; a turn under way gets the grace instead (before 0ea2a290, "cutoff": it went out). *)
+   on it, the report goes out; a turn under way gets the grace instead (before 0ea2a290, "cutoff": it went out), and
+   the report is let go: that turn's result ends the run, whatever Monitors live then (`capped`). *)
 MonExpire ==
   /\ mon > 0 /\ mon' = mon - 1 /\ old' = old + 1
   /\ IF hold = "cap" /\ ~(turn /\ Bug # "cutoff") THEN keep' = TRUE /\ SendKept(0) /\ UNCHANGED dropped
-     ELSE /\ hold' = (IF hold = "cap" THEN "grace" ELSE hold)
-          /\ UNCHANGED <<run, keep, turn, kept, told, dropped, reports, outcome>>
+     ELSE /\ hold' = (IF hold = "cap" THEN "grace" ELSE hold) /\ capped' = (capped \/ hold = "cap")
+          /\ UNCHANGED <<run, keep, turn, retry, tried, kept, told, dropped, reports, outcome>>
   /\ UNCHANGED <<proc, tree, bg, checking, older, sent, read, held, lost, failed, stopped, wakes, said, runs, closed>>
 
 (* The grace for the wake turn runs out: no turn began, the report goes out as it is. A turn under way: the timer is
@@ -199,13 +240,14 @@ GraceFires ==
                          wakes, said, dropped, runs, closed>>
 
 (* The process's leader exits (its input closed and its background done, a crash, a kill): a run at work ends, with
-   its kept report if a Monitor held one, else with an error; its tree may outlive it; its tree check starts. *)
+   its kept report if a Monitor held one, else with an error (words carried over an API retry said with it); its
+   tree may outlive it; its tree check starts. *)
 ProcExit ==
   /\ Live
   /\ proc' = "exited" /\ checking' = TRUE /\ bg' = 0 /\ mon' = 0 /\ old' = 0 /\ keep' = FALSE /\ tree' \in BOOLEAN
   /\ IF run = "working" /\ hold # "none" /\ Bug # "monexit" THEN SendKept(0) /\ UNCHANGED dropped
-     ELSE IF run = "working" THEN Drop("exited") /\ UNCHANGED told
-     ELSE UNCHANGED <<run, hold, turn, kept, told, dropped, reports, outcome>>
+     ELSE IF run = "working" THEN EndWithout("exited", Bug \notin {"monexit", "droperr"})
+     ELSE UNCHANGED <<run, hold, turn, capped, retry, tried, kept, told, dropped, reports, outcome>>
   /\ UNCHANGED <<older, sent, read, held, lost, failed, stopped, wakes, said, runs, closed>>
 
 (* The tree check of the process the session is on answers (endTree: killed and confirmed gone, or it outlived the
@@ -213,7 +255,8 @@ ProcExit ==
 TreeChecked(ok) ==
   /\ checking /\ (ok \/ tree)
   /\ tree' = (tree /\ ~ok) /\ checking' = FALSE
-  /\ UNCHANGED <<keep, mon, old, older, sent, lost, stopped, hold, turn, wakes, kept, said, told, dropped, runs, closed>>
+  /\ UNCHANGED <<keep, mon, old, older, sent, lost, stopped, hold, turn, wakes, capped, retry, tried, kept, said, told,
+                 dropped, runs, closed>>
   /\ IF run = "held" /\ ~(tree /\ ~ok)
      THEN run' = "working" /\ proc' = "open" /\ bg' = 0 /\ read' = read + held /\ held' = 0 /\ UNCHANGED <<failed, reports, outcome>>
      ELSE /\ proc' = "none" /\ run' = (IF run = "held" THEN "idle" ELSE run) /\ failed' = failed + held /\ held' = 0
@@ -224,7 +267,8 @@ TreeChecked(ok) ==
    if it were the check of the process that run waits for. *)
 OlderChecked ==
   /\ older > 0
-  /\ UNCHANGED <<tree, keep, mon, old, sent, lost, stopped, hold, turn, wakes, kept, said, told, dropped, runs, closed>>
+  /\ UNCHANGED <<tree, keep, mon, old, sent, lost, stopped, hold, turn, wakes, capped, retry, tried, kept, said, told,
+                 dropped, runs, closed>>
   /\ IF Bug = "stale" /\ run = "held"
      THEN /\ IF ~Live /\ ~tree
              THEN run' = "working" /\ proc' = "open" /\ bg' = 0 /\ checking' = FALSE /\ older' = older - 1 + (IF checking THEN 1 ELSE 0)
@@ -236,12 +280,11 @@ OlderChecked ==
 (* What an exited process left behind ends on its own. *)
 TreeGone == tree /\ ~Live /\ tree' = FALSE
   /\ UNCHANGED <<proc, run, keep, bg, mon, old, checking, older, sent, read, held, lost, failed, stopped,
-                 hold, turn, wakes, kept, said, told, dropped, runs, reports, outcome, closed>>
+                 hold, turn, wakes, capped, retry, tried, kept, said, told, dropped, runs, reports, outcome, closed>>
 
 (* The run under way and its held words are dropped (so is a report kept for a Monitor), its process is killed. *)
 CutOff(how) ==
-  /\ run' = "idle" /\ held' = 0 /\ stopped' = stopped + held /\ keep' = FALSE
-  /\ hold' = "none" /\ turn' = FALSE /\ kept' = 0 /\ dropped' = dropped + kept
+  /\ run' = "idle" /\ held' = 0 /\ stopped' = stopped + held /\ keep' = FALSE /\ Settled /\ dropped' = dropped + kept
   /\ reports' = reports + (IF run # "idle" THEN 1 ELSE 0) /\ outcome' = (IF run # "idle" THEN how ELSE outcome)
   /\ IF Live THEN proc' = "exited" /\ checking' = TRUE /\ bg' = 0 /\ mon' = 0 /\ old' = 0 /\ tree' \in BOOLEAN
      ELSE UNCHANGED <<proc, checking, bg, mon, old, tree>>
@@ -259,20 +302,21 @@ Init ==
   /\ proc = "none" /\ tree = FALSE /\ run = "idle" /\ keep = FALSE /\ bg = 0 /\ mon = 0 /\ old = 0
   /\ checking = FALSE /\ older = 0
   /\ sent = 0 /\ read = 0 /\ held = 0 /\ lost = 0 /\ failed = 0 /\ stopped = 0
-  /\ hold = "none" /\ turn = FALSE /\ wakes = 0 /\ kept = 0 /\ said = 0 /\ told = 0 /\ dropped = 0
+  /\ hold = "none" /\ turn = FALSE /\ wakes = 0 /\ capped = FALSE /\ retry = FALSE /\ tried = FALSE /\ kept = 0 /\ said = 0 /\ told = 0 /\ dropped = 0
   /\ runs = 0 /\ reports = 0 /\ outcome = "none" /\ closed = FALSE
 
 Next ==
-  \/ Start \/ Steer \/ (\E ok \in BOOLEAN : Result(ok)) \/ WakeTurn \/ KeepAliveFires \/ BgStart \/ BgEnd \/ Age
+  \/ Start \/ Steer \/ (\E ok \in BOOLEAN : Result(ok)) \/ ApiError \/ RetryFires \/ WakeTurn \/ KeepAliveFires \/ BgStart \/ BgEnd \/ Age
   \/ MonStart \/ MonEnd \/ OldEnd \/ MonExpire \/ GraceFires \/ ProcExit
   \/ (\E ok \in BOOLEAN : TreeChecked(ok)) \/ OlderChecked \/ TreeGone \/ Stop \/ AppClose
 
 (* Timers fire; time passes (background work turns old or ends, a Monitor runs past its cap); a process whose input
-   is closed ends; every tree check answers; a wake turn ends with its result. *)
+   is closed ends; every tree check answers; a wake turn ends with its result; so does the turn after an API retry. *)
 Fairness ==
   /\ WF_vars(KeepAliveFires) /\ WF_vars(Age) /\ WF_vars(\E ok \in BOOLEAN : TreeChecked(ok)) /\ WF_vars(OlderChecked)
   /\ WF_vars(proc = "closed" /\ ProcExit)
   /\ WF_vars(MonExpire) /\ WF_vars(GraceFires) /\ WF_vars(hold # "none" /\ turn /\ \E ok \in BOOLEAN : Result(ok))
+  /\ WF_vars(RetryFires) /\ WF_vars(tried /\ ~retry /\ ((\E ok \in BOOLEAN : Result(ok)) \/ ApiError))
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -300,13 +344,23 @@ BackgroundIsLive == ~Live => Bg = 0
 
 (* Every run ends exactly once: with its report, an error, its process's end, a stop or the app's close. *)
 OneReportPerRun == runs = reports + (IF run = "idle" THEN 0 ELSE 1)
-(* Every turn's report words are somewhere: kept for a Monitor, in the run's report, or dropped with their run. *)
+(* Every turn's report words are somewhere: kept, told (in the run's report, or with its error or its process's end),
+   or dropped with a run that was stopped or cut off. *)
 TextsAccounted == said = told + kept + dropped
-(* A kept report belongs to a run at work in an open process, and has words. *)
-KeptIsAtWork == hold # "none" => run = "working" /\ proc = "open" /\ kept > 0
-NothingKept == hold = "none" => kept = 0 /\ ~turn
-(* The timer on a cap waits on a live Monitor. *)
-CapIsLive == hold = "cap" => mon > 0
+(* Words are kept for a run at work in an open process: held for a Monitor (a kept report has words), or carried
+   over an API retry. *)
+KeptIsAtWork ==
+  /\ (kept > 0 \/ hold # "none" \/ capped \/ tried) => run = "working" /\ proc = "open"
+  /\ hold # "none" => kept > 0 /\ ~tried
+NothingKept == /\ hold = "none" => ~turn
+               /\ (hold = "none" /\ ~tried) => kept = 0
+(* An API retry waits only for a run that used its try. *)
+RetryIsTried == retry => tried
+(* The timer on a cap waits on a live Monitor; the grace, when no cap let the report go, on none. Once a cap let it
+   go, only the turn under way is awaited. *)
+CapIsLive == /\ hold = "cap" => mon > 0
+             /\ (hold = "grace" /\ ~capped) => mon = 0
+             /\ capped => hold # "cap" /\ (hold # "none" => turn)
 (* After the app's close no run is at work and no process lives. *)
 ClosedIsQuiet == closed => run = "idle" /\ ~Live
 
@@ -320,11 +374,18 @@ HoldOnlyForMonitor == [][hold = "none" /\ hold' # "none" => mon > 0 /\ said' = s
 (* A timer never ends a run while a turn is under way: only that turn's result does (or the process's end, a stop,
    the app's close). *)
 TurnNotCutOff == [][hold # "none" /\ turn /\ run' = "idle" /\ proc' = "open" /\ ~closed' => said' > said \/ outcome' = "error"]_vars
-(* A run whose report is kept ends with it (every turn's words), unless a later turn fails or the run is stopped or
-   cut off by the app's close: never "exited before its report". *)
-KeptIsReported == [][hold # "none" /\ run' = "idle" =>
+(* A run that kept words ends with them (every turn's), with its report, an error or its process's end, unless it is
+   stopped or cut off by the app's close: a held report is sent at the process's end (never "exited before its
+   report"), and a failure says the words kept before it. *)
+KeptIsReported == [][kept > 0 /\ run' = "idle" =>
                       \/ outcome' = "report" /\ told' = told + kept + (said' - said)
-                      \/ outcome' \in {"error", "stopped", "interrupted"}]_vars
+                      \/ hold = "none" /\ outcome' \in {"error", "exited"} /\ told' = told + kept
+                      \/ hold # "none" /\ outcome' = "error" /\ told' = told + kept
+                      \/ outcome' \in {"stopped", "interrupted"}]_vars
+(* Report words are dropped only with a run that is stopped or cut off by the app's close. *)
+DroppedOnlyCutOff == [][dropped' > dropped => outcome' \in {"stopped", "interrupted"} /\ reports' = reports + 1]_vars
+(* Once the oldest Monitor's cap let a report go, no Monitor keeps it again: the turn under way ends the run. *)
+CapLetsGoOnce == [][capped => hold' # "cap"]_vars
 
 (* Liveness *)
 
@@ -333,4 +394,6 @@ HeldIsTaken == run = "held" ~> run # "held"
 WordsSettle == held > 0 ~> held = 0
 (* A kept report goes out (or its run ends otherwise): no run stays at work forever for a Monitor. *)
 KeptIsSent == hold # "none" ~> hold = "none"
+(* Words kept (for a Monitor or over an API retry) go out, or their run is stopped: none stay kept forever. *)
+KeptSettles == kept > 0 ~> kept = 0
 =============================================================================

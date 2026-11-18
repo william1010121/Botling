@@ -230,9 +230,13 @@ interface Proc {
     turn?: boolean;
     /** What the timer waits for: the oldest live Monitor's cap, or the grace for a wake turn. */
     on?: "cap" | "grace";
-    /** The oldest Monitor's cap ran out while a turn was under way (the model's MonExpire): the report has been let go, only that turn's result is awaited. No Monitor, old or new, holds it again. */
-    capped?: boolean;
   };
+  /**
+   * The oldest Monitor's cap ran out while a turn was under way (WorkerProcess.tla `capped`): the run's report has been
+   * let go, only that turn's result is awaited. No Monitor, old or new, holds it again in this run, not after an API
+   * retry either.
+   */
+  capped?: boolean;
   /**
    * The text of a good report that a later failure would otherwise take with it (a failed wake turn, or an API retry
    * that waits): carried to the run's end, where it goes out with the report that follows or with the failure.
@@ -362,14 +366,14 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (proc.head?.running && proc.finishing === proc.head) {
       // Its input is closed (it went to sleep) but it lives on until its background work ends: words written now are
       // lost. They wait, shown as waiting, and go into a new process on its session once this one has ended.
-      Object.assign(proc, { run: undefined, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined });
+      Object.assign(proc, { run: undefined, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined, capped: undefined });
       proc.held = { run, record: r, words: [words], since: Date.now() };
       run.emit({ type: "session", conversationId: sessionId });
       run.emit({ type: "waitingOn", on: this.waitingOn(proc) });
       return;
     }
     if (proc.head?.running) {
-      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined });
+      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined, carried: undefined, capped: undefined });
       proc.stream.newRun();
       proc.queued.clear();
       run.emit({ type: "session", conversationId: sessionId });
@@ -425,7 +429,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     };
     const head: ClaudeWorkerHead = machine ? remote!.head(machine, { id: r.id, name: r.name }, config.cwd, config, handlers) : this.factory(config, handlers);
     head.start();
-    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, carried: undefined, finishing: undefined, finishingSince: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined, carried: undefined, capped: undefined, finishing: undefined, finishingSince: undefined });
     proc.background.clear();
     proc.monitorCalls?.clear();
     proc.stream.newProcess();
@@ -464,6 +468,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   private holdForMonitor(proc: Proc, result: Extract<StreamItem, { kind: "result" }>) {
     proc.queued.clear();
     proc.apiRetries = 0;
+    // A turn that began while an API retry waited (a Monitor's event) ended well: no try is owed any more.
+    clearApiRetry(proc);
     const hold = proc.monitorHold ?? (proc.monitorHold = { result });
     hold.result = result;
     hold.turn = false;
@@ -476,7 +482,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (!hold || !run) return;
     // The oldest Monitor's cap has run out: the report is let go (only the turn under way is awaited); a Monitor that
     // lives or starts now does not hold it again, and its row does not say "Monitor running" for it.
-    if (hold.capped) return;
+    if (proc.capped) return;
     const live = this.liveMonitors(proc)[0];
     // A Monitor lives: its row says so, and the report goes out at the latest when the oldest one's cap runs out. None
     // lives: the Monitor's wake turn is on its way; if it never starts, the report goes out after the grace.
@@ -495,7 +501,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (proc.run !== run || !held) return;
       if (held.turn && proc.head?.running && !this.closed) {
         // The cap ran out under a turn: the grace, and that turn's result ends the run whatever Monitors live by then.
-        if (held.on === "cap") held.capped = true;
+        if (held.on === "cap") proc.capped = true;
         this.armHold(proc, run, "grace", monitorWakeGraceMs());
         return;
       }
@@ -601,7 +607,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (result.ok) proc.carried = undefined;
     // Its Monitor still lives: the turn's report waits for it (an error ends the run at once). Not once the oldest
     // Monitor's cap has let the report go: a newer Monitor does not hold it again.
-    if (result.ok && !release && head?.running && proc.finishing !== head && !this.closed && !proc.monitorHold?.capped && this.liveMonitors(proc).length) {
+    if (result.ok && !release && head?.running && proc.finishing !== head && !this.closed && !proc.capped && this.liveMonitors(proc).length) {
       this.holdForMonitor(proc, result);
       return;
     }
@@ -634,6 +640,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     }
     proc.run = undefined;
     proc.carried = undefined;
+    proc.capped = undefined;
     proc.queued.clear();
     proc.apiRetries = 0;
     clearApiRetry(proc);
@@ -682,6 +689,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.run = undefined;
     const carried = proc.carried;
     proc.carried = undefined;
+    proc.capped = undefined;
     run.emit({ type: "end", end: {
       how: "exited", finalText: carried ? earlierReportText(carried) : null, detail: exit.signal ?? `exit ${exit.code}`,
       error: `The worker's process ended before its report${exit.code !== null ? ` (exit ${exit.code})` : ""}.${exit.stderr ? `\n${exit.stderr.slice(-2_000)}` : ""}`,
@@ -695,6 +703,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.run = undefined;
     proc.held = undefined;
     proc.carried = undefined;
+    proc.capped = undefined;
     proc.queued.clear();
     clearApiRetry(proc);
     clearHold(proc);
@@ -749,7 +758,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
       clearApiRetry(proc);
       clearHold(proc);
-      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined, carried: undefined });
+      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined, held: undefined, carried: undefined, capped: undefined });
       const tree = proc.tree ?? proc.head;
       proc.head = undefined;
       return tree?.terminate(1_500);

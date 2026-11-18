@@ -13,6 +13,10 @@ export interface WorkerProcessSession {
   steer(): Promise<void>;
   /** The process ends a turn with its result: a report (`ok`, its own words), or an error. */
   result(ok: boolean): Promise<void>;
+  /** The process ends a turn on an API error that passes (an overload, a Cloudflare block). */
+  apiError(): Promise<void>;
+  /** The wait before trying again after such an error is over (the app's timer, if armed, fires). */
+  retryFires(): Promise<void>;
   /** While the run's report is kept for a Monitor, a turn begins in the process (a Monitor's event woke the model). */
   wakeTurn(): Promise<void>;
   /** The keep-alive timer runs out. */

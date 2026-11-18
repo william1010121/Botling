@@ -6,11 +6,13 @@
 //     took the words (command_lifecycle "started"), so no settle wait is armed; its tree (children) may outlive its
 //     leader, and `gone()` reports that live; `terminate` kills a live leader at once and its tree check (endTree)
 //     answers when the test says so;
-//   - its turns: a turn's result (a report with words of its own, "T<n>", or an error); a wake turn's start (an init
+//   - its turns: a turn's result (a report with words of its own, "T<n>", or an error, or an API error that passes:
+//     the app tries once more, BOTLING_API_RETRY_MS set to one wait during each call); a wake turn's start (an init
 //     item) while a report waits for a Monitor; a Monitor's start (odd ones a Monitor tool call on a command: its
 //     toolUse, then the background task; even ones a Monitor on a socket: a background task with `monitor`) and end;
 //   - the core: a run handle per run that records the events the adapter emits (waitingOn, end) and whether the
-//     core stopped it or the app's close cut it off (the core marks that run interrupted);
+//     core stopped it or the app's close cut it off (the core marks that run interrupted); a run's report words are
+//     those of its end's finalText (with its report, or said with its error or its process's end);
 //   - the clock: during each call the app's setTimeout/clearTimeout and Date.now are the session's, so the
 //     keep-alive and a kept report's timers fire when the test says and background work turns 6 hours old when it
 //     says. A Monitor's start is dated so that it runs past the cap and a minute a few ms later (the n-th Monitor n
@@ -31,6 +33,8 @@ const SIX_HOURS = 6 * 3600_000;
 /** A Monitor holds a report this long (claude-workers.ts MONITOR_HOLD_MS). */
 const HOLD_MS = BACKGROUND_WAIT_CAP_MS + 60_000;
 /** The grace a kept report waits for a Monitor's wake turn (claude-workers.ts monitorWakeGraceMs). */
+/** The one wait before an API retry (BOTLING_API_RETRY_MS during the session's calls: one try). */
+const RETRY_MS = 7_777;
 const graceMs = () => { const ms = Number(process.env.BOTLING_MONITOR_GRACE_MS); return Number.isFinite(ms) && ms > 0 ? ms : 30_000; };
 const WORD = /\bw\d+\b/g;
 const TEXT = /\bT\d+\b/g;
@@ -59,6 +63,8 @@ interface FakeHead extends ClaudeWorkerHead {
 
 interface Handle {
   run: number; words: string[]; events: WorkerEvent[]; stopped: boolean; threw: boolean;
+  /** How many of its events came before its turns' last result (an API retry since then has used the try). */
+  resultAt: number;
   /** The app's close cut it off (the core marks it interrupted). */
   interrupted: boolean;
   /** The words of its turns' good results. */
@@ -77,6 +83,8 @@ class Session implements WorkerProcessSession {
   private monitors = 0;
   /** A turn began (a wake turn, a Monitor tool call) since the last turn's result. */
   private turnSince = false;
+  /** The cap timer of a kept report fired and the app armed the grace instead (a turn under way): it let the report go. */
+  private capped = false;
   private wakes = 0;
   private closed = false;
   private clock = 1_800_000_000_000;
@@ -138,6 +146,8 @@ class Session implements WorkerProcessSession {
    * first clock reading during the call answers (a Monitor's start time). */
   private async within(call: () => unknown, since?: number) {
     const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, now: Date.now };
+    const retryMs = process.env.BOTLING_API_RETRY_MS;
+    process.env.BOTLING_API_RETRY_MS = String(RETRY_MS);
     let first = since;
     globalThis.setTimeout = ((fn: () => void, ms?: number) => {
       const id = this.nextTimer++;
@@ -154,6 +164,7 @@ class Session implements WorkerProcessSession {
       globalThis.setTimeout = real.setTimeout;
       globalThis.clearTimeout = real.clearTimeout;
       Date.now = real.now;
+      if (retryMs === undefined) delete process.env.BOTLING_API_RETRY_MS; else process.env.BOTLING_API_RETRY_MS = retryMs;
     }
   }
 
@@ -168,8 +179,9 @@ class Session implements WorkerProcessSession {
   async start() {
     const words = this.word();
     this.record = { ...this.record, run: this.record.run + 1 };
-    const h: Handle = { run: this.record.run, words: [words], events: [], stopped: false, threw: false, interrupted: false, results: [] };
+    const h: Handle = { run: this.record.run, words: [words], events: [], stopped: false, threw: false, interrupted: false, results: [], resultAt: 0 };
     this.handles.push(h);
+    this.capped = false;
     await this.within(() => {
       try { this.adapter.start(this.record, words, this.handle(h)); } catch (error) { h.threw = true; throw error; }
     });
@@ -184,10 +196,26 @@ class Session implements WorkerProcessSession {
     const text = `T${++this.texts}`;
     const h = this.current();
     if (ok && h && !this.ended(h)) h.results.push(text);
+    if (h) h.resultAt = h.events.length;
     this.turnSince = false;
     await this.within(() => head.handlers.onItem((ok
       ? { kind: "result", ok: true, text, error: "", subtype: "success" }
       : { kind: "result", ok: false, text: "", error: "Spec turn failed.", subtype: "error_during_execution" }) as never));
+  }
+  async apiError() {
+    const head = this.live()!;
+    const h = this.current();
+    if (h) h.resultAt = h.events.length;
+    this.turnSince = false;
+    await this.within(() => head.handlers.onItem({
+      kind: "result", ok: false, how: "error", text: "", error: "API Error: 529 Overloaded", subtype: "success", apiPassing: true,
+    } as never));
+  }
+  async retryFires() {
+    const [id, timer] = [...this.timers].find(([, t]) => t.ms === RETRY_MS) ?? [];
+    if (id === undefined) { await flush(); return; }
+    this.timers.delete(id);
+    await this.within(() => timer!.fn());
   }
   async wakeTurn() {
     const head = this.live()!;
@@ -226,7 +254,10 @@ class Session implements WorkerProcessSession {
   async monExpire() {
     const oldest = this.tasks.filter((t) => this.liveMonitor(t)).sort((a, b) => a.since - b.since)[0]!;
     this.clock = oldest.since + HOLD_MS;
+    const cap = this.holdTimer()?.[2] === "cap";
     await this.fire("cap");
+    const h = this.current();
+    if (cap && h && !this.ended(h) && this.holdTimer()?.[2] === "grace") this.capped = true;
   }
   async graceFires() { await this.fire("grace"); }
 
@@ -237,7 +268,7 @@ class Session implements WorkerProcessSession {
   }
   /** The timer of a report kept for a Monitor: on a Monitor's cap, or the grace for its wake turn. */
   private holdTimer(): [number, { fn: () => void; ms: number }, Exclude<Hold, "none">] | undefined {
-    const found = [...this.timers].find(([, t]) => t.ms !== KEEP_MS && t.ms !== SETTLE_MS);
+    const found = [...this.timers].find(([, t]) => t.ms !== KEEP_MS && t.ms !== SETTLE_MS && t.ms !== RETRY_MS);
     return found && [found[0], found[1], found[1].ms === graceMs() ? "grace" : "cap"];
   }
   /** That timer fires, if it is the one armed. */
@@ -301,9 +332,11 @@ class Session implements WorkerProcessSession {
     const proc: ProcState = !head ? "none" : head.running ? (head.finished ? "closed" : "open") : head.check && !head.check.done ? "exited" : "none";
     const h = this.current();
     const ended = !h || this.ended(h);
-    // A run whose words wait for a closing process (a report kept for a Monitor says "monitorRunning": still at work).
-    const on = h?.events.filter((e): e is Extract<WorkerEvent, { type: "waitingOn" }> => e.type === "waitingOn").at(-1)?.on ?? null;
-    const waiting = on && on.kind !== "monitorRunning" ? on : null;
+    // A run whose words wait for a closing process (a report kept for a Monitor says "monitorRunning", an API retry
+    // "apiRetry": still at work).
+    const waits = h?.events.filter((e): e is Extract<WorkerEvent, { type: "waitingOn" }> => e.type === "waitingOn") ?? [];
+    const on = waits.at(-1)?.on ?? null;
+    const waiting = on && on.kind !== "monitorRunning" && on.kind !== "apiRetry" ? on : null;
     const run: Run = ended ? "idle" : waiting ? "held" : "working";
     const read = this.heads.flatMap((x) => x.read);
     const lost = this.heads.flatMap((x) => x.lost);
@@ -334,7 +367,9 @@ class Session implements WorkerProcessSession {
       old: tasks.filter((t) => t.monitor && !this.liveMonitor(t)).length,
       checking: proc === "exited", older: this.heads.slice(0, -1).filter((x) => x.check && !x.check.done).length,
       sent: this.words, read: read.length, held: run === "held" ? waiting!.queued : 0, lost: lost.length, failed, stopped,
-      hold, turn: hold !== "none" && this.turnSince, wakes: this.wakes,
+      hold, turn: hold !== "none" && this.turnSince, wakes: this.wakes, capped: !ended && this.capped,
+      retry: !ended && [...this.timers.values()].some((t) => t.ms === RETRY_MS),
+      tried: !ended && !!h && h.events.slice(h.resultAt).some((e) => e.type === "waitingOn" && e.on?.kind === "apiRetry"),
       kept: h && !ended ? h.results.length : 0, said: this.handles.reduce((n, x) => n + x.results.length, 0), told, dropped,
       runs: this.handles.length, reports, outcome: last ? this.outcome(last) : "none", closed: this.closed,
     };

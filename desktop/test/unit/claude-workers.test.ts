@@ -833,6 +833,41 @@ describe("a Monitor the worker started (2026-11-18: workers may use Monitor; the
     expect(h.reports[0]!.text).toContain("Monitor started; the deploy is queued.");
   }));
 
+  it("a Monitor's wake turn that ends well while an API retry waits is kept for the Monitor, and no try follows it", () => withRetryDelays("60", async () => {
+    const { h, head } = await open();
+    h.say(head, used); h.say(head, started);
+    h.result(head, "Monitor started; the deploy is queued.");
+    apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+    // The Monitor's next event wakes the model before the try: that turn's report is kept for the live Monitor.
+    h.result(head, "Still deploying.");
+    await wait(120);
+    expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy"]);
+    expect(h.reports).toEqual([]);
+    expect(waits(h).at(-1)).toMatchObject({ on: { kind: "monitorRunning", title: "watch the deploy log" } });
+  }));
+
+  it("the cap that let the report go still holds after an API retry: a newer Monitor does not keep the retry's report", () => withRetryDelays("20", async () => {
+    process.env.BOTLING_MONITOR_GRACE_MS = "30";
+    try {
+      const { h, task_id, head } = await open();
+      h.say(head, used); h.say(head, started);
+      nearCap(h, task_id, 40);
+      h.say(head, monitorAgain);
+      h.result(head, "Monitor started.");
+      h.say(head, { kind: "init", sessionId: "00000000-0000-4000-8000-000000000001" });
+      await wait(80);
+      expect(h.reports).toEqual([]);
+      apiError((item) => h.say(head, item), 403, CLOUDFLARE);
+      await wait(50);
+      expect(head.sent.map((m) => m.text)).toEqual(["Watch the deploy", API_RETRY_NOTE]);
+      h.result(head, "The deploy finished: ok.");
+      await wait(30);
+      expect(h.reports).toHaveLength(1);
+      expect(h.reports[0]!.text).toContain("Monitor started.");
+      expect(h.reports[0]!.text).toContain("The deploy finished: ok.");
+    } finally { delete process.env.BOTLING_MONITOR_GRACE_MS; }
+  }));
+
   it("the oldest Monitor's cap lets the report go once, though a newer Monitor still runs; nothing holds or reports again", async () => {
     const { h, task_id, head } = await open();
     h.say(head, used); h.say(head, started);

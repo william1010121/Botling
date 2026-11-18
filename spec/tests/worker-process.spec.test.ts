@@ -3,11 +3,11 @@
 // actions (runs, steers, results, the keep-alive, background work starting, ending and turning 6 hours old, the
 // process exiting with or without leftovers, tree checks answering, late ones of earlier processes too, stops, the
 // app's close; Monitors starting, ending and running past their cap, reports kept for them, wake turns, the grace,
-// failed turns); after every step the app's view must equal the reference's and the model's properties must hold.
-// The reference explored like TLC breaks the properties only with the model's bugs.
+// failed turns, API errors that pass and the retry); after every step the app's view must equal the reference's and
+// the model's properties must hold. The reference explored like TLC breaks the properties only with the model's bugs.
 // SPEC_BUG=worker-sleep (before 95fcab3a), worker-bg (no background rule), worker-stale (before ebfa0da4),
-// worker-cutoff (before 0ea2a290) or worker-monexit (no report at the process's end) turns on the reference's bug:
-// the walks must go red.
+// worker-cutoff (before 0ea2a290), worker-monexit (no report at the process's end), worker-droperr or worker-rehold
+// (before monitor-fix2) turns on the reference's bug: the walks must go red.
 import { describe, expect, it } from "vitest";
 import { workerProcessDriver } from "../../desktop/spec-adapters/worker-process-adapter";
 import type { WorkerProcessSession } from "../driver/worker-process-driver";
@@ -33,6 +33,8 @@ async function apply(s: WorkerProcessSession, a: Action) {
     case "Start": return s.start();
     case "Steer": return s.steer();
     case "Result": return s.result(a.ok);
+    case "ApiError": return s.apiError();
+    case "RetryFires": return s.retryFires();
     case "WakeTurn": return s.wakeTurn();
     case "KeepAliveFires": return s.keepAliveFires();
     case "BgStart": return s.bgStart();
@@ -68,12 +70,19 @@ function reached(s: State, n: State, a: Action): string[] {
   if (s.hold === "none" && n.hold !== "none") out.push("report kept for a Monitor");
   if (a.type === "WakeTurn") out.push("wake turn");
   if (a.type === "Result" && a.ok && s.hold !== "none" && n.run === "idle") out.push("wake turn's result: the report of every turn");
-  if (a.type === "Result" && !a.ok && s.hold !== "none") out.push("failed turn ends a run whose report is kept");
+  if (a.type === "Result" && !a.ok && s.hold !== "none") out.push("failed turn ends a run whose report is kept: its words with the error");
   if (a.type === "GraceFires" && n.hold === "none") out.push("grace runs out: the kept report goes");
   if (a.type === "MonExpire" && s.hold === "cap" && n.hold === "none") out.push("Monitor past its cap: the kept report goes");
   if (a.type === "MonExpire" && s.hold === "cap" && n.hold === "grace") out.push("Monitor past its cap during a turn: the grace");
+  if (a.type === "Result" && a.ok && s.capped && s.mon > 0) out.push("after a cap, the turn's result ends the run though a Monitor lives");
   if (a.type === "ProcExit" && s.hold !== "none") out.push("process end sends the kept report");
   if ((a.type === "Stop" || a.type === "AppClose") && s.hold !== "none") out.push("kept report stopped or cut off");
+  if (a.type === "ApiError" && n.retry && s.hold !== "none") out.push("API error under a kept report: its words carried over the retry");
+  if (a.type === "ApiError" && n.retry && s.hold === "none") out.push("API error: the run waits to try again");
+  if (a.type === "ApiError" && s.tried && s.kept > 0) out.push("every try failed: the words kept go with the error");
+  if (a.type === "RetryFires") out.push("the retry's wait is over");
+  if (a.type === "Steer" && s.retry) out.push("steer in place of a retry");
+  if (a.type === "Result" && s.retry) out.push("a turn's result while a retry waits");
   return out;
 }
 
@@ -132,12 +141,16 @@ describe("worker process model: conformance", () => {
     const seen = new Set<string>();
     for (let seed = 1; seed <= WALKS; seed++) await walk(cfg, seed, 40, seen);
     expect([...seen].sort()).toEqual([
+      "API error under a kept report: its words carried over the retry", "API error: the run waits to try again",
       "Monitor past its cap during a turn: the grace", "Monitor past its cap: the kept report goes",
-      "background keeps the process awake", "background turns old", "failed turn ends a run whose report is kept",
+      "a turn's result while a retry waits", "after a cap, the turn's result ends the run though a Monitor lives",
+      "background keeps the process awake", "background turns old", "every try failed: the words kept go with the error",
+      "failed turn ends a run whose report is kept: its words with the error",
       "grace runs out: the kept report goes", "held run fails: leftovers", "held run stopped",
       "held words go into a new process", "input closed", "kept report stopped or cut off", "late check of an earlier process, run held",
       "process end sends the kept report", "report kept for a Monitor", "run held for a closing process", "spawn refused: leftovers",
-      "steer joins held words", "wake turn", "wake turn's result: the report of every turn",
+      "steer in place of a retry", "steer joins held words", "the retry's wait is over", "wake turn",
+      "wake turn's result: the report of every turn",
     ]);
   }, 120_000);
 
@@ -169,6 +182,37 @@ describe("worker process model: conformance", () => {
     expect(await play(cfg, [act("Start"), act("MonStart"), act("Result", false)])).toMatchObject({ run: "idle", hold: "none", outcome: "error", said: 0 });
   });
 
+  it("TLC's counterexample for WorkerProcess_bug_droperr.cfg: a failed wake turn says the kept report with its error", async () => {
+    const kept = [act("Start"), act("MonStart"), act("Result", true), act("WakeTurn")];
+    expect(await play(cfg, [...kept, act("Result", false)]))
+      .toMatchObject({ run: "idle", hold: "none", outcome: "error", said: 1, told: 1, dropped: 0, reports: 1 });
+  });
+
+  it("an API error under a kept report: its words carried over the retry, then out with the retry's report, the error or the process's end", async () => {
+    const retry = [act("Start"), act("MonStart"), act("Result", true), act("WakeTurn"), act("ApiError")];
+    expect(await play(cfg, retry)).toMatchObject({ run: "working", hold: "none", retry: true, tried: true, kept: 1, told: 0, reports: 0 });
+    expect(await play(cfg, [...retry, act("RetryFires"), act("MonEnd"), act("Result", true)]))
+      .toMatchObject({ run: "idle", outcome: "report", retry: false, tried: false, told: 2, dropped: 0, reports: 1 });
+    expect(await play(cfg, [...retry, act("RetryFires"), act("ApiError")])).toMatchObject({ run: "idle", outcome: "error", told: 1, dropped: 0 });
+    expect(await play(cfg, [...retry, act("ProcExit", false)])).toMatchObject({ run: "idle", outcome: "exited", told: 1, dropped: 0 });
+    // A Monitor's wake turn ends well before the try: it is kept again, and no try follows it.
+    expect(await play(cfg, [...retry, act("Result", true)])).toMatchObject({ run: "working", hold: "cap", retry: false, tried: false, kept: 2 });
+    expect(await play(cfg, [...retry, act("Stop", false)])).toMatchObject({ run: "idle", outcome: "stopped", told: 0, dropped: 1 });
+  });
+
+  it("TLC's counterexample for WorkerProcess_bug_rehold.cfg: after the oldest Monitor's cap, a newer Monitor keeps nothing", async () => {
+    const capped = [act("Start"), act("MonStart"), act("Result", true), act("WakeTurn"), act("MonExpire"), act("MonStart")];
+    expect(await play(cfg, capped)).toMatchObject({ run: "working", hold: "grace", capped: true, turn: true, mon: 1, kept: 1 });
+    expect(await play(cfg, [...capped, act("Result", true)])).toMatchObject({ run: "idle", hold: "none", outcome: "report", told: 2, reports: 1 });
+    // Two Monitors from the start: the older one's cap during the wake turn lets the report go, the newer one lives on.
+    const two = [act("Start"), act("MonStart"), act("MonStart"), act("Result", true), act("WakeTurn"), act("MonExpire")];
+    expect(await play(cfg, two)).toMatchObject({ run: "working", hold: "grace", capped: true, mon: 1, old: 1 });
+    expect(await play(cfg, [...two, act("Result", true)])).toMatchObject({ run: "idle", outcome: "report", told: 2, mon: 1 });
+    // Not after an API retry either.
+    expect(await play(cfg, [...two, act("ApiError"), act("RetryFires"), act("Result", true)]))
+      .toMatchObject({ run: "idle", outcome: "report", told: 2, capped: false, mon: 1 });
+  });
+
   it("the app's close with a report kept: the run is interrupted, the report is not sent", async () => {
     expect(await play(cfg, [act("Start"), act("MonStart"), act("Result", true), act("AppClose", false)]))
       .toMatchObject({ run: "idle", hold: "none", outcome: "interrupted", told: 0, dropped: 1, reports: 1, closed: true });
@@ -176,8 +220,8 @@ describe("worker process model: conformance", () => {
 });
 
 describe("worker process model: the reference explored like TLC", () => {
-  /** TLC's distinct states for WorkerProcess.tla with MaxWords = 3, MaxBg = 2, MaxWakes = 1 (2026-11-18). */
-  const STATES_3_2_1 = 15_030;
+  /** TLC's distinct states for WorkerProcess.tla with MaxWords = 3, MaxBg = 2, MaxWakes = 1 (2026-11-18, monitor-fix2). */
+  const STATES_3_2_1 = 22_383;
 
   /** Every reachable state (breadth first); the first broken property with the path to it, or null. */
   function explore(cfg: Config): { states: number; broken: string | null } {
@@ -211,7 +255,7 @@ describe("worker process model: the reference explored like TLC", () => {
 
   it.each([
     ["sleep", "NoWordLost", 0], ["bg", "NoSleepWithBackground", 1], ["stale", "HeldFailsOnlyForLeftovers", 1],
-    ["cutoff", "TurnNotCutOff", 1], ["monexit", "KeptIsReported", 1],
+    ["cutoff", "TurnNotCutOff", 1], ["monexit", "KeptIsReported", 1], ["droperr", "DroppedOnlyCutOff", 1], ["rehold", "CapLetsGoOnce", 2],
   ] as [Bug, string, number][])(
     "with bug %s breaks %s", (bug, property, maxBg) => {
       expect(explore({ maxWords: 3, maxBg, maxWakes: 1, bug }).broken).toContain(property);
