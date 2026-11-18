@@ -149,6 +149,7 @@ export function storeDriver({ root }: StoreDriverOptions): StoreDriver {
     },
     async powerLoss(keep: number) {
       if (keep < synced || keep > commits) throw new Error(`store adapter: a power loss keeps ${synced}..${commits} commits, not ${keep}`);
+      if (!existsSync(join(disk, "server.db"))) { boot += 1; return; } // nothing ever ran: no file to lose
       const bytes = walAt.get(keep);
       if (bytes === undefined) throw new Error(`store adapter: no WAL size noted for ${keep} commits`);
       copyDisk(bytes);
