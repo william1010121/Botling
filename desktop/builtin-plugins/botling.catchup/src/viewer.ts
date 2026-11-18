@@ -151,7 +151,7 @@ export class SummaryViewer {
       if (!genericFrames.length) for (const display of displays) {
         const fallback=document.createElement("section");fallback.className="source-card";
         fallback.innerHTML=`<div class="source-meta">${escapeHTML(display.name)} · ${escapeHTML(t("source.snapshotUnavailable"))}</div><pre></pre>`;
-        fallback.querySelector("pre")!.textContent=display.data;this.cardStatus(fallback,message);column.append(fallback);this.clip(fallback);
+        fallback.querySelector("pre")!.textContent=display.data;this.cardStatus(fallback,message);column.append(fallback);
       }
       body.append(row);
       if (selected?.messageID===message.id && selected.quote) {
@@ -212,18 +212,17 @@ export class SummaryViewer {
     card.querySelector<HTMLButtonElement>(".source-answer-in-chat")?.addEventListener("click",()=>{
       const id=message.id, reveal=this.reveal;this.close();reveal?.(id);
     });
-    column.append(card);this.clip(card);
+    column.append(card);
   }
   private snapshot(column: HTMLElement,frame: HTMLIFrameElement,message:MessageView,quote: string|undefined,epoch:number): void {
     const holder=document.createElement("section");holder.className="source-card source-snapshot";holder.textContent=t("source.loadingCard");column.append(holder);
     void requestSourceSnapshot(frame).then(snapshot=>{
       if(epoch!==this.epoch || !holder.isConnected)return;
       holder.textContent="";
-      if(!snapshot){holder.textContent=t("source.snapshotUnavailable");const data=document.createElement("pre");data.textContent=(message.displays??(message.display?[message.display]:[])).map(d=>d.data).join("\n");holder.append(data);this.cardStatus(holder,message);this.clip(holder);return;}
+      if(!snapshot){holder.textContent=t("source.snapshotUnavailable");const data=document.createElement("pre");data.textContent=(message.displays??(message.display?[message.display]:[])).map(d=>d.data).join("\n");holder.append(data);this.cardStatus(holder,message);return;}
       const image=document.createElement("iframe");image.className="source-static-frame";image.setAttribute("sandbox","");image.setAttribute("tabindex","-1");image.setAttribute("aria-label",t("source.staticCard"));image.style.height=`${snapshot.height}px`;image.addEventListener("load",()=>{image.dataset.loaded="true";queueMicrotask(()=>this.position(epoch));},{once:true});image.srcdoc=staticSourcePage(snapshot.html,quote);holder.append(image);
       this.cardStatus(holder,message);
       if(message.answer!=null){const note=document.createElement("div");note.className="source-note";note.innerHTML=`<div class="source-meta">${escapeHTML(t("source.pickedBy",{author:t("source.you")}))}</div><div></div>`;note.lastElementChild!.textContent=message.answer;holder.append(note);if(quote)markQuote(note.lastElementChild!,quote);}
-      if(!quote)this.clip(holder,snapshot.height+48);
       queueMicrotask(()=>this.position(epoch));
     });
   }
@@ -233,14 +232,6 @@ export class SummaryViewer {
       const status=document.createElement("span");status.className="source-unanswered";status.textContent=t("source.unanswered");label.append(status);
       const answer=document.createElement("button");answer.type="button";answer.className="catchup-button source-answer-in-chat";answer.textContent=t("source.answerInChat");answer.onclick=()=>{const reveal=this.reveal;this.close();reveal?.(message.id);};label.append(answer);
     }
-  }
-  private clip(card: HTMLElement,height?:number): void {
-    const apply=()=>{
-      if((height ?? card.scrollHeight)<=240 || card.querySelector(".source-whole,mark,.source-answer-cited"))return;
-      card.classList.add("source-clipped");
-      const button=document.createElement("button");button.type="button";button.className="catchup-button source-whole";button.textContent=t("source.whole");button.onclick=()=>{card.classList.remove("source-clipped");button.remove();};card.append(button);
-    };
-    queueMicrotask(apply);
   }
 }
 
