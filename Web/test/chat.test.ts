@@ -672,10 +672,10 @@ describe("messages", () => {
     expect(row.querySelector(".worker-card")!.classList.contains("notes-open")).toBe(false);
   });
 
-  it("a card waiting in line (starting, no worker yet) says it is waiting, not that the worker is collecting data, and has no redo or reply box", () => {
+  it("a card still starting (no worker yet) says it is waiting to start, not that the worker is collecting data, and has no redo box", () => {
     const row = messageElement(message({ id: "m53", workerCards: [{ id: "c4", title: "Prices", status: "starting", run: 0, at: null }] }), {});
     expect(row.querySelector(".worker-card")!.classList.contains("status-starting")).toBe(true);
-    expect(row.querySelector(".worker-card-detail")!.textContent).toBe(t("card.queued"));
+    expect(row.querySelector(".worker-card-detail")!.textContent).toBe(t("card.status.starting"));
     expect(row.querySelector(".worker-card-detail")!.textContent).not.toBe(t("card.waiting"));
     expect(row.querySelector(".worker-card-new")).toBeNull();
   });

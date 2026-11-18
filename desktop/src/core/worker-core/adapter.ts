@@ -68,6 +68,8 @@ export interface WorkerAdapter {
   cleanup?(record: Readonly<WorkerLedgerRecord>): Promise<{ cleaned: boolean }>;
   /** Whether starting a run of this worker takes one of `maxRunning`'s slots (default true; Claude: not into a kept-alive process). */
   needsSlot?(record: Readonly<WorkerLedgerRecord>): boolean;
+  /** Whether `maxRunning` does not apply to this worker at all: its run never waits for a slot and is not counted against the limit (Claude: a card's worker). Default false. */
+  slotFree?(record: Readonly<WorkerLedgerRecord>): boolean;
   /** The runtime a run's opening items show (`subagentRuntime`). */
   runtime?(record: Readonly<WorkerLedgerRecord>): { reasoningEffort: string | null; model?: string | null };
   /** What a run under way needs to go on after an explicit restart (kept in its engineData before it is interrupted). */

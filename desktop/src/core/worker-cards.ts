@@ -115,7 +115,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => !!value &
 
 /**
  * The cards of a reply, one record for every `<card>` (there is no cap per reply), as records at the start of their workers: `refusal` says why none starts
- * (the card then shows it). A `starting` card has no worker until a slot is free (`BotWorkers.startCards` keeps them in line): it shows as waiting.
+ * (the card then shows it). A `starting` card has no worker yet (`BotWorkers.startCards` starts it at once): it shows as waiting to start.
  */
 export function newCards(requests: readonly CardRequest[], newId: () => string, refusal?: string): WorkerCardRecord[] {
   return requests.map((request): WorkerCardRecord => ({

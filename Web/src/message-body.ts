@@ -196,7 +196,7 @@ export function workerCardElement(message: MessageView, card: WorkerCardView, in
     title.textContent = card.title;
     const detail = document.createElement("span");
     detail.className = card.status === "failed" ? "worker-card-detail worker-card-error" : "worker-card-detail";
-    detail.textContent = card.error || (card.status === "starting" ? t("card.queued") : waiting && !drawn ? t("card.waiting") : t(CARD_STATUS_KEYS[card.status]));
+    detail.textContent = card.error || (card.status === "starting" ? t(CARD_STATUS_KEYS.starting) : waiting && !drawn ? t("card.waiting") : t(CARD_STATUS_KEYS[card.status]));
     line.append(dot, title, detail);
     root.append(line);
   }

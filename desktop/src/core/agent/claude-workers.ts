@@ -353,6 +353,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     catch (error) { throw new Error(`This bot's workers run on ${name} by default (its settings), but: ${(error as Error).message} Pass machine "local" to run it here.`); }
   }
 
+  /** A card's worker (`engineData.card`, set from `CARD_WORKER`) is not under the worker limit: it starts at once and is not counted against it. */
+  slotFree(r: Readonly<WorkerLedgerRecord>) { return r.engineData.card === true; }
+
   /** A run into its kept-alive process takes no slot. */
   needsSlot(r: Readonly<WorkerLedgerRecord>) { return !nonEmpty(r.engineData.machine) && !this.procs.get(r.id)?.head?.running; }
 

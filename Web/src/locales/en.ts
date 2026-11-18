@@ -177,7 +177,6 @@ export const en = {
   "subagent.underMinute": "under a minute",
   "subagent.you": "you",
   "card.status.starting": "Waiting to start…",
-  "card.queued": "Waiting in line; it starts when a worker is free…",
   "card.status.running": "Working…",
   "card.status.done": "Done",
   "card.status.failed": "Failed",

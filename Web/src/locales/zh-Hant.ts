@@ -176,7 +176,6 @@ export const zhHant: Dictionary = {
   "subagent.underMinute": "不到 1 分鐘",
   "subagent.you": "你",
   "card.status.starting": "等待開始…",
-  "card.queued": "排隊中，有空的 worker 就開始…",
   "card.status.running": "進行中…",
   "card.status.done": "完成",
   "card.status.failed": "失敗",

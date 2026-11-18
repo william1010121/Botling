@@ -3,7 +3,7 @@
 // is stopped. Words for one that waits join the run it starts with; stopping it takes it out of the queue.
 import { afterEach, describe, expect, it } from "vitest";
 import { claudeHarness } from "../claude-workers-fake";
-import { DEFAULT_CLAUDE_WORKER_LIMIT } from "../../src/core/agent/claude-workers";
+import { CARD_WORKER, DEFAULT_CLAUDE_WORKER_LIMIT } from "../../src/core/agent/claude-workers";
 import { claudeWorkerLimit } from "../../src/core/settings";
 
 const harnesses: ReturnType<typeof claudeHarness>[] = [];
@@ -47,5 +47,23 @@ describe("the Claude worker limit", () => {
     expect(h.heads).toHaveLength(2);
     expect(h.heads[1]!.sent[0]!.text).toBe("C");
     void c;
+  });
+
+  it("a card's worker takes no slot and is not counted: five of them run at once under a limit of 2, and the bot's own workers still stop at 2", async () => {
+    const h = open(2);
+    for (let i = 0; i < 5; i++) await h.workers.tool("app_handoff", { instructions: `card ${i}`, name: `card ${i}`, [CARD_WORKER]: true });
+    expect(h.heads).toHaveLength(5);
+    expect(h.items.some((item) => item.kind === "subagentText" && /Waiting for a free worker slot/.test(String((item as { text?: string }).text)))).toBe(false);
+    await h.workers.tool("app_handoff", { instructions: "A", name: "A" });
+    await h.workers.tool("app_handoff", { instructions: "B", name: "B" });
+    const c: any = await h.workers.tool("app_handoff", { instructions: "C", name: "C" });
+    // A and B started (7 processes); C waits behind its own kind only, not behind the cards.
+    expect(h.heads).toHaveLength(7);
+    expect(h.items).toContainEqual(expect.objectContaining({ kind: "subagentText", parent: c.task_id, text: expect.stringMatching(/Waiting for a free worker slot/) }));
+    // A card's worker ending frees nothing the bot's own workers wait for; one of their own ending does.
+    h.result(h.heads[0]!, "card done.");
+    expect(h.heads).toHaveLength(7);
+    h.result(h.heads[5]!, "A done.");
+    expect(h.heads).toHaveLength(8);
   });
 });
