@@ -314,10 +314,6 @@ export function install(st, api) {
       const cancel = h("button", "nm-btn nm-ghost", "取消");
       cancel.type = "button";
       cancel.addEventListener("click", closeDraft);
-      const row = h("div", "nm-row nm-ask-ctl");
-      row.append(scopeBar(d, draw), h("span", "nm-sp"), cancel, go);
-      const hint = h("div", "nm-row nm-ask-hint");
-      const small = h("small", "", "回答會掛在右側旁註，不會寫進 Note；bot 也會在對話裡回。");
       const quoteBtn = h("button", "nm-gb", "改為引用到對話");
       quoteBtn.type = "button";
       quoteBtn.addEventListener("click", async () => {
@@ -325,8 +321,9 @@ export function install(st, api) {
         closeDraft();
         api.askQuote?.(d.quote, label);
       });
-      hint.append(small, h("span", "nm-sp"), quoteBtn);
-      body.append(top, ta, row, hint);
+      const row = h("div", "nm-row nm-ask-ctl");
+      row.append(scopeBar(d, draw), h("span", "nm-sp"), quoteBtn, cancel, go);
+      body.append(top, ta, row);
       if (d.error) body.append(h("div", "nm-err", d.error));
     };
     d.redraw = draw;

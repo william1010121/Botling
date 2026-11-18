@@ -122,7 +122,7 @@ describe("margin comments on the Note page", () => {
     expect(draft.closest(".cell")).toBeNull();
     expect(q(env, ".nm-rail")).toBeNull(); // no margin column is made for a box alone
     expect(draft.querySelector(".nm-qc").textContent).toContain("Old check");
-    expect(draft.textContent).toContain("不會寫進 Note");
+    expect(draft.textContent).not.toContain("不會寫進 Note"); // no explanatory line at the bottom of the box
     expect(byText(draft, ".nm-scope button", "整個 cell").classList.contains("nm-on")).toBe(true);
     type(draft.querySelector("textarea"), "為什麼標籤一樣？");
     click(draft.querySelector(".nm-go"));

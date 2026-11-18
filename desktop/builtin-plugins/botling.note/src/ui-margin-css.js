@@ -25,8 +25,6 @@ export const MARGIN_CSS = `
 .nm-head b { color: var(--n-text); font-weight: 600; }
 .nm-head .nm-sum { display: none; color: var(--n-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .nm-sp { flex: 1; }
-.nm-ask-hint { flex-wrap: wrap; align-items: center; }
-.nm-ask-hint small { flex: 1 1 140px; min-width: 0; }
 .nm-card.nm-folded .nm-head { border-bottom: 0; cursor: pointer; }
 .nm-card.nm-folded .nm-head .nm-sum { display: inline; }
 .nm-card.nm-folded .nm-head .nm-full { display: none; }
