@@ -67,6 +67,11 @@ const quoted = (text: string): string => JSON.stringify(text.slice(0, 100));
 
 /** The most card asks kept for a restart (the oldest go first). */
 const CARD_ASKS_MAX = 200;
+/**
+ * Said to Maintainer with every card ask: re-running a command is the app's own feature, never a component's (2026-11-18: a card worker asked for a component with its own
+ * "refresh" button and Maintainer went looking for a re-run API there is none of). The same rule is in the component editor's file and the plugin guide's components reference.
+ */
+export const REFRESH_NOTE = "Do not build a refresh button (or a reload or re-run one) into the component, even if the description asks for one, and there is no ccb re-run API to look for: the app re-runs the command itself (a command card has a built-in refresh button, and refresh=\"2s\" repeats it while the card is on screen) and the component only redraws with the new data in ccb.onData; it may show when its data was updated.";
 
 export class MaintainerDesk {
   readonly git: LibraryGit;
@@ -217,7 +222,7 @@ export class MaintainerDesk {
     this.asks.push(ask);
     this.saveCardAsks();
     // A chart the worker only described has no name yet: nothing in the library is "worked on" until Maintainer picks one.
-    const note = ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
+    const note = ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). ${REFRESH_NOTE} Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
     this.handTo(`${botName} asks for a chart it describes without naming a component: ${request}${note}`);
   }
 
