@@ -1,7 +1,7 @@
 // Worker cards (worker-cards.ts): the records a reply's `<card>` tags make, how a stored one is read back, what a report is kept
 // as on a card (words and JSON displays only), and how a card follows its worker's ledger record.
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 import type { ChatRecord } from "../../src/core/store/records";
@@ -635,6 +635,40 @@ describe("writeCardUsage", () => {
     writeCardUsage(dir, [{ name: "../evil", text: "x" }, { name: ".hidden", text: "x" }, { name: "a/b", text: "x" }, { name: "ok", text: "y" }]);
     expect(readdirSync(dir)).toEqual(["ok.md"]);
   });
+  // A card worker has Write: the folder and its files are links it could have planted (L-002). Nothing outside the folder is written or removed through one.
+  it("a symlinked usage folder is replaced by a real one: the files the link led to are neither written nor removed", () => {
+    const base = tempDir("card-usage-link"), outside = tempDir("card-usage-outside");
+    writeFileSync(join(outside, "victim.md"), "mine");
+    symlinkSync(outside, join(base, "card-usage"));
+    writeCardUsage(join(base, "card-usage"), [{ name: "a", text: "usage a" }]);
+    expect(lstatSync(join(base, "card-usage")).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(base, "card-usage", "a.md"), "utf8")).toBe("usage a");
+    expect(readdirSync(outside)).toEqual(["victim.md"]);
+    expect(readFileSync(join(outside, "victim.md"), "utf8")).toBe("mine");
+  });
+  it("a usage file that is a symlink is replaced, never written through (even when the target holds the same text)", () => {
+    const dir = join(tempDir("card-usage-file"), "u"), outside = tempDir("card-usage-target");
+    mkdirSync(dir);
+    writeFileSync(join(outside, "target.txt"), "precious");
+    writeFileSync(join(outside, "same.txt"), "usage b");
+    symlinkSync(join(outside, "target.txt"), join(dir, "a.md"));
+    symlinkSync(join(outside, "same.txt"), join(dir, "b.md"));
+    writeCardUsage(dir, [{ name: "a", text: "usage a" }, { name: "b", text: "usage b" }]);
+    expect(readFileSync(join(outside, "target.txt"), "utf8")).toBe("precious");
+    for (const file of ["a.md", "b.md"]) expect(lstatSync(join(dir, file)).isFile()).toBe(true);
+    expect(readFileSync(join(dir, "a.md"), "utf8")).toBe("usage a");
+    expect(readdirSync(dir).sort()).toEqual(["a.md", "b.md"]);
+  });
+  it("a stale link to a file elsewhere loses only the link; a leftover staging file is removed", () => {
+    const dir = join(tempDir("card-usage-stale"), "u"), outside = tempDir("card-usage-stale-target");
+    mkdirSync(dir);
+    writeFileSync(join(outside, "keep.txt"), "mine");
+    symlinkSync(join(outside, "keep.txt"), join(dir, "gone.md"));
+    writeFileSync(join(dir, ".left-over.tmp"), "half");
+    writeCardUsage(dir, [{ name: "a", text: "usage a" }]);
+    expect(readdirSync(dir)).toEqual(["a.md"]);
+    expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("mine");
+  });
 });
 
 describe("a picture the worker only linked in its words (Markdown image) is still the card's result", () => {
@@ -682,6 +716,28 @@ describe("a picture the worker only linked in its words (Markdown image) is stil
     symlinkSync(join(outside, "other.png"), join(folder, ".bot", "artifacts", "link.png"));
     const content = cardContent(`![x](file://${join(folder, ".bot", "artifacts", "link.png")})`, rules);
     expect(content.shows).toEqual([]);
+  });
+
+  it("a folder named like a picture, and a relative path that only resolves from the process's own folder, are no picture", () => {
+    const { folder, rules } = project();
+    const artifacts = join(folder, ".bot", "artifacts");
+    mkdirSync(join(artifacts, "dir.png"));
+    expect(cardContent(`![x](${join(artifacts, "dir.png")})`, rules).shows).toEqual([]);
+    const here = process.cwd();
+    try {
+      process.chdir(join(folder, ".bot"));
+      const text = "![x](artifacts/duration-by-model.png)";
+      expect(cardContent(text, rules).shows).toEqual([]);
+      expect(cardContent(text, rules).text).toBe(text);
+    } finally { process.chdir(here); }
+  });
+
+  it("a .png name is not enough: a link inside the project whose real file is no PNG / JPEG is no picture", () => {
+    const { folder, rules } = project();
+    symlinkSync(join(folder, ".bot", "artifacts", "notes.txt"), join(folder, ".bot", "artifacts", "fake.png"));
+    const text = `![x](file://${join(folder, ".bot", "artifacts", "fake.png")})`;
+    expect(cardContent(text, rules).shows).toEqual([]);
+    expect(cardContent(text, rules).text).toBe(text);
   });
 
   it("without rules (no project folder) the words are as they were; and cardPictures keeps the words when it finds nothing", () => {

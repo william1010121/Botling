@@ -11,7 +11,7 @@
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CARD_TAG_RULE } from "./card-rule";
-import { CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
+import { CARD_WHEN_RULE, headWritesCards, INLINE_BLOCK_GUIDANCE, INLINE_COMPONENTS_NOTE, INLINE_HANDOFF_SENTENCE, INLINE_PLUGIN_NOTE, inlineReportRule, RESULTS_LIST, RESULTS_LIST_INLINE } from "./inline-blocks";
 import { maintainerEditorRoute } from "./maintainer-text";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy, WORKER_NOTIFY_RULE } from "./prompts/delegation";
@@ -689,9 +689,9 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, chatLine);
     codexWorkerSystem = insertAfterLine(codexWorkerSystem, RESULTS_ANCHOR, line);
   }
-  // A Claude head whose workers are the app's writes only `<card>` for numbers, comparisons and charts (2026-11-18, the user): the inline guidance (the chart rule and
+  // A Claude head whose workers are the app's (not Maintainer, `headWritesCards`) writes only `<card>` for numbers, comparisons and charts (2026-11-18, the user): the inline guidance (the chart rule and
   // the examples) is the card worker's own fixed instructions then (worker-cards.ts `cardSystemPrompt`), and the head keeps only the rule saying when to use a card.
-  if (workers && inlineBlocks && system.includes(INLINE_BLOCK_GUIDANCE) && system.includes(CARD_TAG_RULE)) {
+  if (headWritesCards(engine, claudeWorkers, inlineBlocks, profile.id === MAINTAINER_PROMPT_ID) && system.includes(INLINE_BLOCK_GUIDANCE) && system.includes(CARD_TAG_RULE)) {
     system = system.replace(`\n${INLINE_BLOCK_GUIDANCE}`, () => `\n${CARD_WHEN_RULE}`);
   }
   return system === prompts.system && codexWorkerSystem === prompts.codexWorkerSystem ? prompts : { ...prompts, system, codexWorkerSystem };

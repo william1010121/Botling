@@ -47,8 +47,14 @@ describe("componentKnowledgeFor with the cards", () => {
     expect(componentKnowledgeFor(fake(names, ["inline-chart"]), ["status", "todo", "web-preview"], false, true)).toEqual(k);
   });
 
-  it("a bot with the inline guidance (examples) writes only <card> for blocks and charts: the inline blocks are not in its note, and no example is promised", () => {
-    const k = componentKnowledgeFor(fake(NAMES), ["status", "網頁預覽卡片", "inline-chart", "inline-report-block"], true, true);
+  it("a head that writes only <card> (cardsOnly) has the inline blocks left out of its note, and no example is promised; one that draws itself keeps both", () => {
+    const drawing = componentKnowledgeFor(fake(NAMES), ["status", "網頁預覽卡片", "inline-chart", "inline-report-block"], true, true);
+    expect(drawing.examples).toBe(true);
+    expect(drawing.own.map((entry) => entry.name)).toEqual(expect.arrayContaining(["inline-chart", "inline-report-block"]));
+    // The whole list (the cards switched off) promises examples only to a head whose prompt carries them.
+    expect(componentKnowledgeFor(fake(NAMES), ["status"], true, false).examples).toBe(true);
+    expect(componentKnowledgeFor(fake(NAMES), ["status"], true, false, true).examples).toBeUndefined();
+    const k = componentKnowledgeFor(fake(NAMES), ["status", "網頁預覽卡片", "inline-chart", "inline-report-block"], true, true, true);
     expect(k.own.map((entry) => entry.name)).toEqual(["網頁預覽卡片"]);
     expect(k.viaCards).toEqual({ hidden: 6 });
     expect(k.examples).toBeUndefined();

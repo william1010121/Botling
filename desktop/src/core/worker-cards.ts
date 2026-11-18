@@ -9,8 +9,8 @@
 // given every component with its usage and picks one; its report is untrusted (it may carry web text): only its words and components
 // with their own JSON are drawn, a `command` only when it runs a script under .bot/card-scripts (and the user allows it as for any
 // card), and the one request it may make is a component for Maintainer (`wants`, passed on once by bot/workers.ts).
-import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { CARD_CHART_RULE, INLINE_EXAMPLES } from "./inline-blocks";
 import { parseReply, type CardRequest } from "./reply";
@@ -195,19 +195,28 @@ ${components}${brief.others ? `\nAlso in the library, usage not shown here (end 
 /**
  * The usage files of the catalog brief: one `<dir>/<name>.md` per component, holding that component's whole usage. A file that is already what it should be is left
  * alone, and a `.md` of a component that is gone is removed. Throws when the folder cannot be written (the caller then gives the worker the usages up front).
+ * The folder is one a card worker (which has Write) can reach, so nothing here follows a link: a symlinked folder is replaced by a real one (the link is removed,
+ * never what it points at), a file is written beside its target under a new name (`wx`) and renamed over it (a rename replaces a symlink, never follows it),
+ * and only a regular file counts as "already what it should be".
  */
 export function writeCardUsage(dir: string, entries: readonly { name: string; text: string }[]): void {
+  try { if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir); } catch { /* not there yet */ }
   mkdirSync(dir, { recursive: true });
   const keep = new Set<string>();
   for (const { name, text } of entries) {
     if (!name || name.startsWith(".") || /[/\\\0]/.test(name)) continue;
     const file = `${name}.md`;
     keep.add(file);
+    const target = join(dir, file);
     let same = false;
-    try { same = readFileSync(join(dir, file), "utf8") === text; } catch { /* not there yet */ }
-    if (!same) writeFileSync(join(dir, file), text);
+    try { same = lstatSync(target).isFile() && readFileSync(target, "utf8") === text; } catch { /* not there yet */ }
+    if (same) continue;
+    const staged = join(dir, `.${randomUUID()}.tmp`);
+    const fd = openSync(staged, "wx", 0o644);
+    try { writeSync(fd, text); } finally { closeSync(fd); }
+    try { renameSync(staged, target); } catch (error) { try { unlinkSync(staged); } catch { /* gone */ } throw error; }
   }
-  for (const file of readdirSync(dir)) if (file.endsWith(".md") && !keep.has(file)) { try { unlinkSync(join(dir, file)); } catch { /* gone already */ } }
+  for (const file of readdirSync(dir)) if ((file.endsWith(".md") && !keep.has(file)) || (file.startsWith(".") && file.endsWith(".tmp"))) { try { unlinkSync(join(dir, file)); } catch { /* gone already */ } }
 }
 
 /** The real path of `path`, or of its nearest existing ancestor with the rest of the name put back (a script not written yet). */
@@ -256,14 +265,15 @@ const CARD_PICTURE_TYPES = /\.(png|jpe?g)$/i;
 export function cardPictures(text: string, folder: string): { words: string; found: { path: string; alt: string }[] } {
   const found: { path: string; alt: string }[] = [];
   let root: string;
-  try { root = realpathSync(folder); } catch { return { words: text, found }; }
+  try { root = realpathSync.native(folder); } catch { return { words: text, found }; }
   const words = text.replace(/!\[([^\]\n]{0,300})\]\((<[^>\n]+>|[^)\s]+)\)/g, (whole, alt: string, target: string) => {
     let path = target.replace(/^<|>$/g, "");
     if (/^file:\/\//i.test(path)) { try { path = decodeURIComponent(path.replace(/^file:\/\//i, "")); } catch { return whole; } } else if (!path.startsWith("/")) return whole;
     if (!CARD_PICTURE_TYPES.test(path) || path.split("/").includes("..")) return whole;
     let real: string;
-    try { real = realpathSync(path); if (!statSync(real).isFile()) return whole; } catch { return whole; }
-    if (!real.startsWith(`${root}${sep}`)) return whole;
+    try { real = realpathSync.native(path); if (!statSync(real).isFile()) return whole; } catch { return whole; }
+    // The real file is checked, not the name typed: a `.png` link to some other file inside the project is no picture.
+    if (!real.startsWith(`${root}${sep}`) || !CARD_PICTURE_TYPES.test(real)) return whole;
     if (!found.some((entry) => entry.path === real)) found.push({ path: real, alt: alt.trim().slice(0, 300) });
     return "";
   });

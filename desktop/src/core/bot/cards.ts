@@ -9,13 +9,13 @@ import type { ApprovalAskView, Event, MessageView, ResultOf, WorkerCardView } fr
 import type { Bot } from "../bot";
 import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
-import { inlineBlocksFor } from "../inline-blocks";
+import { headWritesCards, inlineBlocksFor } from "../inline-blocks";
 import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
 import type { BotStore } from "../store/bot-store";
-import { toSwiftDate, type ChatRecord } from "../store/records";
+import { MAINTAINER_ID, toSwiftDate, type ChatRecord } from "../store/records";
 import type { BotOptions } from "./types";
 import { dirname, join } from "node:path";
 import { keepable, resolvePath } from "./view-functions";
@@ -130,7 +130,9 @@ export class BotCards {
     // A bot with the inline block guidance has its examples in its instructions: its note says no usage lookup is needed for them.
     const examples = inlineBlocksFor({ inlineBlockGuidance: this.options.launch?.().inlineBlockGuidance }, this.owner.profile.folder);
     // A Claude bot that can start `<card>` workers is told the built-in components only; a card's worker picks from the rest (`cardBriefing`).
-    return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards());
+    // The same test as the prompt's (prompts.ts): a head that writes only `<card>` has neither the examples nor the inline blocks in its note.
+    const cardsOnly = headWritesCards(this.owner.engine, this.owner.workers.claudeWorkersOn(), examples, this.owner.profile.id === MAINTAINER_ID);
+    return componentKnowledgeFor(context.library, this.ownComponents(), examples, this.reachesByCards(), cardsOnly);
   }
 
   /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */

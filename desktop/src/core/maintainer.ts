@@ -111,7 +111,7 @@ export class MaintainerDesk {
           break;
         case "giveComponent":
         case "takeComponent":
-          if (isMaintainer) later.push(() => this.changeList(request.kind === "giveComponent", request.name, request.bot));
+          if (isMaintainer) later.push(() => this.changeList(request.kind === "giveComponent", request.name, request.bot, request.kind === "giveComponent" ? request.id : undefined));
           break;
         case "componentDeclined":
           if (isMaintainer) later.push(() => this.decline(request.id, request.reason));
@@ -282,10 +282,11 @@ export class MaintainerDesk {
     }
     const botName = this.nameOf(bot);
     const ask: ComponentAsk = { key: randomUUID().slice(0, 8).toLowerCase(), name, botId: bot.id, request, userAsked: shortened(bot.lastAsked, 300), stamp: library.stampOf(name), changing: false, card };
-    this.asks = this.asks.filter((other) => !(other.card === card && other.name === name));
+    // A card worker that describes its chart again (another description, so another placeholder name) replaces its own earlier unnamed ask.
+    this.asks = this.asks.filter((other) => !(other.card === card && (other.name === name || (isUnnamedCardAsk(name) && isUnnamedCardAsk(other.name)))));
     this.asks.push(ask);
     // The worker described a chart and named nothing: Maintainer decides all of it (an existing component, a new kind in one, or a new component; its name).
-    if (isUnnamedCardAsk(name)) return ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
+    if (isUnnamedCardAsk(name)) return ` (App: A card worker of ${botName} describes the chart it wants; it named no component and chose nothing: what to build, whether an existing component (for example inline-chart) gets a new kind or option instead of a new component, its name and where it goes are yours to decide. Nothing is added to ${botName}'s list (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>. Otherwise build or extend it; once it works and is in the library, end your reply with <give-component bot="${botName}" id="${ask.key}">its name</give-component>: the app then tells the worker, which fills the card (it does not go on ${botName}'s list). If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component-declined>.)`;
     return ` (App: A card worker of ${botName} asks for this; it is not on ${botName}'s list and nothing is added there (no limit applies). Check the library first: if a component there already does this, build nothing and end your reply with <component-declined id="${ask.key}">it already exists: its name</component>. Otherwise build it; once it is in the library the app tells the worker. If you will not or cannot do it, say why and end your reply with <component-declined id="${ask.key}">why, in one sentence for the worker</component>.)`;
   }
 
@@ -378,7 +379,7 @@ export class MaintainerDesk {
   }
 
   /** Maintainer's `<give-component>` / `<take-component>` (`changeComponentList`). */
-  changeList(give: boolean, rawName: string, botName: string) {
+  changeList(give: boolean, rawName: string, botName: string, askId?: string) {
     const maintainer = this.maintainer;
     const bot = this.holder(botName);
     if (!bot) { maintainer?.queueNote(`(App: There is no bot called "${botName}"; no component list changed.)`); return; }
@@ -386,7 +387,9 @@ export class MaintainerDesk {
     const shown = this.nameOf(bot);
     if (give) {
       // The answer to a chart a card worker only described: the worker gets it, and no list changes.
-      const forCard = this.asks.find((ask) => ask.botId === bot.id && ask.card && isUnnamedCardAsk(ask.name));
+      // With several cards of one bot waiting, the id the app gave in the ask picks the right worker; without a matching one, the oldest.
+      const pending = this.asks.filter((ask) => ask.botId === bot.id && ask.card && isUnnamedCardAsk(ask.name));
+      const forCard = (askId ? pending.find((ask) => ask.key === askId) : undefined) ?? pending[0];
       if (forCard && this.deps.library.names.includes(name) && !this.deps.library.pinOnly(name) && !this.asks.some((ask) => ask.botId === bot.id && !ask.card && ask.name === name)) {
         this.asks = this.asks.filter((other) => other !== forCard);
         this.arrived(name, forCard, bot, "Maintainer");

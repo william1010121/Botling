@@ -11,7 +11,7 @@ import { runCli } from "../../reports/cli";
 import { BotCards } from "../../src/core/bot/cards";
 import { COMPONENT_LIMIT, ComponentLibrary, builtInTag, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull } from "../../src/core/components/library";
 import { AGY_REPLY_REMINDER } from "../../src/core/agent/agy-acp";
-import { CARD_CHART_RULE, CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_EXAMPLES, INLINE_HANDOFF_SENTENCE, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
+import { CARD_CHART_RULE, CARD_WHEN_RULE, INLINE_BLOCK_GUIDANCE, INLINE_EXAMPLES, INLINE_HANDOFF_SENTENCE, headWritesCards, RESULTS_LIST, RESULTS_LIST_INLINE, REPORT_RULE_ALL_TO_PAGE, REPORT_RULE_BY_SIZE, inlineBlocksFor } from "../../src/core/inline-blocks";
 import { MaintainerDesk } from "../../src/core/maintainer";
 import { pluginGuideFiles } from "../../src/core/plugin-guide-text";
 import { launchSettings } from "../../src/core/settings";
@@ -218,6 +218,15 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
     expect(head("codex", true)).not.toContain(CARD_WHEN_RULE);
     expect(head("claude", true, false)).not.toContain(CARD_WHEN_RULE);
     expect(head("claude", true, false)).not.toContain("Inline blocks");
+  });
+  it("Maintainer keeps the guidance: a card of its own would hand the chart it describes back to itself", () => {
+    const maintainer = { ...profile("bot"), id: "DEC0DE00-0000-4000-8000-00000000DEC0" };
+    const text = desktopPrompts(botPrompts({ profile: maintainer, engine: "claude", inlineBlocks: true }), maintainer, "claude", true, reportSections(tool), undefined, true).system;
+    expect(text).toContain(INLINE_BLOCK_GUIDANCE);
+    expect(text).not.toContain(CARD_WHEN_RULE);
+    expect(headWritesCards("claude", true, true, true)).toBe(false);
+    expect(headWritesCards("claude", true, true, false)).toBe(true);
+    for (const [engine, workers, guidance] of [["codex", true, true], ["agy", true, true], ["claude", false, true], ["claude", true, false]] as const) expect(headWritesCards(engine, workers, guidance, false), `${engine} ${workers} ${guidance}`).toBe(false);
   });
   it("the card worker's fixed system prompt has the chart rule and every example the head lost, once", () => {
     const text = cardSystemPrompt({ components: "- inline-chart: a chart", others: "", scriptsDir: "/p/.bot/card-scripts" });

@@ -46,7 +46,8 @@ export type BotRequest =
   /** `machine` (M5-04d): a project on another machine is not added from here; the main bot is told so. */
   | { kind: "newProject"; folder: string; task: string; machine?: string }
   | { kind: "openQuestion"; from: string }
-  | { kind: "giveComponent"; bot: string; name: string }
+  /** `id`: the ask a card worker's nameless chart request was handed to Maintainer under (`<give-component bot="…" id="…">`); optional, without it the bot's oldest such ask is answered. */
+  | { kind: "giveComponent"; bot: string; name: string; id?: string }
   | { kind: "takeComponent"; bot: string; name: string }
   | { kind: "componentDeclined"; id: string; reason: string };
 
@@ -92,7 +93,7 @@ const agentMessageTag = () => /<agent-message\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')
 const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?>(?:\s*<\/agent-stop>)?/g;
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
-const listTag = () => /<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/\1-component>/g;
+const listTag = () => /<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')(?:\s+id\s*=\s*(?:"([^"]*)"|'([^']*)'))?\s*>\s*([\s\S]*?)\s*<\/\1-component>/g;
 const declinedTag = () => /<component-declined\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*([\s\S]*?)\s*<\/component-declined>)/g;
 const taskTag = () => /<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*\/?>(?:[ \t]*<\/task>)?/g;
 const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
@@ -334,11 +335,12 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   take(openQuestionTag, ([a, b]) => { const from = trimWS(a || b!); if (from) openQuestions.unshift({ kind: "openQuestion", from }); });
   requests.push(...openQuestions);
   const lists: BotRequest[] = [];
-  take(listTag, ([kind, a, b, rawName]) => {
+  take(listTag, ([kind, a, b, c, d, rawName]) => {
     const bot = trimWS(a || b!);
     const name = trimAll(rawName!);
+    const id = trimWS(c || d || "");
     if (!bot || !name) return;
-    lists.unshift(kind === "give" ? { kind: "giveComponent", bot, name } : { kind: "takeComponent", bot, name });
+    lists.unshift(kind === "give" ? { kind: "giveComponent", bot, name, ...(id ? { id } : {}) } : { kind: "takeComponent", bot, name });
   });
   requests.push(...lists);
   const declined: BotRequest[] = [];

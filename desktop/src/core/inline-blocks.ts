@@ -79,3 +79,10 @@ export const CARD_WHEN_RULE = "- Inline blocks and charts (the inline blocks rul
 
 /** The chart rule and the examples the card worker is given (its fixed system prompt): the guidance's own text, so a change is made once. */
 export const CARD_CHART_RULE = "Charts: first decide what the figure must show (groups side by side, time axis, error bars, measured vs estimated). Use inline-chart (kind bars, dumbbell, waterfall or line) only if it shows that clearly; otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path). A block is not a sentence: use inline-report-block when the content is numbers against a baseline, a comparison or options, progress by group, a sequence in time, or a cause chain, never a markdown table. When the card needs several figures (for example several bar charts to compare), end with one <show> for each, in the order they should read.";
+
+/**
+ * Whether a head writes only `<card>` for blocks and charts (CARD_WHEN_RULE in its prompt instead of INLINE_BLOCK_GUIDANCE): a Claude head whose workers are the app's
+ * and that has the guidance. Maintainer is no such head: a card of its own would hand the chart it describes back to itself, so it keeps the guidance and draws.
+ */
+export const headWritesCards = (engine: string, appWorkers: boolean, guidance: boolean, isMaintainer: boolean): boolean =>
+  guidance && engine === "claude" && appWorkers && !isMaintainer;
