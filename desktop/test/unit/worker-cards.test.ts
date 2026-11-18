@@ -585,7 +585,8 @@ describe("redo with Opus: the instructions, the rebinding, what a stored card ke
     expect(kept).toMatchObject({ model: "opus", earlier: ["T1", "T0"] });
     const [plain] = readCards([{ id: ID, title: "t", prompt: "p", status: "done", run: 1, model: 7, earlier: [1] }]);
     expect(plain!.model).toBeUndefined(); expect(plain!.earlier).toBeUndefined();
-
+  });
+});
 
 describe("the catalog brief's system prompt (progressive disclosure)", () => {
   const catalog = { components: "- inline-chart (JSON): a chart\n- grouped-bar-errorbar (JSON): grouped bars with error bars", others: "", scriptsDir: "/p/repo/.bot/card-scripts", usageDir: "/p/repo/.bot/card-usage" };
