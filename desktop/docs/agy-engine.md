@@ -397,12 +397,17 @@ The mutable registry now advertises 1.4.4; Doctor intentionally does not adopt i
 The existing server/harness pins and Apple signature checks still apply.
 
 `build.mjs` calls `scripts/package-agy-helper.mjs` on macOS arm64. That step
-compiles the reviewed helper, verifies its existing SHA256 pin and signature,
-and writes `out/core/agy-file-helper.base64`. The normal `out/**/*` packaging rule
-includes this data file in app.asar. Encoding it as text prevents release signing
-from rewriting its pinned Mach-O bytes. The installer checks its digest again
-and copies it beside ACP; no developer path or compiler is used at runtime.
-A different compiler output stops the build and requires explicit pin review.
+compiles the helper from source, verifies its signature (`codesign --verify`),
+and writes `out/core/agy-file-helper.base64`. There is no pinned digest: whatever
+this Xcode compiles is the helper of this build. The normal `out/**/*` packaging
+rule includes this data file in app.asar. Encoding it as text prevents release
+signing from rewriting its Mach-O bytes. The runtime accepts an installed helper
+only when it is byte for byte this shipped copy (`agy-helper-trust.ts`; a build
+without it, or with an empty one, refuses every helper), and the installer copies
+it beside ACP; no developer path or compiler is used at runtime. After an app
+update the installed helper differs from the new build's: the installer then
+replaces only that file (no download) and checks the runtime again, and falls back
+to a full reinstall when anything else is wrong.
 
 Installation bounds the download, checks its archive digest, extracts only the
 two exact filenames, and validates the complete staged trio before rename.

@@ -1,7 +1,7 @@
 // The Antigravity file helper has no pinned hash: a build compiles it (scripts/package-agy-helper.mjs), ships the bytes as data, and the runtime
 // accepts an installed helper only when it is byte for byte the shipped one (src/core/agent/agy-helper-trust.ts).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { shippedHelperBytes, shippedHelperSha, useShippedHelperDir } from "../../src/core/agent/agy-helper-trust";
@@ -40,10 +40,12 @@ describe("a release build does not stop on the compiler's output", () => {
       }
     } finally { if (before === undefined) delete process.env.BOTLING_RELEASE_BUILD; else process.env.BOTLING_RELEASE_BUILD = before; }
   });
-  it("packages nothing off macOS arm64", () => {
-    const root = realpathSync(tempDir("agy-pack-linux"));
-    packageAgyHelper(root, { platform: "linux", arch: "x64", compile: () => { throw Error("must not compile"); } });
-    expect(existsSync(join(root, "out"))).toBe(false);
+  it("packages nothing off macOS arm64 (not on another platform, not on another arch)", () => {
+    for (const [platform, arch] of [["linux", "x64"], ["darwin", "x64"], ["linux", "arm64"]]) {
+      const root = realpathSync(tempDir("agy-pack-other"));
+      packageAgyHelper(root, { platform, arch, compile: () => { throw Error("must not compile"); } });
+      expect(existsSync(join(root, "out"))).toBe(false);
+    }
   });
   it("a failed codesign verify still stops the build (the compiled bytes must be a valid signed binary)", () => {
     const root = realpathSync(tempDir("agy-pack-bad"));
@@ -104,6 +106,8 @@ describe("after an app update the installed helper is replaced by the shipped on
     expect(readFileSync(command, "utf8")).toBe("server");
     expect(readFileSync(join(dest, "localharness_external"), "utf8")).toBe("harness");
     expect(readdirSync(dest).sort()).toEqual(["agy_acp_server.par", "botling-agy-file-helper", "localharness_external"]);
+    // The app's own check also needs the helper executable (validateAgyRuntimePath: accessSync X_OK), or the repair would only fall back to a download.
+    expect(statSync(join(dest, "botling-agy-file-helper")).mode & 0o700).toBe(0o700);
   });
   it("still downloads again when the helper is not all that is wrong (the runtime's own bytes differ)", async () => {
     const { dest, workspace } = place();
@@ -146,6 +150,12 @@ describe("the helper is refused when it is not the shipped one", () => {
     useShippedHelperDir(build("shipped bytes"));
     const { path, workspace } = installed(Buffer.from("tampered bytes"));
     expect(() => verifyAgyFileHelper(path, workspace)).toThrow("File helper hash mismatch");
+  });
+  it("an empty shipped file is no helper: an empty installed file is refused too (fail closed)", () => {
+    useShippedHelperDir(build(""));
+    expect(() => shippedHelperBytes()).toThrow("Bundled Botling helper is missing");
+    const { path, workspace } = installed(Buffer.alloc(0));
+    expect(() => verifyAgyFileHelper(path, workspace)).toThrow("Bundled Botling helper is missing");
   });
   it("a build without a shipped helper refuses every helper (fail closed)", () => {
     useShippedHelperDir(realpathSync(tempDir("agy-none")));

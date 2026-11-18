@@ -93,7 +93,7 @@ export class AgyRuntimeInstaller {
         }
         validate(command(destination), workspace);
         return command(destination);
-      } catch { /* stage repair before touching old bytes */ }
+      } catch { /* the full reinstall below stages the new runtime and swaps it in whole */ }
     }
     // Fail missing/untrusted packaging before downloading anything.
     helper ??= (o.helper ?? packagedHelper)();
