@@ -62,4 +62,19 @@ describe("re-running a command belongs to the app, not to a component", () => {
     expect(components).toContain("no ccb call re-runs a command");
     expect(components).toContain("ccb.onData");
   });
+
+  it("a named <component> request that asks for a refresh / re-run button gets the same note; one that does not ask stays as it was", () => {
+    const r = rig();
+    r.desk.requestComponentChange("status", "add a Refresh button that reloads the data", "Life Bot", r.bot, []);
+    r.desk.requestComponentChange("weather", "加一個重新整理的按鈕", "Life Bot", r.bot, []);
+    r.desk.requestComponentChange("weather-2", "a weather card for today", "Life Bot", r.bot, []);
+    r.desk.requestComponentChange("status", "make it blue", "The user", null, []);
+    r.desk.requestComponentChange("status", "請加重跑指令的按鈕", "The user", null, []);
+    expect(r.handed).toHaveLength(5);
+    for (const index of [0, 1, 4]) {
+      expect(r.handed[index], String(index)).toContain("Do not build a refresh button");
+      expect(r.handed[index], String(index)).toMatch(APP_RERUNS);
+    }
+    for (const index of [2, 3]) expect(r.handed[index], String(index)).not.toContain("refresh button");
+  });
 });

@@ -73,6 +73,9 @@ const CARD_ASKS_MAX = 200;
  */
 export const REFRESH_NOTE = "Do not build a refresh button (or a reload or re-run one) into the component, even if the description asks for one, and there is no ccb re-run API to look for: the app re-runs the command itself (a command card has a built-in refresh button, and refresh=\"2s\" repeats it while the card is on screen) and the component only redraws with the new data in ccb.onData; it may show when its data was updated.";
 
+/** A request that asks for a refresh / reload / re-run (button): only then is REFRESH_NOTE added to a named-component request. */
+const ASKS_REFRESH = /refresh|reload|re-?run|重新整理|重新載入|重新执行|重新執行|重跑|刷新/i;
+
 export class MaintainerDesk {
   readonly git: LibraryGit;
   /** The asks waiting for an answer. A card worker's are kept in `card-asks.json` (`saveCardAsks`) and read back at start; a bot's own are in memory only. */
@@ -204,7 +207,8 @@ export class MaintainerDesk {
     const exists = this.deps.library.names.includes(name);
     const pictures = files.length ? ` (Attached: ${files.length === 1 ? "a picture" : `${files.length} pictures`} of how it looks now or should look.)` : "";
     // Which bot asked, and how full its own list is (the library has no cap).
-    const note = this.askNote(name, request, exists, bot);
+    // Whoever asks (a bot, the user): a refresh / re-run button is never built into a component (the app re-runs commands).
+    const note = this.askNote(name, request, exists, bot) + (ASKS_REFRESH.test(request) ? ` (App: ${REFRESH_NOTE})` : "");
     this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${pictures}${note}` : `${asker} wants a new component "${name}": ${said}${pictures}${note}`, files);
   }
 
