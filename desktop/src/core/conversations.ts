@@ -350,9 +350,10 @@ export class Conversations {
     return notes.length ? notes.join("\n") : null;
   }
 
-  /** A guest's line in a bot's own chat (`isCalledIn`). */
+  /** A guest's line in a bot's own chat, a project bot's or a sub bot's (`isCalledIn`). */
   isCalledIn(record: ChatRecord, chatId: string): boolean {
-    return record.role === "bot" && typeof record.sourceID === "string" && this.deps.members().some((member) => member.id === chatId);
+    return record.role === "bot" && typeof record.sourceID === "string"
+      && (this.deps.members().some((member) => member.id === chatId) || (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId));
   }
 
   /**

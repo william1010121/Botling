@@ -25,7 +25,7 @@ function held(bot: Bot) {
   return asked;
 }
 
-function fixture() {
+function fixture(remoteMembers?: () => { id: string; name: string; server: string; serverName: string }[]) {
   const dir = tempDir("sibling-at");
   const lifeFolder = tempDir("sibling-at-life");
   const fluxFolder = tempDir("sibling-at-flux");
@@ -37,7 +37,8 @@ function fixture() {
     saveProjectRow(dir, { id, name, folder: at, avatar: "triangle", job: "Job", parent, createdAt: 1_700_000_000_000, handoff: id.slice(-2) });
   }
   const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
-    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
+    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0,
+    ...(remoteMembers ? { remoteMembers } : {}) });
   const bots: Map<string, Bot> = (core as any).bots;
   const conversations = (core as any).conversations;
   const notices: string[] = [];
@@ -134,6 +135,36 @@ describe("a sub bot's @ to its sibling sub bots and its project bot", () => {
       expect(h.notices).toHaveLength(1);
       expect(h.notices[0]).toContain("@履歷");
       expect(h.notices[0]).not.toContain("@deployer");
+    } finally { vi.restoreAllMocks(); }
+  });
+
+  it("the sibling's answer is posted in the sub bot's own chat, and a pick on its card goes back to the sibling", async () => {
+    const h = fixture();
+    try {
+      const resume: Bot = (h.core as any).bots.get(RESUME);
+      const asked: string[] = [];
+      vi.spyOn(resume, "groupTurn").mockImplementation(async (text: string) => {
+        asked.push(text);
+        return { kind: "reply", text: asked.length === 1 ? "要哪一份？\n<choices>\n- 甲\n- 乙\n</choices>" : "收到。", engine: "claude", steps: [] } as GuestAnswer;
+      });
+      h.say("R1", `@履歷 ${ASK}`);
+      const intern: Bot = (h.core as any).bots.get(INTERN);
+      const card = await vi.waitFor(() => { const line = intern.lines().find((l) => l.sourceID === RESUME && l.choices?.length); expect(line).toBeTruthy(); return line!; });
+      expect(card.text).toContain("要哪一份");
+      // The card is a called-in bot's line in a sub bot's chat: the pick reaches the sibling that asked.
+      expect(h.conversations.isCalledIn(card, INTERN)).toBe(true);
+      expect((h.core as any).calledInPick(INTERN, card.id, 1)).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(asked).toHaveLength(2));
+      expect(asked[1]).toContain("乙");
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("a peer bot with the sibling's name does not take the plain @name; @name (machine) still reaches the peer", () => {
+    const REMOTE = "6AC64E3A-C7D7-4000-8000-0000000000B1";
+    const h = fixture(() => [{ id: REMOTE, name: "履歷", server: "srv_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", serverName: "build-box" }]);
+    try {
+      expect(h.conversations.calledIn("@履歷 看一下", INTERN).map((m: { id: string }) => m.id)).toEqual([RESUME]);
+      expect(h.conversations.calledIn("@履歷 (build-box) 看一下", INTERN).map((m: { id: string }) => m.id)).toEqual([REMOTE]);
     } finally { vi.restoreAllMocks(); }
   });
 });
