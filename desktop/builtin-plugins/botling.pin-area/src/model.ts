@@ -101,7 +101,7 @@ export const MAX_COPY = MAX_REPORT;
 /** Suggestions waiting for a tap (the oldest goes over it), and how long one stays. */
 export const MAX_SUGGEST = 2;
 export const SUGGEST_MS = 30 * 60_000;
-const SUGGEST_TEXT = 80;
+export const SUGGEST_TEXT = 80;
 export const MAX_TITLE = 40;
 export const MAX_STATUS = 120;
 export const MAX_Q = 2_000;
@@ -788,129 +788,13 @@ export function dropCopy(book: Book, rid: string, now: number): boolean {
   return false;
 }
 
-// ---- what the app only suggests (a new card, a merge): nothing happens until the user taps ----
-
-/** The suggestions still worth showing: not older than SUGGEST_MS, and (a merge) both cards still on the strip. */
-export const liveSuggest = (book: Book, now: number): Suggest[] =>
-  (book.suggest ?? []).filter((item) => now - item.at < SUGGEST_MS
-    && (item.kind === "new" || (book.pins.some((pin) => pin.id === item.card) && book.pins.some((pin) => pin.id === item.card2))));
-const suggestView = (book: Book, now: number): SuggestView[] =>
-  liveSuggest(book, now).map((item) => ({
-    id: item.id, kind: item.kind, text: item.text,
-    ...(item.kind === "merge" ? { title: book.pins.find((pin) => pin.id === item.card)?.title ?? "", title2: book.pins.find((pin) => pin.id === item.card2)?.title ?? "" } : {}),
-  }));
-/** Keeps a suggestion for the user to tap. False: the same one is already shown (so a second line about it does not stack another). */
-export function addSuggest(book: Book, input: { kind: "new" | "merge"; text: string; card?: string; card2?: string }, rid: string, now: number): boolean {
-  const text = oneLine(input.text, SUGGEST_TEXT);
-  if (!text || !isRid(rid)) return false;
-  if (input.kind === "merge" && !(isId(input.card) && isId(input.card2) && input.card !== input.card2)) return false;
-  const kept = liveSuggest(book, now);
-  const same = (item: Suggest) => item.kind === input.kind && (input.kind === "new" ? item.text === text : [item.card, item.card2].sort().join() === [input.card, input.card2].sort().join());
-  if (kept.some(same)) { book.suggest = kept; return false; }
-  book.suggest = [...kept, { id: rid, kind: input.kind, text, at: now, ...(input.kind === "merge" ? { card: input.card!, card2: input.card2! } : {}) }].slice(-MAX_SUGGEST);
-  return true;
-}
-/** Takes one suggestion out of the book (tapped, or turned down); null when it is not (or no longer) there. */
-export function takeSuggest(book: Book, id: string, now: number): Suggest | null {
-  const item = liveSuggest(book, now).find((candidate) => candidate.id === id);
-  if (!item) return null;
-  book.suggest = (book.suggest ?? []).filter((candidate) => candidate.id !== id);
-  if (!book.suggest.length) delete book.suggest;
-  return item;
-}
-/** Card `dropId` goes into card `keepId`: its thread and workers are copied there, and it is taken down with a note of what to take back (釘回 undoes it). */
-export function mergeCards(book: Book, keepId: string, dropId: string, now: number): Pin | null {
-  const keep = book.pins.find((pin) => pin.id === keepId);
-  const drop = book.pins.find((pin) => pin.id === dropId);
-  if (!keep || !drop || keep === drop) return null;
-  const have = new Set(keep.thread.map((turn) => turn.rid));
-  const copies = drop.thread.filter((turn) => !have.has(turn.rid)).map((turn): Turn => ({ ...turn }));
-  keep.thread = [...keep.thread, ...copies].sort((a, b) => a.qAt - b.qAt);
-  while (keep.thread.length > MAX_TURNS) {
-    const old = keep.thread.findIndex((turn) => turn.a !== null);
-    keep.thread.splice(old >= 0 ? old : 0, 1);
-  }
-  const kept = new Set(keep.thread.map((turn) => turn.rid));
-  const rids = copies.map((turn) => turn.rid).filter((rid) => kept.has(rid));
-  const before = new Set(keep.from ?? []);
-  linkFrom(keep, drop.from ?? [], MAX_LINKED);
-  const from = (keep.from ?? []).filter((id) => !before.has(id));
-  for (const id of drop.live ?? []) if (!keep.live?.includes(id)) keep.live = [...(keep.live ?? []), id];
-  logLine(keep, `合併了「${oneLine(drop.title, MAX_TITLE)}」`, now);
-  keep.updatedAt = now;
-  remove(book, dropId, now, "user");
-  const entry = book.removed.find((candidate) => candidate.pin === drop);
-  if (entry) entry.merged = { into: keep.id, rids, from };
-  return keep;
-}
-/** Tapping 「建立卡片」: a card of the user's for that line. Refused (nothing changes) when the strip is full or the line has no words. */
-export function cardFromSuggestion(book: Book, item: Suggest, now: number): { pin: Pin } | { refused: Refusal } {
-  const { title, status } = fromMessage(item.text);
-  return addPin(book, { origin: "user", title, status, state: "run", source: "user" }, now);
-}
-
-// ---- what the page draws ----
-
-export interface PinView {
-  id: string; title: string; handle: string; origin: "user" | "bot"; state: State; status: string; prev?: string; source: Source; step?: Step;
-  waitingSince?: number; unread: boolean; thread: Turn[]; updates: Update[]; createdAt: number; updatedAt: number;
-  /** 可能已過時 (`isStale`), and the bot being asked to close the card (`nudge`). */
-  stale?: true; nudge?: true;
-}
-/** `into`: the title of the card it was merged into (a merge; else the app put it away because it was done). */
-export interface ClosedView { id: string; title: string; at: number; into?: string }
-/** A suggestion as the strip draws it: for a merge the titles of the two cards (`card` stays). */
-export interface SuggestView { id: string; kind: "new" | "merge"; text: string; title?: string; title2?: string }
-/** `closed`: cards the app took down by itself lately (the strip offers 釘回). */
-export interface BookView { v: 1; pins: PinView[]; closed?: ClosedView[]; suggest?: SuggestView[] }
-const ORDER: Record<State, number> = { wait: 0, run: 1, done: 2 };
-
-/** The cards the app took down by itself in the last day (newest last): the strip offers them back. */
-export const closedOf = (book: Book, now: number): ClosedView[] =>
-  book.removed.filter((entry) => (entry.by === "auto" || entry.merged) && now - entry.at < CLOSED_SHOW_MS).map((entry) => {
-    const into = entry.merged ? book.pins.find((pin) => pin.id === entry.merged!.into)?.title : undefined;
-    return { id: entry.pin.id, title: entry.pin.title, at: entry.at, ...(into ? { into } : {}) };
-  });
-
-/** The cards in the order the strip shows them: waiting, then running, then done (each oldest first so a row keeps its place). */
-export function viewOf(book: Book, now?: number): BookView {
-  const pins = [...book.pins].sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.createdAt - b.createdAt);
-  return {
-    v: 1,
-    pins: pins.map((pin) => ({
-      id: pin.id, title: pin.title, handle: pin.handle, origin: pin.origin, state: pin.state, status: pin.status, ...(pin.prev ? { prev: pin.prev } : {}), source: pin.source,
-      ...(pin.step ? { step: pin.step } : {}), ...(pin.waitingSince !== undefined ? { waitingSince: pin.waitingSince } : {}),
-      unread: pin.updatedAt > (pin.seenAt ?? 0), thread: pin.thread, updates: pin.updates, createdAt: pin.createdAt, updatedAt: pin.updatedAt,
-      ...(isStale(pin) ? { stale: true as const } : {}), ...(pin.nudge ? { nudge: true as const } : {}),
-    })),
-    ...(now !== undefined && closedOf(book, now).length ? { closed: closedOf(book, now) } : {}),
-    ...(now !== undefined && suggestView(book, now).length ? { suggest: suggestView(book, now) } : {}),
-  };
-}
+import { viewOf } from "./model-view";
+export * from "./model-suggest";
+export * from "./model-view";
 
 /** A pin from a message the user chose: its first line is the status, its first words the title. */
 export function fromMessage(text: string): { title: string; status: string } {
   const lines = clean(text, 2_000).split("\n").map((line) => line.replace(/^[#>*\-\s]+/, "").trim()).filter(Boolean);
   const first = lines[0] ?? "";
   return { title: oneLine(first, 24) || "釘選", status: oneLine(first, MAX_STATUS) || "釘選" };
-}
-
-/** Lines a routed message has waited to show in the chat before its turn is dropped (it was stopped or never sent). */
-export const UNPOSTED_MS = 120_000;
-/** The same words to the same card again within this long are a double send. */
-export const DUPLICATE_MS = 3_000;
-/** A message that was routed but never showed in the chat (another plugin stopped it, the send failed) is not waiting for an answer. */
-export function pruneUnposted(book: Book, now: number): boolean {
-  let any = false;
-  for (const pin of book.pins) {
-    const before = pin.thread.length;
-    pin.thread = pin.thread.filter((turn) => turn.a !== null || turn.postedAt !== null || now - turn.qAt < UNPOSTED_MS);
-    if (pin.thread.length !== before) any = true;
-  }
-  return any;
-}
-/** Whether `text` to this card is the very turn just written (a double send). */
-export function isDuplicate(pin: Pin, text: string, now: number): boolean {
-  const last = pin.thread[pin.thread.length - 1];
-  return !!last && last.q === clean(text, MAX_Q) && now - last.qAt < DUPLICATE_MS;
 }

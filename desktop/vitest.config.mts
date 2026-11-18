@@ -19,7 +19,7 @@ const heavyLocal = [
 ].map((name) => `test/unit/${name}.test.ts`);
 const skipHeavy = process.platform === "darwin" && !process.env.CI && process.env.BOTLING_TEST_HEAVY !== "1";
 
-// Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
+// Reads the packaged helper, which only a macOS arm64 build produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 
 // Tests kept beside their code: all of src/mobile-bridge, plus mobile/pair.test.ts. The rest of mobile/*.test.{ts,tsx}

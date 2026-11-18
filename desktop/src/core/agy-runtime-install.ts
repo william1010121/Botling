@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, lstatSync, mkdtempSync, readFileSync,
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { validateAgyRuntimePath } from './agy-runtime-settings';
-import { AGY_FILE_HELPER_SHA } from './agent/agy-mcp';
+import { shippedHelperBytes } from './agent/agy-helper-trust';
 
 export const AGY_ARCHIVE_URL = 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.3-darwin-arm64.zip';
 export const AGY_ARCHIVE_SHA = 'c57db0a9b8b712daa9c3c17cdb990a61842ea569f279e8bd79d7aa85a303b20b';
@@ -52,12 +52,8 @@ async function extractArchive(archive: string, folder: string) {
   }
 }
 function packagedHelper() {
-  // Stored as data in app.asar: packaging/signing must not rewrite the pinned Mach-O bytes.
-  let bytes: Buffer;
-  try { bytes = Buffer.from(readFileSync(join(__dirname, 'agy-file-helper.base64'), 'utf8'), 'base64'); }
-  catch { throw Error('Bundled Botling helper is missing. Install a complete Botling build that includes Antigravity support.'); }
-  if (createHash('sha256').update(bytes).digest('hex') !== AGY_FILE_HELPER_SHA) throw Error('Bundled Botling helper hash mismatch. Install a complete trusted Botling build.');
-  return bytes;
+  // Stored as data in app.asar: packaging/signing must not rewrite the Mach-O bytes. It is what this build compiled (agy-helper-trust.ts).
+  return shippedHelperBytes();
 }
 interface InstallOptions {
   destination?: string; platform?: string; arch?: string;
@@ -82,11 +78,25 @@ export class AgyRuntimeInstaller {
     const local = o.assertLocal ?? assertLocalDestination;
     local(destination);
     const validate = o.validate ?? validateAgyRuntimePath;
+    let helper: Buffer | undefined;
     if (existsSync(destination)) {
-      try { requireRegularFiles(destination); validate(command(destination), workspace); return command(destination); } catch { /* stage repair before touching old bytes */ }
+      try { requireRegularFiles(destination); validate(command(destination), workspace); return command(destination); } catch { /* repair below */ }
+      // After an app update the helper this build compiled differs from the installed one: the app's own copy is the truth, so only the helper
+      // is replaced (the rest of the runtime is checked as before). A build without a shipped helper stops here, nothing touched.
+      helper = (o.helper ?? packagedHelper)();
+      try {
+        requireRegularFiles(destination);
+        const target = join(destination, 'botling-agy-file-helper');
+        if (!readFileSync(target).equals(helper)) {
+          const next = `${target}.new-${randomUUID()}`;
+          try { writeFileSync(next, helper, { mode: 0o700, flag: 'wx' }); renameSync(next, target); } finally { rmSync(next, { force: true }); }
+        }
+        validate(command(destination), workspace);
+        return command(destination);
+      } catch { /* the full reinstall below stages the new runtime and swaps it in whole */ }
     }
     // Fail missing/untrusted packaging before downloading anything.
-    const helper = (o.helper ?? packagedHelper)();
+    helper ??= (o.helper ?? packagedHelper)();
     mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
     local(dirname(destination));
     const lock = destination + '.install-lock';

@@ -100,7 +100,7 @@ describe("KernelSlot and needsShell", () => {
 
   it("hides a frame entry that needs openFile on the page, and draws it on the desktop", async () => {
     contributor("fixture.frame", { kind: "frame", frame: "slot", plugin: "acme.files", view: "acme.files.view", title: "Files", needsShell: ["openFile"] });
-    const client = { request: vi.fn(async () => ({ title: "t", source: "", settings: {} })), onEvent: () => () => {} } as unknown as Client;
+    const client = { request: vi.fn(async (command: { type: string }) => command.type === "plugins.list" ? { plugins: [] } : { title: "t", source: "", settings: {} }), onEvent: () => () => {} } as unknown as Client;
     const page = await mount(createElement(ShellCapabilitiesProvider, { value: onPage }, createElement(KernelSlot, { slot: "app/side", frames: { client } })));
     expect(page.host.querySelector(".plugin-slot")).toBeNull();
     expect(client.request).not.toHaveBeenCalled(); // a frame that is not drawn never asks for its source

@@ -12,13 +12,13 @@ import { processTreeAdapter, type ManagedProcess } from '../process/tree';
 import { inSpec, shellWritesSpec, specRoots, SPEC_DENIED } from '../spec-guard';
 import { appTools, workerAppTools } from '../app-tools/registry';
 import { isBotTool, type BotToolName } from '../bot-tools';
+import { shippedHelperSha } from './agy-helper-trust';
 
-export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
 export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
   if(!path || !isAbsolute(path) || realpathSync(path)!==resolve(path))throw new Error('Canonical verified file helper path required.');
   const rel=relative(realpathSync(workspace),path);
   if(rel!=='..'&&!rel.startsWith('../')&&!isAbsolute(rel))throw new Error('ACP runtime and file helper must be provisioned outside the agent workspace.');
-  if(createHash('sha256').update(readFileSync(path)).digest('hex')!==AGY_FILE_HELPER_SHA)throw new Error('File helper hash mismatch; nothing executed.');
+  if(createHash('sha256').update(readFileSync(path)).digest('hex')!==shippedHelperSha())throw new Error('File helper hash mismatch; nothing executed.');
 }
 type Args = Record<string, unknown>;
 export interface AgyTool { name: string; description: string; inputSchema: Args }

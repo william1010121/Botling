@@ -112,13 +112,14 @@ export class BotHead {
    * Null: not known (a session from an older head.json), which forces nothing.
    */
   get lastModelAt(): number | null { return this.session.lastModelAt ?? null; }
-  set lastModelAt(at: number | null) { if (at === null) delete this.session.lastModelAt; else this.session.lastModelAt = at; }
+  /** Puts the model clock to `at` (null forgets it); `modelCalled` is the live transition, this one is for a restore and for tests. */
+  setModelClock(at: number | null) { if (at === null) delete this.session.lastModelAt; else this.session.lastModelAt = at; }
   /** When head.json last got the clock (it is written at most once a minute while the model works, and at every handover). */
   private lastModelSavedAt = 0;
   /** The coordinator's own model call came in just now. */
   modelCalled() {
     const now = Date.now();
-    this.lastModelAt = now;
+    this.setModelClock(now);
     if (now - this.lastModelSavedAt >= 60_000 || now < this.lastModelSavedAt) { this.lastModelSavedAt = now; this.store.saveHead(this.session); }
   }
   /**
