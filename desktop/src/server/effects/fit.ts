@@ -91,7 +91,10 @@ function cutSteps(whole: Record<string, unknown>, holder: Record<string, unknown
   }
 }
 
-/** Components over the limit: the biggest templates leave the record first, so the rest still reach the page. */
+/**
+ * Components over the limit: the biggest templates leave the record first, so the rest still reach the page. The body then
+ * carries `partial: true` (the contract's `components.updated`): the page keeps the ones it has for the names left out.
+ */
 function cutComponents(whole: Record<string, unknown>, limit: number): void {
   const components = whole.components;
   if (typeof components !== "object" || components === null) return;
@@ -99,12 +102,22 @@ function cutComponents(whole: Record<string, unknown>, limit: number): void {
   sizes.sort((a, b) => b.size - a.size || (a.name < b.name ? -1 : 1));
   let over = bytes(whole) - limit;
   const left = { ...(components as Record<string, unknown>) };
+  let cut = false;
   for (const { name, size } of sizes) {
     if (over <= 0) break;
     delete left[name];
+    cut = true;
     over -= size;
   }
   whole.components = left;
+  if (cut) {
+    whole.partial = true;
+    // The marker takes room too ("partial":true plus a comma): drop one more template if that tipped it over.
+    for (const { name } of sizes) {
+      if (bytes(whole) <= limit) break;
+      if (Object.hasOwn(left, name)) delete left[name];
+    }
+  }
 }
 
 /**

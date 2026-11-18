@@ -268,8 +268,12 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
   /** What a plugin keeps for a chat's page to draw from changed (`chat.setData`). */
   z.strictObject({ type: z.literal("chat.pluginData"), botId, plugin: PluginName, data: z.unknown() }),
-  /** The component library changed on disk: every component as the page draws it. */
-  z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView) }),
+  /**
+   * The component library changed on disk: every component as the page draws it. `partial`: the list was over one frame and the
+   * server left out its biggest templates; the page keeps the components it already has for the names missing here until a whole
+   * list (an event without `partial`, or a snapshot) arrives.
+   */
+  z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView), partial: z.literal(true).optional() }),
   /** What plugins draw among a chat's messages changed (`chat.decorate`). */
   z.strictObject({ type: z.literal("chat.decorations"), botId, decorations: z.array(ChatDecoration).max(1_000) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */

@@ -110,6 +110,26 @@ describe("fitBody: components over one frame lose the biggest templates first", 
     expect(left).not.toHaveProperty("huge");
     expect(left.small).toEqual(components.small);
     expect(Object.keys(components)).toHaveLength(5); // the caller's record is untouched
+    expect(fitted.body.partial).toBe(true); // the page keeps the ones left out (renderer store)
+    expect(body).not.toHaveProperty("partial");
+  });
+
+  it("a list that fits is not marked partial and comes back as it is", () => {
+    const whole = { components: { small: components.small, tiny: components.tiny } };
+    const fitted = fitBody("components.updated", whole);
+    expect(fitted.body).toBe(whole);
+    expect(fitted.body).not.toHaveProperty("partial");
+  });
+
+  it("the marker's own bytes are counted: what fits only without `partial` is cut once more", () => {
+    // `edge` alone is 5 bytes under the limit; `huge` is bigger, so it goes first, and then the marker tips `edge` over
+    const room = BODY_BYTES_LIMIT - bytes({ components: { edge: info("") } });
+    const body = { components: { edge: info("e".repeat(room - 5)), huge: info("h".repeat(room + 50_000)) } };
+    expect(bytes({ components: { edge: body.components.edge } })).toBe(BODY_BYTES_LIMIT - 5);
+    const fitted = fitBody("components.updated", body);
+    expect(fitted.dropped).toBe(false);
+    expect(bytes(fitted.body)).toBeLessThanOrEqual(BODY_BYTES_LIMIT);
+    expect(fitted.body.partial).toBe(true);
   });
 
   it("a record with many mid-size templates loses just enough of them, never more", () => {
