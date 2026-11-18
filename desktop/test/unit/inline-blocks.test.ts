@@ -364,10 +364,10 @@ describe("what a worker hands back (inline first)", () => {
 
 describe("the built-in components every bot has", () => {
   const folderOf = join(cardsFolder, "inline-report-block");
-  it("botling.cards ships inline-chart and inline-report-block with the built-in tag (and nothing else); the chart is the user's folder copy plus that one line", () => {
+  it("botling.cards ships inline-chart, inline-report-block and the preview card with the built-in tag (and nothing else), the preview card placed after the blocks (Built-in order: 3); the chart is the user's folder copy plus that one line", () => {
     const lib = new ComponentLibrary(() => [cardsFolder]);
-    expect(lib.builtInNames()).toEqual(["inline-chart", "inline-report-block"]);
-    expect(lib.builtIn("網頁預覽卡片")).toBe(false);
+    expect(lib.builtInNames()).toEqual(["inline-chart", "inline-report-block", "網頁預覽卡片"]);
+    expect(lib.builtIn("網頁預覽卡片")).toBe(true);
     for (const name of ["inline-chart", "inline-report-block"]) {
       expect(readFileSync(join(cardsFolder, name, "template.html"), "utf8")).toContain("ccb-kit");
       expect(lib.pinOnly(name)).toBe(false);
