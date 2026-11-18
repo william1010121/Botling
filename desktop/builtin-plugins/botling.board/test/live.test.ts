@@ -166,6 +166,17 @@ describe("a pinned panel and a floating card given a new page or a failed run", 
     expect(next.style.height).toBe("60px");
   });
 
+  it("an opened pin that waits for its first result is as tall as it last was", () => {
+    const area = new PinArea(document.getElementById("pin-area")!);
+    area.update(state([pin(`{"cpu":1}`)]));
+    document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
+    const sheet = () => document.querySelector<HTMLElement>(".pin-sheet")!;
+    const [frame] = framesIn(sheet());
+    say(frame, { ccb: "size", height: 150 });
+    area.update(state([pin("null", { display: card({ data: "null", every: null, status: "running" }) })]));
+    expect(sheet().querySelector<HTMLElement>(".command-waiting")?.style.minHeight).toBe("150px");
+  });
+
   it("a floating card whose template changes keeps its drawing until the new page is ready", () => {
     const paints = holdPaints();
     const layer = new FloatLayer(document.body);

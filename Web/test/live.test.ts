@@ -393,6 +393,20 @@ describe("a card given a new page keeps its old picture until the new one is rea
     expect(componentPage("<p>x</p>", "null")).not.toContain("ccb: 'ready'");
     const { frame } = shownCard();
     expect(frame.srcdoc).toContain("ccb: 'ready'");
+    // Rebuilt (tokens came while it waited), it still says it.
+    expect((frame as unknown as { ccbBuild: () => string }).ccbBuild()).toContain("ccb: 'ready'");
+  });
+
+  it("the waiting box of a card that is not the message's first is as tall as that card was", () => {
+    const row = messageElement(message([still(), still()]), components);
+    document.body.append(row);
+    const [first, second] = framesOf(row);
+    say(first, { ccb: "size", height: 120 });
+    say(second, { ccb: "size", height: 80 });
+    const waiting = messageElement(message([still(), still({ status: "running", data: "null" })]), components);
+    const boxes = waiting.querySelectorAll<HTMLElement>(".command-waiting");
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0].style.minHeight).toBe("80px");
   });
 
   it("a ready that says no size, or a size that is not a number, is not a ready", () => {
@@ -415,11 +429,15 @@ describe("a card given a new page keeps its old picture until the new one is rea
     redraw(row, still({ data: `{"cpu":20}` }));
     const lost = incomingOf(row);
     lost.remove();
+    vi.advanceTimersByTime(redrawWait / 2);
     redraw(row, still({ data: `{"cpu":30}` }));
     const next = incomingOf(row);
     expect(next).not.toBe(lost);
     expect(next.srcdoc).toContain(`{"cpu":30}`);
-    vi.advanceTimersByTime(redrawWait + 1);
+    // The lost one's own wait ends: that is nobody's business now, the one that took its place keeps its wait.
+    vi.advanceTimersByTime(redrawWait / 2 + 1);
+    expect(framesOf(row)).toEqual([frame, next]);
+    vi.advanceTimersByTime(redrawWait / 2);
     expect(framesOf(row)).toEqual([frame]);
     // Both given up: the frame is what it was drawn from at the start, so that data again draws nothing.
     redraw(row, still());
