@@ -506,7 +506,7 @@ describe("the component lines", () => {
       const lib = new ComponentLibrary(() => [cardsFolder]);
       const owner: any = { profile: { folder: here, id: over.id ?? "bot-1" }, engine: over.engine ?? "claude", workers: { claudeWorkersOn: () => over.workers ?? true }, readOnly: false, store: { saveSetting() {} } };
       const host: any = { readOnly: false, records: [], updated() {} };
-      const ctx: any = { options: { components: { library: lib }, launch: () => ({ subagentHourCache: false, inlineBlockGuidance: "all", componentsViaCards: true }) }, id: "bot-1", owner, peers: [], store: owner.store };
+      const ctx: any = { options: { components: { library: lib }, launch: () => ({ subagentHourCache: false, inlineBlockGuidance: "all", componentsViaCards: true }) }, id: "bot-1", engine: over.engine ?? "claude", owner, peers: [], store: owner.store };
       const bot = new BotCards(host, ctx);
       owner.cards = bot;
       bot.componentList = [];
