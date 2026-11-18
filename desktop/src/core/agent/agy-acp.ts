@@ -398,7 +398,7 @@ export const agyInsertTiming = { waitMs: 20_000, recheckMs: 2_000 };
 /** Heads a turn sent again after it was cancelled for words that no tool result carried (`insertStalled`). */
 export const AGY_RESTART_NOTE = "(App: Your turn on the message below was stopped so you could read a newer message, sent while you worked. Work already done (files written, commands run) stays done: carry on from where you were, taking the newer message into account.)";
 export const AGY_WORKER_INSERT_NOTE = "(App: A message from the one who gave you this task, sent while you work. It is not output of this tool. Read it now and take it into account in this run:)";
-export const AGY_REPLY_REMINDER = "(Reply rule: at most 3 sentences, conclusion and next step only; no opening praise or filler, no headings, no bullet lists, no emoji; long content goes into a report page with a link; after dispatching subagents say only how many and what for, in one sentence.)";
+export const AGY_REPLY_REMINDER = "(Reply rule: at most 3 sentences, conclusion and next step only; no opening praise or filler, no headings, no bullet lists, no emoji; long content is not a reason for a report page: make one only when the user asks for it or agrees after you ask in the chat; after dispatching subagents say only how many and what for, in one sentence.)";
 export class AgyAcpHead {
   private process?: ManagedProcess;
   private bridge?: AgyMcpBridge;

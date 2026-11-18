@@ -965,11 +965,11 @@ describe("messages", () => {
   it("says to gather again and answer as a visual report, with your suggestion when you typed one (English and 繁體中文)", () => {
     try {
       setLanguage("en");
-      expect(regatherText("")).toBe("Please gather the data behind the reply I am quoting again, then answer it again as a visual report. First decide what the picture must show (groups side by side, a time axis, error bars, measured against estimated). A table, KPI row, comparison or timeline: one inline-report-block. A chart: an inline-chart only if it shows that clearly, otherwise a matplotlib PNG shown inline. A report page only if the content is really long. If nothing in the library shows it well and I would want it again, offer to make it a component, as you usually do.");
+      expect(regatherText("")).toBe("Please gather the data behind the reply I am quoting again, then answer it again as a visual report. First decide what the picture must show (groups side by side, a time axis, error bars, measured against estimated). A table, KPI row, comparison or timeline: one inline-report-block. A chart: an inline-chart only if it shows that clearly, otherwise a matplotlib PNG shown inline. No report page unless I ask for one. If nothing in the library shows it well and I would want it again, offer to make it a component, as you usually do.");
       expect(regatherText("   ")).toBe(regatherText(""));
       expect(regatherText(" only the failures ")).toBe(`${regatherText("")}\n\nMy suggestion: only the failures`);
       setLanguage("zh-Hant");
-      expect(regatherText("")).toBe("請重新收集我引用的那則回覆背後的資料，再用圖表報告回答一次。先想清楚這張圖要呈現什麼（組別並排、時間軸、誤差線、實測對估計）：表格、KPI、比較或時間線用一個 inline-report-block；圖表只有 inline-chart 能清楚呈現時才用，否則用 matplotlib 畫成 PNG 直接貼在對話裡；內容真的很長才用結果頁。如果元件庫裡沒有適合的、而且我之後還會想再看，就照平常的做法建議做成元件。");
+      expect(regatherText("")).toBe("請重新收集我引用的那則回覆背後的資料，再用圖表報告回答一次。先想清楚這張圖要呈現什麼（組別並排、時間軸、誤差線、實測對估計）：表格、KPI、比較或時間線用一個 inline-report-block；圖表只有 inline-chart 能清楚呈現時才用，否則用 matplotlib 畫成 PNG 直接貼在對話裡；除非我要求，不要開結果頁。如果元件庫裡沒有適合的、而且我之後還會想再看，就照平常的做法建議做成元件。");
       expect(regatherText("只看失敗的")).toBe(`${regatherText("")}\n\n我的建議：只看失敗的`);
     } finally {
       setLanguage("en");

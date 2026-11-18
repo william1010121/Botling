@@ -19,8 +19,8 @@ describe("routing rules", () => {
     for (const choice of ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const) expect(resultsRule(choice, "/a")).toContain(reportOnlyRule("/a"));
   });
 
-  it("points long text to a report page, not a .md file", () => {
-    expect(AGY_BREVITY_RULE).toContain("they go into a report page (see the results rule)");
+  it("asks before a report page for long text, never a .md file", () => {
+    expect(AGY_BREVITY_RULE).toContain("ask in one sentence whether the user wants a report page, and make it (see the results rule) only after they ask or agree");
     expect(AGY_BREVITY_RULE).not.toContain(".md");
   });
 
