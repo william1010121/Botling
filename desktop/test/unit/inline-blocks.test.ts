@@ -220,6 +220,17 @@ describe("the report rule by size", () => {
       expect(page(true, "claude", role).system).toContain(REPORT_RULE_BY_SIZE);
     }
   });
+  it("the whole rule names no inline blocks (Antigravity, Codex workers and a bot without the guidance have none), and the component docs send nothing to a page on their own", () => {
+    expect(REPORT_RULE_ALL_TO_PAGE).not.toMatch(/block|component|<card>/);
+    expect(REPORT_RULE_ALL_TO_PAGE).toContain("Without that, the result stays in chat as text.");
+    for (const text of [page(false).system, page(true, "agy").system, page(true, "claude", "manager").codexWorkerSystem]) expect(text).not.toContain("several blocks");
+    const about = readFileSync(join(cardsFolder, "inline-report-block", "about.md"), "utf8");
+    expect(about).not.toMatch(/publish a report page instead|use a full report page/);
+    expect(about).toContain("make a report page only when the user asked for one");
+    const skill = readFileSync(new URL("../../builtin-plugins/botling.report/skills/report/SKILL.md", import.meta.url).pathname, "utf8");
+    expect(skill).toContain("A report page is made ONLY when the user explicitly asks for a report or a page, or after you asked in the chat and the user agreed");
+    expect(skill).not.toMatch(/many visuals|more than 3 blocks|really long/);
+  });
   it("Antigravity keeps the whole rule (no inline blocks there), whatever it is asked for", () => {
     expect(page(true, "agy").system).toContain(REPORT_RULE_ALL_TO_PAGE);
     expect(page(true, "agy").system).not.toContain(REPORT_RULE_BY_SIZE);
@@ -239,11 +250,11 @@ describe("what a worker hands back (inline first)", () => {
     for (const role of ["manager", "bot"] as const) {
       const text = told(true, role);
       expect(text).toContain(INLINE_HANDOFF_SENTENCE);
-      expect(INLINE_HANDOFF_SENTENCE).toMatch(/hands back the data \(numbers or rows, concise\) plus the path of a re-runnable read-only script/);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/hands back the data \(numbers or rows, concise\) plus, when it had to be gathered, the path of a re-runnable read-only script/);
       expect(INLINE_HANDOFF_SENTENCE).toMatch(/never component JSON; you show it with a <card>/);
       expect(INLINE_HANDOFF_SENTENCE).not.toMatch(/ready-to-paste|inline-chart|inline-report-block/);
       expect(INLINE_HANDOFF_SENTENCE).toContain(".bot/card-scripts/<name>/");
-      expect(INLINE_HANDOFF_SENTENCE).toMatch(/A page only if the user asked or agreed when the bot asked/);
+      expect(INLINE_HANDOFF_SENTENCE).toMatch(/A page only if the user asked or agreed after you asked/);
       // It ends the Claude workers line (its own line of the prompt), after what is already there.
       expect(text.split("\n").find((line) => line.startsWith("- Hand all real work"))?.endsWith(` ${INLINE_HANDOFF_SENTENCE}`)).toBe(true);
     }

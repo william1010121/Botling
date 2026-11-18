@@ -677,7 +677,7 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
     codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE).replaceAll(` ${reportOnlyRule("")}`, "");
   }
   for (const section of told.filter((entry) => entry.after === "results").reverse()) {
-    // A bot with the inline guidance is told the report rule by size (one block inline, more than that a page); a Codex worker only builds pages, so it keeps the whole rule.
+    // A bot with the inline guidance is told the same ask-only rule worded for inline blocks; a Codex worker only builds pages, so it keeps the whole rule.
     const line = fillSection(section.text, section.tool, artifacts);
     const chatLine = inlineBlocks && engine !== "agy" && section.id === REPORT_SECTION_ID ? fillSection(inlineReportRule(section.text), section.tool, artifacts) : line;
     system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, chatLine);
