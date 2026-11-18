@@ -441,7 +441,8 @@ Three kinds of mistakes, one category per evidence line:
 - Status: open · days 2 of 3 (2026-11-18, 2026-11-19)
 - Evidence:
   - 2026-11-18 | rework | (no review file; commit messages) CI got the macOS typecheck heap, relay deps and job timeouts; the Antigravity helper pin failed on a runner with another Xcode | fix `12896c576`, `0fdb17b3c`
-  - 2026-11-19 | rework | (no review file; commit messages) the v3.2.3 tag build: typecheck out of memory, relay deps missing for `test:unit`, a 65-minute suite, plan job without the green-CI check and with `continue-on-error` | fix `2f776b9a5`, `630ad1ffa`, `697aca52b`, `27c0aafc3`
+  - 2026-11-18 | rework | (no review file; commit message) the v3.2.3 tag build: the release typecheck ran out of memory (`release.yml` lacked the heap `ci.yml` had) | fix `2f776b9a5`
+  - 2026-11-19 | rework | (no review file; commit messages) the same tag build: relay deps missing for `test:unit`, a 65-minute suite, plan job without the green-CI check and with `continue-on-error` | fix `630ad1ffa`, `697aca52b`, `27c0aafc3`
 
 ## Watch list (seen once, not a lesson yet)
 
