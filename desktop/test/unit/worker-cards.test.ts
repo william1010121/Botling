@@ -810,6 +810,15 @@ describe("a picture the worker only linked in its words (Markdown image) is stil
     expect(content.text).toBe(text);
   });
 
+  it.skipIf(process.platform === "win32")("a `..` between backslashes is refused too (a real PNG whose name holds one is no picture; on Windows that is a folder step)", () => {
+    const { folder, rules } = project();
+    const name = "x\\..\\named.png";
+    writeFileSync(join(folder, ".bot", "artifacts", name), "png");
+    const text = `![x](${join(folder, ".bot", "artifacts", name)})`;
+    expect(cardContent(text, rules).shows).toEqual([]);
+    expect(cardContent(text, rules).text).toBe(text);
+  });
+
   it("does not follow a link inside the project that leads out of it (real paths)", () => {
     const { folder, outside, rules } = project();
     symlinkSync(join(outside, "other.png"), join(folder, ".bot", "artifacts", "link.png"));
