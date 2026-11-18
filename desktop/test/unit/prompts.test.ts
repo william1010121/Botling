@@ -314,9 +314,9 @@ describe("prompts say what each engine can really do", () => {
   });
 
   it("#5: Maintainer's component editor is started and followed up the way its transport does it", () => {
-    const profile = { id: MAINTAINER_ID, name: "Maintainer", role: "manager" as const, folder: "/lib", ...base, instructions: maintainerInstructions("/lib", null, null) };
+    const profile = { id: MAINTAINER_ID, name: "Maintainer", role: "manager" as const, folder: "/lib", ...base, instructions: maintainerInstructions("/lib", "check", "shot") };
     const system = (engine: "claude" | "codex" | "agy", workers: boolean) => desktopPrompts(botPrompts({ profile, engine, language: "en" }), profile, engine, workers).system;
-    for (const text of MAINTAINER_EDITOR_NATIVE_TEXT) expect(maintainerInstructions("/lib", null, null)).toContain(text);
+    for (const text of MAINTAINER_EDITOR_NATIVE_TEXT) expect(profile.instructions).toContain(text);
     const codex = system("codex", true);
     expect(codex).toContain('call app_handoff with role "component-editor"');
     expect(codex).toContain("app_send_message with its task_id");
