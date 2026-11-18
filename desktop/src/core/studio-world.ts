@@ -5,7 +5,7 @@ import type { Bot } from "./bot";
 import { preview as previewOf } from "./bot";
 import type { ComponentCommands } from "./components/commands";
 import { detailKey } from "./components/commands";
-import { BUILT_INS, type ComponentLibrary } from "./components/library";
+import { APP_DRAWN, type ComponentLibrary } from "./components/library";
 import type { Display } from "./reply";
 import type { MaintainerDesk } from "./maintainer";
 import type { StudioChat, StudioLibrary, StudioLibraryEntry, StudioLine, StudioWorld } from "./plugins/studio-seam";
@@ -30,7 +30,7 @@ export interface StudioDeps {
 /** The library component a bot's reply already is (a `<show>` of one that is not built in): what "Add to another bot…" is offered for (`lineExtras`). */
 export function ownComponent(record: { role: string; displays?: unknown }, names: readonly string[]): string | undefined {
   if (record.role !== "bot") return undefined;
-  return ((record.displays ?? []) as Display[]).find((display) => !BUILT_INS.includes(display.name) && names.includes(display.name))?.name;
+  return ((record.displays ?? []) as Display[]).find((display) => !APP_DRAWN.includes(display.name) && names.includes(display.name))?.name;
 }
 
 export function studioWorld(deps: StudioDeps): StudioWorld {

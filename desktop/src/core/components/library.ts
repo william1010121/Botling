@@ -10,8 +10,14 @@ import { join } from "node:path";
 
 /** At most this many components per bot (its own list); the library itself has no cap. */
 export const COMPONENT_LIMIT = 20;
-/** The app's own cards (1.x's built-ins): every bot has them from the start. */
-export const BUILT_INS = ["choices", "網頁預覽卡片"];
+/**
+ * What the chat draws by itself, not a component a bot picks from the library: the `choices` buttons and the preview card (preview-url.ts `PAGE_COMPONENT`). Only
+ * "is this reply's card the app's own, so it is no component to copy into another bot, and no empty-data mistake": never who may use a component (that is the
+ * tag, `componentRoles`).
+ */
+export const APP_DRAWN = ["choices", "網頁預覽卡片"];
+/** The old name of `APP_DRAWN`, kept only for the component-studio plugin (Maintainer's code, not changed here); it is no list of who has a component. */
+export const BUILT_INS = APP_DRAWN;
 /**
  * Built-in components every bot has beyond its own list: the ones whose about.md carries the tag `Built-in: yes` (2026-11-17, the user:
  * "有一個 tag 可以讓 maintainer 決定要怎麼放"). Maintainer decides which components these are, in the plugin library as in a built-in
@@ -28,14 +34,32 @@ export const BUILT_IN_TAG = "built-in:";
 export const BUILT_IN_ORDER_TAG = "built-in order:";
 /** The names that count toward COMPONENT_LIMIT: without the built-in ones (`builtIn`: the library's `builtInNames()`). */
 export const countedComponents = (names: readonly string[], builtIn: readonly string[]): string[] => names.filter((name) => !builtIn.includes(name));
-/** Components the bots' component list leaves out: the instructions already teach the choices block. */
+/** Components the bots' component list leaves out: the instructions already teach the choices block (the interaction protocol the core keeps, whatever a tag says). */
 export const UNLISTED_COMPONENTS = ["choices"];
+
 /**
- * The components the bots' guidance calls built in (inline-blocks.ts: the two inline blocks; the preview card under both of its names, the
- * app's 「網頁預覽卡片」 and the library's `web-preview`), whether or not their about.md carries `Built-in: yes` (the shipped
- * `inline-report-block` does not). A bot told the built-ins only (`viaCards`) keeps these in its note, and a card worker is given their usage.
+ * The one reading of the library's winning metadata that every reader shares (the head's note, the card worker's catalog, app_component_usage, the
+ * Note's `/` menu and the pin picker): which components a bot may know (`usable`: not pin-only, not the protocol's own `choices`), which of them are built
+ * in (`Built-in: yes`) and in what order (`Built-in order:`, then name). No component is named here: untag one and it is on no reader's list at once.
  */
-export const GUIDED_BUILT_INS = ["inline-report-block", "inline-chart", "網頁預覽卡片", "web-preview"];
+export interface ComponentRoles {
+  /** The components a bot may be told of or draw, in the library's order. */
+  usable: string[];
+  /** The built-in ones among them, placed (`builtInNames()`). */
+  builtIn: string[];
+  isBuiltIn(name: string): boolean;
+  /** A sort key: the place of a built-in, then one step past them all for the rest (a stable sort keeps the rest in the order it had). */
+  rank(name: string): number;
+  /** `names` with the built-ins first, in their placed order; the rest keep their order. */
+  order<T extends string>(names: readonly T[]): T[];
+}
+
+export function componentRoles(library: Pick<ComponentLibrary, "names"> & Partial<Pick<ComponentLibrary, "pinOnly" | "builtInNames">>): ComponentRoles {
+  const usable = library.names.filter((name) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name));
+  const builtIn = (library.builtInNames?.() ?? []).filter((name) => usable.includes(name));
+  const rank = (name: string) => { const at = builtIn.indexOf(name); return at < 0 ? builtIn.length : at; };
+  return { usable, builtIn, isBuiltIn: (name) => builtIn.includes(name), rank, order: (names) => [...names].sort((a, b) => rank(a) - rank(b)) };
+}
 export const LIVE_RANGE = { min: 1, max: 3600 };
 /** What an about.md `Pin only:` line may say to turn it on. */
 const PIN_ONLY_YES = ["yes", "true", "on", "1"];
@@ -405,6 +429,11 @@ export interface ComponentKnowledge {
   /** The bot's instructions carry examples for a component (the inline blocks guidance): no app_component_usage lookup for it. */
   examples?: boolean;
   /**
+   * The components the guidance's examples teach (`INLINE_BLOCK_COMPONENTS`, static text in the system prompt that says "yours to use") that are NOT built in by the tag
+   * now and are not on the bot's list: the examples do not apply to them, so the note says so (app_component_usage says `yours: false` for the same ones). Only with `examples`.
+   */
+  notBuiltIn?: string[];
+  /**
    * A bot that can start `<card>` workers is told only about the built-in components; every other one is reached through a card, whose worker
    * is given the whole list with each usage (`cardBriefing`). `hidden`: how many components that leaves out of its note.
    */
@@ -420,23 +449,26 @@ export function ownLine(library: Pick<ComponentLibrary, "command" | "summaries">
 /** What a bot with these components of its own is told about the library (`componentKnowledge`). */
 export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | "command" | "summaries"> & Partial<Pick<ComponentLibrary, "pinOnly" | "builtInNames">>, mine: readonly string[], examples = false, viaCards = false, cardsOnly = false): ComponentKnowledge {
   // choices is the app's own buttons: the instructions already teach its block, so it is not listed again. A pin-only component (status
-  // things for the pin strip) is in neither list: the bots do not see it.
-  const listed = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly?.(name);
-  // The built-ins come first, in their placed order (`Built-in order:`); the rest stay in the library's order (a stable sort).
-  const builtIn = library.builtInNames?.() ?? [];
-  const rank = (name: string) => { const at = builtIn.indexOf(name); return at < 0 ? builtIn.length : at; };
-  const own = library.names.filter((name) => mine.includes(name) && listed(name)).sort((a, b) => rank(a) - rank(b));
+  // things for the pin strip) is in neither list: the bots do not see it. The built-ins come first, in their placed order (`Built-in order:`);
+  // the rest stay in the library's order (a stable sort): one projection (`componentRoles`) for every reader.
+  const roles = componentRoles(library);
+  const listed = (name: string) => roles.usable.includes(name);
+  const builtIn = roles.builtIn;
+  const own = roles.order(library.names.filter((name) => mine.includes(name) && listed(name)));
   const others = library.names.filter((name) => !mine.includes(name) && listed(name));
+  // The guidance in the system prompt is fixed text (it cannot follow the tag without rewriting the cached front); the tag decides, so where they disagree the appended note says so.
+  const unbuilt = examples && !cardsOnly ? INLINE_BLOCK_COMPONENTS.filter((name) => library.names.includes(name) && !roles.isBuiltIn(name) && !mine.includes(name)) : [];
+  const notBuiltIn = unbuilt.length ? { notBuiltIn: unbuilt } : {};
   if (viaCards) {
-    // Only the built-ins stay in the note (the inline blocks and the preview card, which the bot draws itself); the rest is the card worker's to pick from.
-    // Which ones is the library's and the guidance's, never the bot's own list: the note does not move when a list does, nor when a component that is
+    // Only the built-ins stay in the note (the tagged ones, which the bot draws itself); the rest is the card worker's to pick from.
+    // Which ones is the library's tag, never the bot's own list: the note does not move when a list does, nor when a component that is
     // not built in comes or goes (`knowledgeChanges` has nothing to say, so a wake keeps its cached front).
-    const everything = library.names.filter(listed);
+    const everything = roles.usable;
     // A head that writes only `<card>` for blocks and charts (`cardsOnly`: `headWritesCards`) has the inline blocks as the card worker's, not in its note.
-    const kept = everything.filter((name) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name)) && !(cardsOnly && INLINE_BLOCK_COMPONENTS.includes(name))).sort((a, b) => rank(a) - rank(b));
+    const kept = roles.order(everything.filter((name) => roles.isBuiltIn(name) && !(cardsOnly && INLINE_BLOCK_COMPONENTS.includes(name))));
     return {
       own: kept.map((name) => ({ name, text: ownLine(library, name) })), others: [], limit: COMPONENT_LIMIT,
-      ...(builtIn.length ? { builtIn } : {}), ...(examples && !cardsOnly ? { examples } : {}), viaCards: { hidden: everything.length - kept.length },
+      ...(builtIn.length ? { builtIn } : {}), ...(examples && !cardsOnly ? { examples } : {}), ...notBuiltIn, viaCards: { hidden: everything.length - kept.length },
     };
   }
   return {
@@ -446,10 +478,14 @@ export function componentKnowledgeFor(library: Pick<ComponentLibrary, "names" | 
     limit: COMPONENT_LIMIT,
     ...(builtIn.length ? { builtIn } : {}),
     ...(examples && !cardsOnly ? { examples } : {}),
+    ...notBuiltIn,
   };
 }
 
-/** The two built-in components of the inline guidance (inline-blocks.ts). */
+/**
+ * The two components the inline guidance's examples teach (inline-blocks.ts: static prompt text). This names what the TEXT is about, never who may use them: that is the
+ * tag (`componentRoles`); `ComponentKnowledge.notBuiltIn` tells a bot where the text and the tag disagree.
+ */
 export const INLINE_BLOCK_COMPONENTS: readonly string[] = ["inline-report-block", "inline-chart"];
 
 /** What a card-capable bot is told instead of the rest of the list (one line; the worker of a `<card>` gets every component with its usage). */
@@ -465,9 +501,13 @@ function knowledgeViaCards(k: ComponentKnowledge): string {
 export function knowledgeFull(k: ComponentKnowledge): string {
   if (k.viaCards) return knowledgeViaCards(k);
   let text = `(App: Components in the chat: ${countedComponents(k.own.map((e) => e.name), k.builtIn ?? []).length} / ${k.limit} yours, one line each below (a bot has at most ${k.limit}). A (command) one fills itself from its own Command: <show name="name"></show> is all it needs. A (JSON) one needs its JSON inside the tag, <show name="name">JSON</show> (an empty one draws nothing; a "Board command:" is never run by the chat): call app_component_usage with its name for its data format and options before you fill it or use one of them.${k.examples ? " Exception: a component your instructions already carry examples for (the inline blocks rule) needs no lookup for the kinds and types its examples show; for any other kind or type call app_component_usage first." : ""} <show name="name" command="git diff --stat"></show> fills a card with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). Add refresh="2s" to rerun a command card every 2 seconds while it is on screen (a component whose usage says "Refresh: every 2s" does so already). Give a card an id, <show name="name" id="tests">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name="name">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n` + k.own.map((e) => e.text).join("\n");
+  if (k.notBuiltIn?.length) text += `\n${NOT_BUILT_IN_NOTE(k.notBuiltIn)}`;
   if (k.others.length) text += `\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name="name">add it to my list</component>; it then shows up in your list.)\n` + k.others.map((e) => e.text).join("\n");
   return text;
 }
+
+/** The note for a component the guidance's examples teach that the tag does not make built in (`ComponentKnowledge.notBuiltIn`). */
+export const NOT_BUILT_IN_NOTE = (names: readonly string[]): string => `(App: The examples in your instructions for ${names.join(", ")} do not apply: ${names.length === 1 ? "it is" : "they are"} not a built-in component now. Ask Maintainer before you show ${names.length === 1 ? "it" : "one"}: <component name="name">add it to my list</component>.)`;
 
 /** Only what changed since `told`; null when nothing did (`changes(since:)`). */
 export function knowledgeChanges(k: ComponentKnowledge, told: ComponentKnowledge): string | null {
@@ -487,6 +527,11 @@ export function knowledgeChanges(k: ComponentKnowledge, told: ComponentKnowledge
   if (dropped.length) parts.push(`No longer yours (still in the shared library; ask Maintainer to get one back):\n${dropped.map((e) => e.text).join("\n")}`);
   if (gone.length) parts.push(`Gone from the library: ${gone.join(", ")}`);
   if (shelf.length) parts.push(`New or changed in the shared library, not yours yet:\n${shelf.map((e) => e.text).join("\n")}`);
+  // The guidance's examples and the tag: told when they come to disagree, and when they agree again.
+  const toldNot = told.notBuiltIn ?? [], nowNot = k.notBuiltIn ?? [];
+  if (nowNot.some((name) => !toldNot.includes(name))) parts.push(NOT_BUILT_IN_NOTE(nowNot));
+  const again = toldNot.filter((name) => !nowNot.includes(name) && library.has(name));
+  if (again.length) parts.push(`Built in again, the examples in your instructions apply: ${again.join(", ")}`);
   if (!parts.length) return null;
   return `(App: Components were updated; only what changed since you were last told, the rest is as before. You have ${countedComponents(k.own.map((e) => e.name), k.builtIn ?? []).length} / ${k.limit}.)\n${parts.join("\n")}`;
 }

@@ -31,6 +31,7 @@ import { botPrompts } from "../../src/core/prompts";
 import { CodexThreads } from "../../src/core/agent/codex";
 import { Command } from "../../src/contract";
 import type { WorkerLedgerRecord } from "../../src/core/worker-core";
+import { ComponentsContext } from "../../src/core/components/service";
 import { tempDir } from "../helpers";
 
 const bots: Bot[] = [];
@@ -44,11 +45,18 @@ async function waitFor(what: string, ok: () => unknown) {
   throw new Error(`gave up waiting for ${what}`);
 }
 
-function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unknown>, onRequests?: (bot: any, requests: any[]) => any[]) {
+/** `library`: a component library for the bot (name -> about.md; each gets a template). `realWorkers`: keep the real ClaudeWorkers (on the fake heads) instead of the handoff stand-in. */
+function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unknown>, onRequests?: (bot: any, requests: any[]) => any[], extra: { library?: Record<string, string>; realWorkers?: boolean } = {}) {
   const folder = tempDir("bot-worker-cards"), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, model: "m", heads: { engines: [engine], answerWith: engine, codexModel: "m" } }));
   const events: any[] = [];
-  const b = new Bot({ profile, deferStartup: true, ledger: { record() {}, forget() {} } as any,
+  let components: ComponentsContext | undefined;
+  if (extra.library) {
+    const root = join(folder, "lib-components");
+    for (const [name, about] of Object.entries(extra.library)) { mkdirSync(join(root, name), { recursive: true }); writeFileSync(join(root, name, "template.html"), "<div></div>"); writeFileSync(join(root, name, "about.md"), about); }
+    components = new ComponentsContext(join(folder, "lib-state"), () => [root]);
+  }
+  const b = new Bot({ profile, deferStartup: true, ...(components ? { components } : {}), ledger: { record() {}, forget() {} } as any,
     headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: folder, allowedTools: [] }; },
     codexConfig(_p, c) { return { command: "/never-spawn", cwd: folder, threads: new CodexThreads(join(folder, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null } as any; },
     prompts: (e, heads) => botPrompts({ profile, engine: e, heads }),
@@ -59,7 +67,7 @@ function rig(engine: "claude" | "codex" = "claude", launch?: Record<string, unkn
   // The Claude worker host stands in: it takes the same `tool("app_handoff", …)` call a bot's own tool call makes.
   // Typed as ClaudeWorkers.tool is (it answers unknown), so a test may answer other tools with {}.
   const handoff = vi.fn(async (_name: string, _args: Record<string, unknown>): Promise<unknown> => ({ task_id: "T1", run: 1 }));
-  peek.workers.ensureClaudeWorkers = () => ({ tool: handoff });
+  if (!extra.realWorkers) peek.workers.ensureClaudeWorkers = () => ({ tool: handoff });
   return { b, peek, events, handoff };
 }
 
@@ -97,6 +105,30 @@ describe("a reply with <card>: the worker starts", () => {
     // Only the card's own part is the message; the fixed rules are its system prompt (ClaudeWorkers `cardSystem`), not repeated per card.
     expect(String(args.instructions)).not.toContain("You are a card worker");
     expect(record.workerCards![0]).toMatchObject({ title: "Prices", taskId: "T1", status: "running", run: 1, at: "Checking.\n".length });
+  });
+
+  it("the worker's first message holds the catalog of the library as it is (a real library context), before the card's own words", async () => {
+    const r = rig("claude", undefined, undefined, { library: { "inline-chart": "Inline chart: a chart.\nBuilt-in: yes\nData: {}", status: "Status card: ok.\nData: {}" } });
+    const record = await answer(r, '<card title="Prices">Collect the prices of the three plans.</card>');
+    await waitFor("the card to be bound to its worker", () => record.workerCards![0]!.taskId);
+    const text = String(r.handoff.mock.calls[0]![1].instructions);
+    expect(text).toContain("Components you may use");
+    expect(text).toContain("- inline-chart (JSON): Inline chart");
+    expect(text).toContain("- status (JSON): Status card");
+    expect(text.indexOf("Components you may use")).toBeLessThan(text.indexOf("Collect the prices of the three plans."));
+  });
+
+  it("the real card worker process: its system prompt is the fixed rules (cardSystem is wired to them), and the catalog is not in it", async () => {
+    const r = rig("claude", undefined, undefined, { library: { "inline-chart": "Inline chart: a chart.\nBuilt-in: yes\nData: {}", status: "Status card: ok.\nData: {}" }, realWorkers: true });
+    const before = fixture.heads.length;
+    await r.peek.workers.ensureClaudeWorkers().tool("app_handoff", { name: "c", instructions: "Show it.", group: "c", model: "haiku", effort: "low", [CARD_WORKER]: true });
+    const head = fixture.heads.at(-1);
+    expect(fixture.heads.length).toBeGreaterThan(before);
+    const system = String(head.config.systemPrompt);
+    expect(system).toContain("You are a card worker");
+    expect(system).toContain(r.peek.workers.cardSystemNow());
+    expect(system).not.toContain("Components you may use");
+    expect(system).not.toContain("Inline chart: a chart.");
   });
 
   it("the card's view reaches the chat (messageView): title, status and the task id its reply box sends to", async () => {

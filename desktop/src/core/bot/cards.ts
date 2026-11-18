@@ -11,7 +11,7 @@ import type { BotContext } from "./context";
 import { detailValues, type CommandStatus } from "../components/commands";
 import { validateCardShow } from "../card-validate";
 import { headWritesCards, inlineBlocksFor } from "../inline-blocks";
-import { BUILT_INS, COMPONENT_LIMIT, GUIDED_BUILT_INS, UNLISTED_COMPONENTS, componentKnowledgeFor, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge } from "../components/library";
+import { APP_DRAWN, COMPONENT_LIMIT, componentKnowledgeFor, componentRoles, countedComponents, knowledgeChanges, knowledgeFull, ownLine, safeName, type ComponentKnowledge, type ComponentLibrary } from "../components/library";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "../components/service";
 import { cardData, PAGE_COMPONENT, previewCards } from "../page-preview";
 import type { Display } from "../reply";
@@ -86,9 +86,9 @@ export class BotCards {
   giveFirstComponents() {
     const context = this.context;
     if (!context || this.componentList !== null || this.readOnly) return;
-    const used = new Set<string>(BUILT_INS);
+    const used = new Set<string>();
     for (const record of this.records) for (const display of (record.displays ?? []) as Display[]) used.add(display.name);
-    // As 1.x: the built-ins and what it has drawn; Maintainer gives it more (<component> requests). A pin-only component is not a bot's.
+    // What it has drawn (the built-ins are the library's tag, on no list); Maintainer gives it more (<component> requests). A pin-only component is not a bot's.
     this.componentList = context.library.names.filter((name) => used.has(name) && !context.library.pinOnly(name));
     this.store.saveSetting("components", this.componentList);
   }
@@ -184,7 +184,7 @@ export class BotCards {
     for (const record of this.records) {
       if (record.role !== "bot" || record.date <= before) continue;
       for (const display of (record.displays ?? []) as Display[]) {
-        if (display.data === "null" && !BUILT_INS.includes(display.name) && displayCommand(display, record.role, context.library) === null && !names.includes(display.name)) names.push(display.name);
+        if (display.data === "null" && !APP_DRAWN.includes(display.name) && displayCommand(display, record.role, context.library) === null && !names.includes(display.name)) names.push(display.name);
       }
     }
     if (names.length) {
@@ -260,19 +260,16 @@ export class BotCards {
   }
 
   /**
-   * What the worker of a card is given besides the prompt: the usage of every component of the bot's (its list, the library's built-ins and the
-   * ones the guidance names, `GUIDED_BUILT_INS`), whole component by whole component while they fit (`CARD_BRIEF_MAX`), and the rest of the library in a
+   * What the worker of a card is given besides the prompt: the usage of every component of the bot's (its list and the library's built-ins, the tagged ones first), whole component by whole component while they fit (`CARD_BRIEF_MAX`), and the rest of the library in a
    * line each (`CARD_OTHERS_MAX`). A cut never lands inside a component's usage: what does not fit moves to the one-line list.
    */
   cardBrief(): CardBrief | null {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
-    const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
-    const builtIn = library.builtInNames();
-    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
-    const own = [...new Set([...this.ownComponents(), ...library.names.filter((name) => GUIDED_BUILT_INS.includes(name))])].filter(usable)
-      .sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const roles = componentRoles(library);
+    // The bot's own components (its list and the tagged built-ins, `ownComponents`), the built-ins first in their placed order, the rest in the library's order.
+    const own = roles.order(this.ownComponents().filter((name) => roles.usable.includes(name)));
     const whole: string[] = [], moved: string[] = [];
     let used = 0;
     for (const name of own) {
@@ -281,11 +278,12 @@ export class BotCards {
       used += text.length + 1;
       whole.push(name);
     }
-    const lines = library.summaries([...moved, ...library.names.filter((name) => !own.includes(name) && usable(name))]).split("\n");
+    // One line each in the order told (the ones that did not fit first), not the library's: `summaries` itself keeps the library's order.
+    const lines = [...moved, ...roles.usable.filter((name) => !own.includes(name))].map((name) => library.summaries([name])).filter(Boolean);
     let shown = 0, size = 0;
     while (shown < lines.length && size + lines[shown]!.length + 1 <= CARD_OTHERS_MAX) size += lines[shown++]!.length + 1;
     const others = [...lines.slice(0, shown), ...(shown < lines.length ? [`(…and ${lines.length - shown} more components in the library)`] : [])].filter(Boolean).join("\n");
-    return { components: library.catalog(whole), others, scriptsDir: this.cardRules().scriptsDir };
+    return { components: whole.map((name) => library.catalog([name])).join("\n"), others, scriptsDir: this.cardRules().scriptsDir };
   }
 
   /**
@@ -297,10 +295,7 @@ export class BotCards {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
-    const usable = (name: string) => !UNLISTED_COMPONENTS.includes(name) && !library.pinOnly(name);
-    const builtIn = library.builtInNames();
-    const rank = (name: string) => (builtIn.includes(name) || GUIDED_BUILT_INS.includes(name) ? 0 : 1);
-    const names = library.names.filter(usable).sort((a, b) => rank(a) - rank(b) || library.names.indexOf(a) - library.names.indexOf(b));
+    const names = componentRoles(library).order(componentRoles(library).usable);
     const scriptsDir = this.cardRules().scriptsDir;
     const usageDir = join(dirname(scriptsDir), "card-usage");
     try { writeCardUsage(usageDir, names.map((name) => ({ name, text: library.catalog([name]) }))); } catch { return null; }
@@ -497,6 +492,12 @@ export class BotCards {
     return /^pin\/[A-Za-z0-9-]{1,100}$/.test(card);
   }
 
+  /** What the bot may draw: its list (the whole library while it keeps none) and the built-ins, no pin-only one. The built-ins come first in their placed order (the tag), the rest as the list has them: the `/` menu and the pin picker read this, so they follow the same projection as the notes. */
+  private offeredComponents(library: ComponentLibrary): string[] {
+    const roles = componentRoles(library);
+    return roles.order([...new Set([...(this.componentList ?? library.names), ...roles.builtIn])].filter((name) => library.names.includes(name) && !library.pinOnly(name)));
+  }
+
   /** The component library as a card-keeping plugin sees it, with the folder commands run in. null: no component context. */
   cardLibrary(): { botId: string; names: string[]; offered: string[]; pinOnly: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null {
     if (this.options.primary) return this.options.primary.cards.cardLibrary();
@@ -506,7 +507,7 @@ export class BotCards {
     const entries = Object.fromEntries(library.names.map((name) => [name, { command: library.command(name), detail: library.detailCommand(name), every: library.refreshInterval(name), sizes: library.sizes(name) }]));
     // `offered`: what the bot may draw (its list, no pin-only one); `pinOnly`: the status components only the pin picker offers, to every bot.
     const pinOnly = library.names.filter((name) => library.pinOnly(name));
-    return { botId: this.id, names: [...library.names], offered: [...new Set([...(this.componentList ?? library.names), ...library.builtInNames()])].filter((name) => library.names.includes(name) && !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
+    return { botId: this.id, names: [...library.names], offered: this.offeredComponents(library).filter((name) => !pinOnly.includes(name)), pinOnly, entries, readOnly: this.readOnly, folder: this.commandFolder };
   }
 
   /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
@@ -612,7 +613,7 @@ export class BotCards {
     const context = this.context;
     if (!context) return null;
     const library = context.library;
-    const offered = [...new Set([...(this.componentList ?? library.names), ...library.builtInNames()])].filter((name) => library.names.includes(name) && !library.pinOnly(name));
+    const offered = this.offeredComponents(library);
     const chat = this.chatData();
     const order = [...offered, ...library.names.filter((name) => !offered.includes(name))];
     return {
