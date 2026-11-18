@@ -282,3 +282,12 @@ it("the \"More tabs\" menu is closed when another bot's header shows", async () 
   expect(host.querySelector(".main-tab-more")).not.toBeNull();
   expect(host.querySelector(".tab-more-menu")).toBeNull();
 });
+
+it("a tab picked from the menu takes the main bot off the Whiteboard (the Whiteboard choice is kept off for the next start)", async () => {
+  const wall = { plugin: "botling.whiteboard", id: "botling.whiteboard", title: "Whiteboard", forRole: "main" as const };
+  const { host } = await render(MAIN, { plugins: { ...plugins, mainTabs: [noteTab, wall, toolsTab] } }, true);
+  expect(localStorage.getItem("botling.mainWhiteboard")).toBe("1");
+  await act(async () => host.querySelector<HTMLButtonElement>(".main-tab-more")!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('.tab-more-row[data-tab="tools/tools.a"]')!.click());
+  expect(localStorage.getItem("botling.mainWhiteboard")).toBe("0");
+});

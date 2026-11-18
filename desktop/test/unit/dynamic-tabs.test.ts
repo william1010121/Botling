@@ -38,6 +38,13 @@ describe("which tabs the header shows", () => {
     expect(keys(visibleTabs(all, { pinned: [], current: duel }).shown)).not.toContain(tabKey(bench));
   });
 
+  it("the tab on screen is told from another view of the same plugin by its whole key", () => {
+    const first: MainTab = { plugin: "tools", id: "tools.a", title: "A", forRole: "any" };
+    const second: MainTab = { plugin: "tools", id: "tools.b", title: "B", forRole: "any" };
+    expect(keys(visibleTabs([first, second], { pinned: [], current: first }).shown)).toEqual([tabKey(first)]);
+    expect(keys(visibleTabs([first, second], { pinned: [], current: second }).hidden)).toEqual([tabKey(first)]);
+  });
+
   it("a pin for a tab that is not offered shows nothing; no tabs: nothing", () => {
     expect(keys(visibleTabs([note], { pinned: [tabKey(duel)], current: null }).shown)).toEqual([tabKey(note)]);
     expect(visibleTabs([], { pinned: [], current: null })).toEqual({ shown: [], hidden: [] });
@@ -70,6 +77,23 @@ describe("pinning a tab (settings.json pinnedTabs)", () => {
     expect(settingsView(raw).pinnedTabs).toEqual({});
   });
 
+  it("the file keeps one entry per pin and at most 30, whatever order the pins came in", () => {
+    let raw = applySetting({}, pin(MAIN, "a/b", true));
+    raw = applySetting(raw, pin(MAIN, "a/b", true));
+    expect((raw.pinnedTabs as Record<string, string[]>)[MAIN]).toEqual(["a/b"]);
+    for (let i = 0; i < 40; i++) raw = applySetting(raw, pin(MAIN, `p/v${i}`, true));
+    expect((raw.pinnedTabs as Record<string, string[]>)[MAIN]).toHaveLength(30);
+  });
+
+  it("a bot's pins are one list whether its id came in upper or lower case", () => {
+    let raw = applySetting({}, pin(MAIN, "a/b", true));
+    raw = applySetting(raw, pin(MAIN.toLowerCase(), "c/d", true));
+    expect(Object.keys(raw.pinnedTabs as object)).toEqual([MAIN]);
+    expect(settingsView(raw).pinnedTabs).toEqual({ [MAIN]: ["a/b", "c/d"] });
+    raw = applySetting(raw, pin(MAIN.toLowerCase(), "a/b", false));
+    expect(settingsView(raw).pinnedTabs).toEqual({ [MAIN]: ["c/d"] });
+  });
+
   it("unpinning what was never pinned changes nothing", () => {
     expect(applySetting({}, pin(MAIN, "a/b", false))).not.toHaveProperty("pinnedTabs");
   });
@@ -78,6 +102,11 @@ describe("pinning a tab (settings.json pinnedTabs)", () => {
     const view = settingsView({ pinnedTabs: { [MAIN]: ["a/b", 5, "", "a/b", "x".repeat(400)], "not a bot": ["a/b"], [PROJECT]: "a/b" } });
     expect(view.pinnedTabs).toEqual({ [MAIN]: ["a/b"] });
     expect(settingsView({ pinnedTabs: ["x"] }).pinnedTabs).toEqual({});
+    // A null or an object in the list is dropped (it must not throw), and an empty list leaves the bot out.
+    expect(settingsView({ pinnedTabs: { [MAIN]: [null, { a: 1 }, "a/b"], [PROJECT]: [] } }).pinnedTabs).toEqual({ [MAIN]: ["a/b"] });
+    // A file with more than 30 pins for a bot reads back as the first 30.
+    const many = Array.from({ length: 45 }, (_, i) => `p/v${i}`);
+    expect(settingsView({ pinnedTabs: { [MAIN]: many } }).pinnedTabs[MAIN]).toEqual(many.slice(0, 30));
     expect(settingsView({}).pinnedTabs).toEqual({});
   });
 
