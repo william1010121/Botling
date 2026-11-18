@@ -268,6 +268,7 @@ export const zhHant: Dictionary = {
   "command.allow": "允許並執行",
   "command.remembered": "這個專案會記住這個指令的允許。",
   "command.detailLine": "另外，打開詳細內容時會填入 {values} 執行：",
+  "command.failedKept": "執行失敗，顯示上次結果",
   "command.failed": "指令執行失敗",
   "command.nothing": "沒有可顯示的內容",
   "command.runningFirst": "正在執行指令…",

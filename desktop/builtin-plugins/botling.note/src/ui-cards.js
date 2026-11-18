@@ -28,7 +28,7 @@ export function install(st, api) {
   const viewOf = (lk, name) => {
     let v = views.get(lk);
     if (!v) {
-      v = { lk, name, frame: null, shape: null, data: null, height: 0, state: null, key: null, msg: null, slot: null, head: null, timer: null, every: null, autoRan: false, drawing: false };
+      v = { lk, name, frame: null, next: null, shape: null, data: null, height: 0, state: null, key: null, msg: null, slot: null, head: null, timer: null, every: null, autoRan: false, drawing: false };
       views.set(lk, v);
     }
     return v;
@@ -139,6 +139,7 @@ export function install(st, api) {
   }
   function dropView(v) {
     stopTimer(v);
+    cancelNext(v);
     v.frame?.remove();
     views.delete(v.lk);
   }
@@ -158,29 +159,47 @@ export function install(st, api) {
       const slot = v.slot && v.slot.isConnected ? v.slot : null;
       if (!slot || v.msg) {
         v.frame.style.display = "none";
+        if (v.next) v.next.frame.style.display = "none";
         continue;
       }
       const h = v.height || 120;
       slot.style.height = `${h}px`;
       const r = slot.getBoundingClientRect();
-      const st = v.frame.style;
-      st.display = "block";
-      st.left = `${r.left - pr.left}px`;
-      st.top = `${r.top - pr.top}px`;
-      st.width = `${r.width}px`;
-      st.height = `${h}px`;
-      st.pointerEvents = pass ? "none" : "";
+      // a page being made for the card (v.next) lies over the shown one, out of sight and out of reach, as big as it
+      for (const [frame, hidden] of [[v.frame, false], ...(v.next ? [[v.next.frame, true]] : [])]) {
+        const fs = frame.style;
+        fs.display = "block";
+        fs.left = `${r.left - pr.left}px`;
+        fs.top = `${r.top - pr.top}px`;
+        fs.width = `${r.width}px`;
+        fs.height = `${h}px`;
+        fs.pointerEvents = hidden || pass ? "none" : "";
+      }
     }
   }
   const relayout = new ResizeObserver(() => layoutCards());
   relayout.observe(st.doc);
   const onCardMsg = (e) => {
     const d = e.data;
-    if (!d || typeof d !== "object" || d.ccb !== "size") return;
+    if (!d || typeof d !== "object" || (d.ccb !== "size" && d.ccb !== "live" && d.ccb !== "ready")) return;
     for (const v of views.values()) {
-      if (!v.frame || e.source !== v.frame.contentWindow) continue;
+      const shown = !!v.frame && e.source === v.frame.contentWindow;
+      const coming = !shown && !!v.next && e.source === v.next.frame.contentWindow;
+      if (!shown && !coming) continue;
+      const frame = shown ? v.frame : v.next.frame;
+      // the page being made says it is ready: it takes the shown one's place now
+      if (d.ccb === "ready") {
+        if (coming) takeOver(v, v.next, d.height);
+        continue;
+      }
+      // the frame takes new data itself (ccb.onData): a change of its data is posted to it, the frame is kept
+      if (d.ccb === "live") {
+        frame.ccbLive = true;
+        continue;
+      }
       const h = Math.max(24, Math.min(6000, Math.ceil(Number(d.height) || 0)));
-      if (h !== v.height) {
+      if (coming) v.next.height = h; // taken over when the page is shown
+      else if (h !== v.height) {
         v.height = h;
         layoutCards();
       }
@@ -204,6 +223,9 @@ export function install(st, api) {
     if (!blocks.length) return;
     st.syncing = true;
     const sent = text();
+    // The reply speaks of the lines of the text it was asked about: it is read against the cards of that text (their keys
+    // and lines then), never against the lines the cards are on once it arrives (the user may have typed above them).
+    const asked = new Map(blocks.map((b) => [b.lk, { b, body: st.lines.slice(b.start, b.end + 1).join("\n") }]));
     try {
       let list = null;
       try {
@@ -213,13 +235,16 @@ export function install(st, api) {
         st.cardsOff = /unavailable/.test(String(error?.message ?? error)) ? "這個 App 版本還不能執行卡片的指令（缺少 notes.cards）" : `讀不到卡片：${error?.message ?? error}`;
       }
       if (st.gone) return;
-      const now = cardKeyOf(classify(st.lines));
-      for (const b of now) {
-        const v = viewOf(b.lk, b.card.name);
-        const st = list?.find((c) => c.line === b.start && c.name === b.card.name) ?? (list ? null : localState(b.card));
-        if (st) {
-          v.state = st;
-          v.key = st.key ?? null;
+      const now = new Map(cardKeyOf(classify(st.lines)).map((b) => [b.lk, b]));
+      for (const [lk, { b, body }] of asked) {
+        const cur = now.get(lk);
+        // a card that is gone, or whose text changed meanwhile, takes nothing from this reply (its own sync follows)
+        if (!cur || st.lines.slice(cur.start, cur.end + 1).join("\n") !== body) continue;
+        const v = viewOf(lk, b.card.name);
+        const fresh = list?.find((c) => c.line === b.start && c.name === b.card.name) ?? (list ? null : localState(b.card));
+        if (fresh) {
+          v.state = fresh;
+          v.key = fresh.key ?? null;
         }
       }
       let running = false;
@@ -245,64 +270,140 @@ export function install(st, api) {
   }
   // Without the app's notes.cards (an older app): a card with JSON still draws it; one that needs its command cannot.
   const localState = (card) => ({ key: null, name: card.name, exists: true, command: card.command, every: null, status: card.command || !card.body ? "unavailable" : "static", data: card.body || "null", error: null, ranAt: null, images: {} });
+  // What a card must show: the page it is made on (component and pictures) and the data it holds.
+  const shapeOf = (cs) => JSON.stringify([cs.name, Object.entries(cs.images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
+  const wantOf = (cs) => `${shapeOf(cs)}\u0000${cs.data}`;
+  const parsed = (raw) => {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+  function makeFrame(v, name, url) {
+    const frame = document.createElement("iframe");
+    frame.className = "nc-frame";
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("aria-label", name);
+    frame.tabIndex = -1;
+    // the frame is not inside its cell: the pointer over it still counts as over the cell (its bar and grip show)
+    frame.addEventListener("mouseenter", () => {
+      st.hoverLk = v.lk;
+      hoverCell();
+    });
+    frame.addEventListener("mouseleave", () => {
+      if (st.hoverLk === v.lk) st.hoverLk = null;
+      hoverCell();
+    });
+    frame.src = url;
+    return frame;
+  }
+  // A page being made for a card that already shows one is dropped: what the card must show changed again, or it is gone.
+  function cancelNext(v) {
+    if (!v.next) return;
+    clearTimeout(v.next.timer);
+    v.next.frame.remove();
+    v.next = null;
+  }
+  // How long a page being made for a card may take to say it is ready before it is given up (the one shown stays, and the page is asked for again).
+  const READY_WAIT = 10_000;
+  // The new page takes the old one's place only when its own page says it is ready ({ ccb: "ready", height }: loaded, fonts and
+  // pictures decoded, painted, sized; the page's `load` event, a size or the clock are not that), and not before: until then the
+  // old one stays on screen, at its height. It is never moved in the page (that would load it again).
+  function handOff(v, next) {
+    cancelNext(v);
+    next.frame.style.visibility = "hidden";
+    next.frame.style.pointerEvents = "none";
+    v.next = next;
+    cardLayer.append(next.frame);
+    next.timer = setTimeout(() => {
+      if (st.gone || v.next !== next || views.get(v.lk) !== v) return;
+      cancelNext(v);
+      drawView(v); // asks for the page again; the old one is still shown
+    }, READY_WAIT);
+  }
+  function takeOver(v, next, readyHeight) {
+    clearTimeout(next.timer);
+    const old = v.frame;
+    v.next = null;
+    // the height it measured last (its size messages), else the one it was ready at: never a default
+    const h = next.height > 0 ? next.height : Math.max(24, Math.min(6000, Math.ceil(Number(readyHeight) || 0)));
+    if (h > 0) v.height = h;
+    next.frame.style.visibility = "";
+    v.frame = next.frame;
+    v.shape = next.shape;
+    v.data = next.data;
+    old?.remove();
+    layoutCards();
+    paintHead(v);
+  }
   async function drawView(v) {
     const cs = v.state;
     if (!cs) return;
     v.msg = !cs.exists ? `組件庫裡沒有「${cs.name}」這個組件` : cs.status === "unavailable" ? "這個 App 版本還不能執行卡片的指令" : null;
-    if (v.msg || (cs.data === "null" && (cs.status === "approve" || cs.status === "idle" || cs.status === "running"))) {
+    const noData = cs.data === "null" && (cs.status === "approve" || cs.status === "idle" || cs.status === "running");
+    if (v.msg || noData) {
       if (v.msg && v.frame) v.frame.style.display = "none";
       paintHead(v);
       if (!v.frame) return;
     }
-    let data = null;
-    try {
-      data = JSON.parse(cs.data);
-    } catch {
-      data = null;
+    // a card with a frame and nothing to show yet (its command runs again) keeps what it shows
+    if (noData && v.frame) return;
+    const data = parsed(cs.data);
+    const shape = shapeOf(cs);
+    const want = wantOf(cs);
+    const same = !!v.frame && v.shape === shape;
+    if (same && v.data === cs.data) {
+      cancelNext(v);
+      return;
     }
-    const shape = JSON.stringify([cs.name, Object.entries(cs.images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))]);
-    if (!v.frame || v.shape !== shape) {
-      if (typeof ccb.card !== "function") {
-        v.msg = "這個 App 版本還不能畫卡片（缺少 ccb.card）";
-        paintHead(v);
+    if (same && v.frame.ccbLive) {
+      // new data for a frame that takes it (ccb.onData): the card page reads it as JSON text, and the frame stays
+      cancelNext(v);
+      v.data = cs.data;
+      v.frame.contentWindow?.postMessage({ ccbData: JSON.stringify(data) }, "*");
+      return;
+    }
+    if (v.next?.want === want) return; // its page is on the way
+    if (typeof ccb.card !== "function") {
+      v.msg = "這個 App 版本還不能畫卡片（缺少 ccb.card）";
+      paintHead(v);
+      return;
+    }
+    if (v.drawing) return; // the end of the one in progress looks again
+    v.drawing = true;
+    try {
+      let url = null;
+      let failure = null;
+      try {
+        url = await ccb.card({ component: cs.name, data, botId: st.botId });
+      } catch (error) {
+        failure = error;
+      }
+      if (st.gone || views.get(v.lk) !== v) return;
+      // an answer for what the card no longer has to show is dropped (the end of this call asks again)
+      if (!v.state || wantOf(v.state) !== want) return;
+      if (failure) {
+        // a card that shows something keeps it; the next sync asks again
+        if (!v.frame) v.msg = `畫不出這張卡片：${failure?.message ?? failure}`;
         return;
       }
-      if (v.drawing) return;
-      v.drawing = true;
-      try {
-        const url = await ccb.card({ component: cs.name, data, botId: st.botId });
-        if (st.gone || views.get(v.lk) !== v) return;
-        const frame = document.createElement("iframe");
-        frame.className = "nc-frame";
-        frame.setAttribute("sandbox", "allow-scripts");
-        frame.setAttribute("aria-label", cs.name);
-        frame.tabIndex = -1;
-        // the frame is not inside its cell: the pointer over it still counts as over the cell (its bar and grip show)
-        frame.addEventListener("mouseenter", () => {
-          st.hoverLk = v.lk;
-          hoverCell();
-        });
-        frame.addEventListener("mouseleave", () => {
-          if (st.hoverLk === v.lk) st.hoverLk = null;
-          hoverCell();
-        });
-        frame.src = url;
-        v.frame?.remove();
+      const frame = makeFrame(v, cs.name, url);
+      if (!v.frame) {
         v.frame = frame;
         v.shape = shape;
         v.data = cs.data;
         cardLayer.append(frame);
-      } catch (error) {
-        v.msg = `畫不出這張卡片：${error?.message ?? error}`;
-      } finally {
-        v.drawing = false;
+      } else {
+        handOff(v, { frame, shape, data: cs.data, want, height: 0 });
       }
-      layoutCards();
-      paintHead(v);
-      if (v.state !== cs) drawView(v); // it changed while the page was being made
-    } else if (v.data !== cs.data) {
-      v.data = cs.data;
-      v.frame.contentWindow?.postMessage({ ccbData: data }, "*");
+    } finally {
+      v.drawing = false;
+      if (!st.gone && views.get(v.lk) === v) {
+        layoutCards();
+        paintHead(v);
+        if (v.state && wantOf(v.state) !== want) drawView(v); // it changed while the page was being made
+      }
     }
   }
   // Run the card's command (force: again); asks the user first when the app says it is not allowed yet.

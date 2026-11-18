@@ -157,16 +157,25 @@ describe("components in the chat", () => {
     expect(next.classList.contains("incoming")).toBe(true);
     expect(next.srcdoc).toContain("{\"b\":2}");
     expect(next.style.height).toBe("120px");
-    // Loaded and painted: it takes the old one's place in one step, without moving.
+    // The empty page a frame starts with loads first (a `load` event): that is not ready.
     next.dispatchEvent(new Event("load"));
-    // Loaded, not painted yet: the old one still shows.
+    paints.paint();
+    expect(chart.isConnected).toBe(true);
+    // It measured, but its page has not said it is ready (loaded, painted, pictures decoded): the old one still shows, as tall as it was.
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "size", height: 300 }, source: next.contentWindow }));
+    paints.paint();
+    expect(chart.isConnected).toBe(true);
+    expect(chart.style.height).toBe("120px");
+    // Ready, not painted yet in this window: the old one still shows.
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "ready", height: 120 }, source: next.contentWindow }));
     expect(chart.isConnected).toBe(true);
     paints.paint();
     expect(chart.isConnected).toBe(false);
     expect(frames()).toEqual([card, next]);
     expect(next.classList.contains("incoming")).toBe(false);
     expect(next.style.position).toBe("");
-    expect(next.style.height).toBe("120px");
+    // The one height that counts is what it measured (its last size).
+    expect(next.style.height).toBe("300px");
   });
 
   it("redraw a question's component once it is answered, and send later answers with the new state", () => {

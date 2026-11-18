@@ -242,11 +242,12 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .wb-composer-send { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 9px; background: var(--raised); color: var(--text); cursor: pointer; }
 .wb-composer-send:disabled { opacity: 0.45; cursor: default; }
 /* A bot's own picture (<whiteboard>): its component as a Board tile on its Running card, 2x2 in the report; read only on the card. */
-.wb-picture { flex-shrink: 0; display: block; border-radius: 10px; background: var(--notice); overflow: hidden; }
+.wb-picture { position: relative; flex-shrink: 0; display: block; border-radius: 10px; background: var(--notice); overflow: hidden; }
 .wb-picture-1x1 { width: 96px; height: 96px; }
 .wb-picture-2x1 { width: 100%; height: 96px; }
 .wb-picture-2x2 { width: 100%; height: 240px; }
 .wb-picture-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+.wb-picture-next { position: absolute; inset: 0; }
 .wb-card .wb-picture-frame { pointer-events: none; }
 .wb-picture-ask { padding: 12px; background: var(--notice); border: 1px solid var(--border); border-radius: 12px; display: flex; align-items: center; gap: 12px; }
 .wb-picture-ask code { font-size: 12.5px; color: var(--text); background: var(--chip); padding: 1px 5px; border-radius: 5px; }

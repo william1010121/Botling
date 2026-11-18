@@ -51,7 +51,7 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       // The pictures its data names are the core's to find (the bot's folder): a tile never reads a path itself.
       const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }, undefined, { plugin }).catch(failed);
       const { componentPage } = await import("../../../Web/src/components");
-      const page = componentPage(info.template, json, images, size, "board", true, false);
+      const page = componentPage(info.template, json, images, size, "board", true, false, true); // reportReady: a new picture behind the shown one waits for the page to say it is ready
       return (await client.request({ type: "card.page", html: page }, undefined, { plugin })).url;
     },
     async card(plugin, { component, data, botId }) {
@@ -63,7 +63,7 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }, undefined, { plugin }).catch(failed);
       const { componentPage, chatSize } = await import("../../../Web/src/components");
       // As in a chat reply (chatSize reads only its sizes): at its widest size, its height its content's; it can neither answer nor save there.
-      const page = componentPage(info.template, json, images, chatSize({ sizes: info.sizes } as ComponentInfo), "chat", false, false);
+      const page = componentPage(info.template, json, images, chatSize({ sizes: info.sizes } as ComponentInfo), "chat", false, false, true); // reportReady: a new card page behind the shown one waits for the page to say it is ready
       return (await client.request({ type: "card.page", html: page }, undefined, { plugin })).url;
     },
     async snapshot(plugin, frame, { botId, rect }) {

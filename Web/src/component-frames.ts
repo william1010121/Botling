@@ -76,6 +76,17 @@ try {
   }
 } catch { /* no storage: heights last as long as the page */ }
 
+/** The height a use of a component last had (`key` as `componentElement` names it: the message, then the component), or 0. */
+export function rememberedHeight(key: string): number {
+  return frameHeights.get(key) ?? 0;
+}
+
+/** Gives `frame` the height its page measured, and remembers it for the next time it is drawn. */
+export function settleHeight(frame: ComponentFrame, height: number): void {
+  frame.style.height = `${height}px`;
+  if (frame.ccbKey) rememberHeight(frame.ccbKey, height);
+}
+
 function rememberHeight(key: string, height: number): void {
   if (frameHeights.get(key) === height) return;
   frameHeights.delete(key);
@@ -224,11 +235,18 @@ window.addEventListener("message", (event) => {
   const frame = frameOf(document.querySelectorAll<ComponentFrame>("iframe.component-frame"), event.source);
   if (!frame) return;
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
+    // A drawing behind the shown frame takes no room and writes no height yet (not the visible one, not the remembered one):
+    // what it measured counts once it takes the shown frame's place (`drawBehind`).
+    if (frame.classList.contains("incoming")) {
+      frame.ccbSized = message.height;
+      return;
+    }
     const before = frame.getBoundingClientRect();
-    frame.style.height = `${message.height}px`;
-    // One drawing behind the shown frame takes no room yet: its height counts once it shows.
-    if (!frame.classList.contains("incoming")) keepReading(frame, before, message.height);
-    if (frame.ccbKey) rememberHeight(frame.ccbKey, message.height);
+    settleHeight(frame, message.height);
+    keepReading(frame, before, message.height);
+  } else if (message.ccb === "ready" && typeof message.height === "number" && message.height > 0) {
+    // A page handed over to says it is painted, its pictures decoded, and how tall it is: only a frame behind the shown one waits for it.
+    frame.ccbReady?.(message.height);
   } else if (message.ccb === "hover") {
     // The pointer is over the component: its Board tile (or opened pin) shows its controls.
     frame.closest(".board-card, .pin-sheet, .float-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
@@ -349,10 +367,10 @@ export function componentElement(
   frame.ccbData = data;
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
-  const page = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave);
+  const page = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave, true);
   // Built with tokens, it takes later changes live; built without, a first set rebuilds it (`applyTokens`). It is rebuilt from what it shows now.
   frame.ccbTokens = componentTokensCss() !== "";
-  frame.ccbBuild = () => componentPage(info.template, frame.ccbData ?? data, frame.ccbImages ?? {}, frame.ccbSize ?? drawnSize, surface, fill, !!onSave);
+  frame.ccbBuild = () => componentPage(info.template, frame.ccbData ?? data, frame.ccbImages ?? {}, frame.ccbSize ?? drawnSize, surface, fill, !!onSave, true);
   if (lazy && whenNear(frame, () => buildFrame(frame))) {
     // A placeholder until it comes near, as tall as it will be (or a guess, kept from then on).
     frame.ccbPending = page;
@@ -396,13 +414,15 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
   for (const frame of fresh.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
     const before = frame.ccbKey ? oldFrames.get(frame.ccbKey) : undefined;
     if (!before) continue;
-    // Only its data changed, and it takes new data itself: kept, and sent the data.
+    // Only its data changed, and it takes new data itself: kept, and sent the data. Not while another drawing is on its way
+    // behind it (that one is the frame's next picture; what the shown frame is sent would be shown and then replaced).
     const changed = before.ccbDrawn !== frame.ccbDrawn;
     const sameShape = before.ccbShape === frame.ccbShape;
-    const live = changed && !!before.ccbLive && sameShape;
-    // Only its data changed but it draws data only as it loads: it stays on screen while a new
-    // frame draws the new data behind it (a frame given a new page goes blank while it loads).
-    const redraw = changed && !live && sameShape && frameBuilt(before);
+    const live = changed && !!before.ccbLive && sameShape && !before.ccbIncoming;
+    // Its data or its page changed (another template, version or picture map) and it draws only as it loads: it stays on
+    // screen, as tall as it is, while a new frame draws the new page behind it, and gives way once that is ready (a frame
+    // given a new page, or one replaced by an empty one, goes blank while it loads).
+    const redraw = changed && !live && frameBuilt(before);
     if (changed && !live && !redraw) continue;
     // Only where it sits the same way in both, so nothing around it has to move.
     const pairs: [Element, Element][] = [];

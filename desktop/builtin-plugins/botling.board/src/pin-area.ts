@@ -112,6 +112,7 @@ export function pinBody(pin: PinView, size?: PinSize, fill = !!size, where: PinS
   if (pin.display.command || pin.display.status) {
     return commandCard(pin.display, `pin:${pin.id}`, 0, draw, {
       bar: false,
+      heightKey: `${key}/${pin.name}`,
       send: (request) => post({ type: "pinCommand", id: pin.id, ...request }),
     });
   }

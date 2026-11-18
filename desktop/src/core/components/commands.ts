@@ -237,9 +237,10 @@ export class ComponentCommands {
     this.runs.set(card, { status: "running", data: previous?.data ?? null, error: null, ranAt: previous?.ranAt ?? null });
     this.onChange(card);
     const outcome = await this.runner(command, folder);
+    // A failed run keeps the last good result (of this command in this folder): the card goes on showing it, with the reason beside it, instead of losing its picture.
     this.runs.set(card, outcome.data !== undefined
       ? { status: "done", data: outcome.data, error: null, ranAt: outcome.ranAt }
-      : { status: "failed", data: null, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt });
+      : { status: "failed", data: previous?.data ?? null, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt });
     this.onChange(card);
   }
 
