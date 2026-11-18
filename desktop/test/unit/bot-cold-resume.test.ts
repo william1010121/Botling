@@ -128,7 +128,7 @@ describe("a cold cache is never resumed (ensureHead)", () => {
     head.running = false;
     r.peek.headRun.detach();
     const id = r.peek.session.sessionId;
-    r.peek.headRun.lastModelAt = agoMs === null ? null : Date.now() - agoMs;
+    r.peek.headRun.setModelClock(agoMs === null ? null : Date.now() - agoMs);
     r.peek.briefing = false;
     return { r, id };
   }
