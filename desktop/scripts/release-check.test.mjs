@@ -352,6 +352,8 @@ test('release.yml: the plan job gates a tag build on CI, and the candidate job r
   const at = names.findIndex(n => n.startsWith('CI must be green'));
   assert.ok(at >= 0 && at < names.indexOf('plan'), JSON.stringify(names));
   assert.match(job('plan'), /\n {4}permissions:\n {6}contents: read\n {6}actions: read\n/);
+  // A job that is allowed to fail lets `needs: plan` pass: no continue-on-error anywhere in plan (the gate step is checked above).
+  assert.doesNotMatch(job('plan'), /continue-on-error/);
   for (const name of ['candidate', 'linux', 'windows']) assert.match(job(name), /\n {4}needs: plan\n/, name);
   // The candidate job: no unit suite (CI owns it); the typecheck and the packaging, signing, verification and feed checks stay.
   const candidate = job('candidate');

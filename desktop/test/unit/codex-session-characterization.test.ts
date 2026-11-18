@@ -46,7 +46,9 @@ class Tape {
       return v;
     });
     // The table was recorded on Linux, where `shell()` (agent/codex-types.ts) is /bin/sh; on macOS the same code says /bin/zsh.
-    return json.replace(/\["\/bin\/zsh","-c",/g, '["/bin/sh","-c",').replace(UUID, (id) => {
+    // Only macOS folds it: on any other platform a /bin/zsh in the output is a change of behaviour and must fail against the table.
+    const folded = process.platform === "darwin" ? json.replace(/\["\/bin\/zsh","-c",/g, '["/bin/sh","-c",') : json;
+    return folded.replace(UUID, (id) => {
       const key = id.toLowerCase();
       if (!this.uuids.has(key)) this.uuids.set(key, `<uuid${this.uuids.size + 1}>`);
       return this.uuids.get(key)!;
