@@ -111,12 +111,12 @@ describe("the guidance in the prompt", () => {
   it("Antigravity draws no components: even asked for, it gets neither the guidance nor the shorter list", () => {
     expect(withIt("agy")).toBe(without("agy"));
   });
-  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 800 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55; one example per chart kind, +~160)", () => {
+  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 800 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55; one example per chart kind, +~160; the progress reply rule, 2026-11-19, +~215)", () => {
     const a = botPrompts({ profile: profile("bot"), inlineBlocks: true }).system;
     const b = botPrompts({ profile: { ...profile("bot"), name: "Other", folder: "/somewhere/else" }, inlineBlocks: true }).system;
     expect(a).toContain(INLINE_BLOCK_GUIDANCE);
     expect(b).toContain(INLINE_BLOCK_GUIDANCE);
-    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3400);
+    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3600);
   });
   /** The example lines of the guidance: `label: {json}`, one block each. */
   const examples = () => INLINE_BLOCK_GUIDANCE.split("\n").slice(1).map((line) => ({ line, json: JSON.parse(/: (\{.*\})$/.exec(line)![1]!) }));
@@ -287,8 +287,8 @@ describe("a progress or status reply leads with a progress block (2026-11-19, th
       expect(rule).toMatch(/Plain text stays right for explanations, hand-offs \("I started a worker"\) and anything with fewer than about 4 facts/);
     });
   }
-  it("stays short: the guidance still under its length limit, the card rule still under half of it", () => {
-    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3400);
+  it("stays short: the rule is one sentence of under 260 characters, and the card rule is still under half of the guidance", () => {
+    expect(sentence(INLINE_BLOCK_GUIDANCE).length).toBeLessThan(260);
     expect(CARD_WHEN_RULE.length).toBeLessThan(INLINE_BLOCK_GUIDANCE.length / 2);
   });
   it("names no component, block type or chart kind in the card rule (the head only wishes for a figure)", () => {
