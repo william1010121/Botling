@@ -255,6 +255,47 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
   });
 });
 
+describe("a progress or status reply leads with a progress block (2026-11-19, the user: the bot rarely drew a progress card, even asked \"what is the progress\")", () => {
+  const claudeHead = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "claude", inlineBlocks: true }), profile("bot"), "claude", true, reportSections(tool), undefined, true).system;
+  const codexHead = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "codex", inlineBlocks: true }), profile("bot"), "codex", false, reportSections(tool), undefined, true).system;
+  /** The sentence about progress and status in a rule text. */
+  const sentence = (rule: string): string => {
+    const found = /[^.]*\bstatus\b[^.]*\.(?:[^.]*\.)?/i.exec(rule.replace(/\(e\.g\./g, "(eg"));
+    return found ? found[0] : "";
+  };
+  for (const [name, rule, block, text] of [
+    ["a head that writes <card>", CARD_WHEN_RULE, "<card>", claudeHead],
+    ["a head with the inline guidance", INLINE_BLOCK_GUIDANCE, "progress block", codexHead],
+  ] as const) {
+    it(`${name}: a progress or status answer (asked for, or one you volunteer such as after a routine or worker report) with done/total counts, spend against a cap or ETAs per line is ONE ${block} with one or two sentences, not a bulleted list`, () => {
+      expect(text).toContain(rule);
+      const s = sentence(rule);
+      expect(s).toMatch(/progress or status/);
+      expect(s).toMatch(/asked for/);
+      expect(s).toMatch(/volunteer|unprompted/);
+      expect(s).toMatch(/routine|worker report/);
+      expect(s).toMatch(/done of a total|counts against a total/);
+      expect(s).toMatch(/spend against a cap|money against a cap/);
+      expect(s).toMatch(/ETA/);
+      expect(s).toContain(`ONE ${block}`);
+      expect(s).toMatch(/one or two sentences/);
+      expect(s).toMatch(/never a (bulleted|bullet) list/);
+    });
+    it(`${name}: the "fewer than about 4 facts" text exception comes after it and does not cover a progress or status reply`, () => {
+      expect(rule.indexOf("progress or status")).toBeGreaterThan(-1);
+      expect(rule.indexOf("progress or status")).toBeLessThan(rule.indexOf("Plain text stays right"));
+      expect(rule).toMatch(/Plain text stays right for explanations, hand-offs \("I started a worker"\) and anything with fewer than about 4 facts/);
+    });
+  }
+  it("stays short: the guidance still under its length limit, the card rule still under half of it", () => {
+    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3400);
+    expect(CARD_WHEN_RULE.length).toBeLessThan(INLINE_BLOCK_GUIDANCE.length / 2);
+  });
+  it("names no component, block type or chart kind in the card rule (the head only wishes for a figure)", () => {
+    expect(sentence(CARD_WHEN_RULE)).not.toMatch(/inline-chart|inline-report-block|waterfall|dumbbell|kpi|<show name|progress block/);
+  });
+});
+
 describe("the report rule by size", () => {
   const manifestText = REPORT_SECTION.text;
   // `workers` false: a head without app workers writes no <card>, so it keeps the by-size rule (its inline blocks are its own); with workers it writes only <card>.
