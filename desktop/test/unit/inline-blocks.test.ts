@@ -170,8 +170,9 @@ describe("the guidance in the prompt", () => {
     expect(JSON.parse(out.trim().split("\n").at(-1)!)).toMatchObject({ ok: true, errors: [] });
     expect(code).toBe(0);
   });
-  it("the drawer check has teeth: a waterfall written with `items` (what a bot guessed) draws the error card", () => {
-    const wrong = drawChart({ kind: "waterfall", title: "x", items: [{ label: "a", value: 1 }] });
+  it("the drawer check has teeth: a waterfall whose steps is not an array draws the error card (the live drawer accepts `items` as an alias of the main array, so that guess no longer fails)", () => {
+    expect(drawChart({ kind: "waterfall", title: "x", items: [{ label: "a", value: 1 }] }).drawn).toBe(true);
+    const wrong = drawChart({ kind: "waterfall", title: "x", steps: { label: "a", value: 1 } });
     expect(wrong.error).toContain("必須是陣列");
     expect(wrong.error).toContain("steps");
     expect(wrong.drawn).toBe(false);
@@ -414,7 +415,7 @@ describe("the built-in components every bot has", () => {
       expect(readFileSync(join(cardsFolder, name, "template.html"), "utf8")).toContain("ccb-kit");
       expect(lib.pinOnly(name)).toBe(false);
       expect(lib.summaries([name])).toContain(`<show name="${name}">`);
-      expect(lib.summaries([name]).length).toBeLessThan(400);
+      expect(lib.summaries([name]).length).toBeLessThan(name === "inline-chart" ? 650 : 400); // the chart's catalog line names its six kinds (Maintainer's wording, 551 chars on 2026-11-19)
     }
     expect(readFileSync(join(cardsFolder, "inline-chart", "about.md"), "utf8")).toContain("## Data format (window.ccb.data)");
   });

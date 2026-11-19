@@ -8,7 +8,7 @@
 
 // The kinds this check knows the fields of. The live template (the library's own copy, which Maintainer extends: `targets` came that way) decides which kinds exist: its
 // `KINDS` list is read from it (`liveList`), a kind it lists that is not known here is never rejected, and a missing template falls back to these.
-const CHART_KINDS = ["bars", "waterfall", "dumbbell", "line", "targets"] as const;
+const CHART_KINDS = ["bars", "waterfall", "dumbbell", "line", "targets", "stacked"] as const;
 /** inline-report-block's own `type` list (its template's TYPES); `flow` is the old name of `flowchart`. */
 export const REPORT_BLOCK_TYPES = ["kpi", "table", "options", "proscons", "checklist", "progress", "timeline", "roadmap", "steps", "callout", "matrix", "flowchart", "sequence", "prose", "quote", "glossary", "sources", "image"] as const;
 export const CHART_KIND_NAMES: readonly string[] = CHART_KINDS;
