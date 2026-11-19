@@ -150,8 +150,15 @@ describe("the tools folder", () => {
     const store = new SiteToolStore({ folder, stateFile: join(dir, "state.json"), debounceMs: 30 });
     try {
       const seen = new Promise<void>((resolve) => store.subscribe(() => { if (store.tool("new-tool")) resolve(); }));
-      writeTool(folder, "new-tool", { name: "New", matches: ["<all_urls>"] });
-      await Promise.race([seen, new Promise((_, reject) => setTimeout(() => reject(new Error("no reload")), 4000))]);
+      // A recursive fs.watch on macOS (FSEvents) can start after the first write and then never reports it (failed on the macOS CI runner,
+      // 2026-11-19). The bot's write is repeated until the store has seen it; the store must still catch it on its own, only later.
+      const write = () => writeTool(folder, "new-tool", { name: "New", matches: ["<all_urls>"] });
+      write();
+      const again = setInterval(write, 300);
+      let giveUp: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([seen, new Promise((_, reject) => { giveUp = setTimeout(() => reject(new Error("no reload")), 15_000); })]);
+      } finally { clearInterval(again); clearTimeout(giveUp); }
       expect(store.tool("new-tool")?.name).toBe("New");
     } finally { store.dispose(); }
   });

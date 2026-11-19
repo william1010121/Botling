@@ -452,14 +452,21 @@ describe("M3 step 5: roster and preference gossip (stand-in for the Roster serve
     expect(A.roster!.statementsById([xAdd.id, xEndorse.id])).toHaveLength(2);
     expect(A.roster!.view.servers.has(X.memberId)).toBe(true);
 
-    // An oversize set ends the session with bye{too-large}: a peer that keeps sending full chunks.
-    const session = A.peers!.session(B.identity.memberId)!;
+    // An oversize set ends the session with bye{too-large}: a peer that keeps sending full chunks. The two sessions are looked up
+    // again for each try: on a loaded runner the pair's session can end first for another reason (a duplicate dial resolved by
+    // "one session per pair", or `bye dead` after a stall), and then the next live session gets the oversize set (ubuntu CI, 2026-11-19).
     const full = Array.from({ length: STATEMENTS_PER_FRAME }, () => add.statement);
-    const target = B.peers!.session(A.identity.memberId)!;
-    for (let sent = 0; sent <= MAX_GOSSIP_SET; sent += STATEMENTS_PER_FRAME) if (!session.sendWire({ t: "roster.statements", statements: full } as WireMessage)) break;
-    await until(() => target.state === "closed", { timeout: 15_000, what: "B ends the session" });
-    expect(B.logs.some((line) => /too-large/.test(line)) || A.logs.some((line) => /too-large/.test(line))).toBe(true);
-  }, 60_000);
+    const tooLarge = () => B.logs.some((line) => /too-large/.test(line)) || A.logs.some((line) => /too-large/.test(line));
+    for (let attempt = 0; attempt < 3 && !tooLarge(); attempt++) {
+      await until(() => liveWith(A, B) && liveWith(B, A), { timeout: 10_000, what: "A and B live before the oversize set" });
+      const session = A.peers!.session(B.identity.memberId);
+      const target = B.peers!.session(A.identity.memberId);
+      if (!session || !target) continue;
+      for (let sent = 0; sent <= MAX_GOSSIP_SET; sent += STATEMENTS_PER_FRAME) if (!session.sendWire({ t: "roster.statements", statements: full } as WireMessage)) break;
+      await until(() => target.state === "closed", { timeout: 10_000, what: "B ends the session" });
+    }
+    if (!tooLarge()) throw new Error(`no bye{too-large} in either log; B's last lines:\n${B.logs.slice(-10).join("\n")}\nA's last lines:\n${A.logs.slice(-10).join("\n")}`);
+  }, 90_000);
 
   it("what this side could not take is not asked for again in a loop, and is asked for again after its next roster change", async () => {
     const servers = await Promise.all(["A", "B"].map(makeServer));
