@@ -111,12 +111,12 @@ describe("the guidance in the prompt", () => {
   it("Antigravity draws no components: even asked for, it gets neither the guidance nor the shorter list", () => {
     expect(withIt("agy")).toBe(without("agy"));
   });
-  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 800 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55; one example per chart kind, +~160)", () => {
+  it("sits in the cacheable, stable part: the same for any profile name, memory or folder, and about 800 tokens (the chart rule, 2026-11-18, replaced the old chart sentence at about +55; one example per chart kind, +~160; the progress reply rule, 2026-11-19, +~215)", () => {
     const a = botPrompts({ profile: profile("bot"), inlineBlocks: true }).system;
     const b = botPrompts({ profile: { ...profile("bot"), name: "Other", folder: "/somewhere/else" }, inlineBlocks: true }).system;
     expect(a).toContain(INLINE_BLOCK_GUIDANCE);
     expect(b).toContain(INLINE_BLOCK_GUIDANCE);
-    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3400);
+    expect(INLINE_BLOCK_GUIDANCE.length).toBeLessThan(3600);
   });
   /** The example lines of the guidance: `label: {json}`, one block each. */
   const examples = () => INLINE_BLOCK_GUIDANCE.split("\n").slice(1).map((line) => ({ line, json: JSON.parse(/: (\{.*\})$/.exec(line)![1]!) }));
@@ -252,6 +252,48 @@ describe("a Claude head with app workers writes only <card> (the guidance moved 
     expect(INLINE_BLOCK_GUIDANCE).toContain("otherwise draw it with Python matplotlib as a PNG shown with ![caption](file://full path)");
     // The guidance and the worker's examples are one text: a change is made once.
     expect(INLINE_BLOCK_GUIDANCE.endsWith(INLINE_EXAMPLES)).toBe(true);
+  });
+});
+
+describe("a progress or status reply leads with a progress block (2026-11-19, the user: the bot rarely drew a progress card, even asked \"what is the progress\")", () => {
+  const claudeHead = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "claude", inlineBlocks: true }), profile("bot"), "claude", true, reportSections(tool), undefined, true).system;
+  const codexHead = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "codex", inlineBlocks: true }), profile("bot"), "codex", false, reportSections(tool), undefined, true).system;
+  /** The sentence about progress and status in a rule text. */
+  const sentence = (rule: string): string => {
+    const found = /[^.]*\bstatus\b[^.]*\./i.exec(rule.replace(/\(e\.g\./g, "(eg"));
+    return found ? found[0] : "";
+  };
+  for (const [name, rule, block, text] of [
+    ["a head that writes <card>", CARD_WHEN_RULE, "<card>", claudeHead],
+    ["a head with the inline guidance", INLINE_BLOCK_GUIDANCE, "progress block", codexHead],
+  ] as const) {
+    it(`${name}: a progress or status answer (asked for, or one you volunteer such as after a routine or worker report) with done/total counts, spend against a cap or ETAs per line is ONE ${block} with one or two sentences, not a bulleted list`, () => {
+      expect(text).toContain(rule);
+      const s = sentence(rule);
+      expect(s).toMatch(/progress or status/);
+      expect(s).toMatch(/asked for/);
+      expect(s).toMatch(/volunteer|unprompted/);
+      expect(s).toMatch(/routine|worker report/);
+      expect(s).toMatch(/done of a total|counts against a total/);
+      expect(s).toMatch(/spend against a cap|money against a cap/);
+      expect(s).toMatch(/ETA/);
+      expect(s).toContain(`ONE ${block}`);
+      expect(s).toMatch(/one or two sentences/);
+      expect(s).toMatch(/never a (bulleted|bullet) list/);
+      expect(s).toMatch(/however few/); // it overrides the "fewer than about 4 facts" text exception for this reply
+    });
+    it(`${name}: the "fewer than about 4 facts" text exception comes after it and does not cover a progress or status reply`, () => {
+      expect(rule.indexOf("progress or status")).toBeGreaterThan(-1);
+      expect(rule.indexOf("progress or status")).toBeLessThan(rule.indexOf("Plain text stays right"));
+      expect(rule).toMatch(/Plain text stays right for explanations, hand-offs \("I started a worker"\) and anything with fewer than about 4 facts/);
+    });
+  }
+  it("stays short: the rule is one sentence of under 260 characters, and the card rule is still under half of the guidance", () => {
+    expect(sentence(INLINE_BLOCK_GUIDANCE).length).toBeLessThan(260);
+    expect(CARD_WHEN_RULE.length).toBeLessThan(INLINE_BLOCK_GUIDANCE.length / 2);
+  });
+  it("names no component, block type or chart kind in the card rule (the head only wishes for a figure)", () => {
+    expect(sentence(CARD_WHEN_RULE)).not.toMatch(/inline-chart|inline-report-block|waterfall|dumbbell|kpi|<show name|progress block/);
   });
 });
 
