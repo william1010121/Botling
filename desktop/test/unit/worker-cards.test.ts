@@ -265,11 +265,27 @@ describe("what a card worker is told: its own card in its message, the fixed rul
     expect(text).toContain("end with one <show> for each, in the order they should read");
   });
 
+  // 2026-11-19, the eeg progress card: the worker drew four one-bar `progress` blocks (runs and CCU side by side, ETAs only in titles, spent and forecast as two bars
+  // against one cap) although Maintainer had made inline-chart `stacked` for exactly this progress. The rule sent "progress by group" to inline-report-block, listed only
+  // the old inline-chart kinds, and said the examples need no read, so a haiku worker never opened inline-chart's usage.
+  it("does not send every progress figure to inline-report-block or freeze inline-chart's kinds: a progress with groups, ETAs, mixed units or spend against a cap is read from inline-chart's usage, one figure per unit", () => {
+    const rule = CARD_CHART_RULE;
+    expect(rule).not.toContain("progress by group (a part of a whole)");
+    expect(rule).not.toContain("kind bars, dumbbell, waterfall or line");
+    expect(rule).toMatch(/inline-chart's usage/);
+    expect(rule).toMatch(/several groups of done \/ total/);
+    expect(rule).toMatch(/each unit in its own figure/);
+    expect(rule).toMatch(/spent and forecast against one cap in ONE figure/);
+    expect(rule).toMatch(/never one single-bar progress block per group/);
+    // Still the card worker's own text (the rule reaches it in the system prompt, and the redo's message).
+    expect(cardSystemPrompt(brief)).toContain(rule);
+  });
+
   it("carries the chart rule and the inline component examples (moved from the head's guidance), fixed text before the component list", () => {
     const text = cardSystemPrompt(brief);
     expect(text).toContain(CARD_CHART_RULE);
     expect(text).toContain("Charts: first decide what the figure must show (groups side by side, time axis, error bars, measured vs estimated).");
-    expect(text).toContain("Use a component only if it fits exactly as its usage defines it (inline-chart, kind bars, dumbbell, waterfall or line, when it shows that clearly); never force one, and never put a value in a field outside its meaning (for example a progress value above its max).");
+    expect(text).toContain("Use a component only if it fits exactly as its usage defines it; never force one, and never put a value in a field outside its meaning (for example a progress value above its max).");
     expect(text).toContain("If none fits, do not draw the figure yourself: end with a <component> that describes the chart (step 4).");
     expect(text).toContain("A matplotlib picture only when the card text explicitly asks for a picture (step 3).");
     expect(text).not.toContain("otherwise draw it with Python matplotlib");
