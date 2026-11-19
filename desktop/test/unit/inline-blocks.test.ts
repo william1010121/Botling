@@ -280,6 +280,7 @@ describe("a progress or status reply leads with a progress block (2026-11-19, th
       expect(s).toContain(`ONE ${block}`);
       expect(s).toMatch(/one or two sentences/);
       expect(s).toMatch(/never a (bulleted|bullet) list/);
+      expect(s).toMatch(/however few/); // it overrides the "fewer than about 4 facts" text exception for this reply
     });
     it(`${name}: the "fewer than about 4 facts" text exception comes after it and does not cover a progress or status reply`, () => {
       expect(rule.indexOf("progress or status")).toBeGreaterThan(-1);
