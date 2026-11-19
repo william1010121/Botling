@@ -95,8 +95,10 @@ jobs:
       KERNEL_ACCEPTANCE_RUNS: ${{ github.event_name == 'pull_request' && '150' || '500' }}
       V3_GOSSIP_PROPERTY_SEEDS: ${{ github.event_name == 'pull_request' && '2' || '6' }}
       V3_LOG_PROPERTY_RUNS: ${{ github.event_name == 'pull_request' && '10' || '30' }}
-      # M7-11b swap-outbox property: 2,000 on pull requests (about 50 s on Linux; still past the D49 seed 20262478, run 1,363).
-      SWAP_OUTBOX_RUNS: ${{ github.event_name == 'pull_request' && '2000' || '10000' }}
+      # M7-11b swap-outbox property: 2,000 on pull requests and always on macOS (about 50 s on Linux; the macOS runner is several
+      # times slower and 10,000 timed out there on push, run 44387426297; 2,000 is still past the D49 seed 20262478, run 1,363).
+      # Main and nightly keep 10,000 on Ubuntu and Windows. A job-level env has no `runner` context, so this reads matrix.os.
+      SWAP_OUTBOX_RUNS: ${{ (github.event_name == 'pull_request' || startsWith(matrix.os, 'macos')) && '2000' || '10000' }}
     defaults:
       run:
         working-directory: desktop
