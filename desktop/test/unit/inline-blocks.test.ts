@@ -260,7 +260,7 @@ describe("a progress or status reply leads with a progress block (2026-11-19, th
   const codexHead = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "codex", inlineBlocks: true }), profile("bot"), "codex", false, reportSections(tool), undefined, true).system;
   /** The sentence about progress and status in a rule text. */
   const sentence = (rule: string): string => {
-    const found = /[^.]*\bstatus\b[^.]*\.(?:[^.]*\.)?/i.exec(rule.replace(/\(e\.g\./g, "(eg"));
+    const found = /[^.]*\bstatus\b[^.]*\./i.exec(rule.replace(/\(e\.g\./g, "(eg"));
     return found ? found[0] : "";
   };
   for (const [name, rule, block, text] of [
