@@ -266,19 +266,17 @@ describe("what a card worker is told: its own card in its message, the fixed rul
   });
 
   // 2026-11-19, the eeg progress card: the worker drew four one-bar `progress` blocks (runs and CCU side by side, ETAs only in titles, spent and forecast as two bars
-  // against one cap) although Maintainer had made inline-chart `stacked` for exactly this progress. The rule sent "progress by group" to inline-report-block, listed only
-  // the old inline-chart kinds, and said the examples need no read, so a haiku worker never opened inline-chart's usage.
-  it("does not send every progress figure to inline-report-block or freeze inline-chart's kinds: a progress with groups, ETAs, mixed units or spend against a cap is read from inline-chart's usage, one figure per unit", () => {
-    const rule = CARD_CHART_RULE;
-    expect(rule).not.toContain("progress by group (a part of a whole)");
-    expect(rule).not.toContain("kind bars, dumbbell, waterfall or line");
-    expect(rule).toMatch(/inline-chart's usage/);
-    expect(rule).toMatch(/several groups of done \/ total/);
-    expect(rule).toMatch(/each unit in its own figure/);
-    expect(rule).toMatch(/spent and forecast against one cap in ONE figure/);
-    expect(rule).toMatch(/never one single-bar progress block per group/);
-    // Still the card worker's own text (the rule reaches it in the system prompt, and the redo's message).
-    expect(cardSystemPrompt(brief)).toContain(rule);
+  // against one cap) although Maintainer had made inline-chart `stacked` for exactly this progress. Three hand-written copies of what the library says were stale:
+  // the list of inline-chart's kinds (no `stacked`, no `targets`), the routing of "progress by group" to inline-report-block, and an example labelled "progress by
+  // group" that "needs no read". They beat the catalog line (which is the library's own, and lists every kind). The rule names no component's kinds or routes a figure.
+  it("the card worker's rules name no kind of inline-chart and send no figure to a component by hand: what a component draws is its catalog line and usage, as the library has them", () => {
+    expect(CARD_CHART_RULE).not.toContain("kind bars, dumbbell, waterfall or line");
+    expect(CARD_CHART_RULE).not.toContain("progress by group");
+    expect(CARD_CHART_RULE).not.toMatch(/inline-chart, kind/);
+    expect(INLINE_EXAMPLES).not.toMatch(/^ *progress by group:/m);
+    const live = { ...brief, components: "- inline-chart (JSON): 圖表卡片: draws ONE small chart (bars, waterfall, dumbbell, line, targets or stacked)" };
+    const text = cardSystemPrompt(live);
+    expect(text).toContain("targets or stacked");
   });
 
   it("carries the chart rule and the inline component examples (moved from the head's guidance), fixed text before the component list", () => {
