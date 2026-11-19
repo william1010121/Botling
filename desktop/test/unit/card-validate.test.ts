@@ -31,6 +31,7 @@ describe("validateCardShow: the lists are the templates' own", () => {
     const chartKinds = liveList(template("inline-chart"), "KINDS")!;
     for (const kind of chartKinds) expect(CHART_KIND_NAMES, kind).toContain(kind);
     expect(CHART_KIND_NAMES).toContain("targets");
+    expect(CHART_KIND_NAMES).toContain("stacked");
     expect([...REPORT_BLOCK_TYPES]).toEqual(liveList(template("inline-report-block"), "TYPES"));
   });
 
