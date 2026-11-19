@@ -464,6 +464,8 @@ describe("M3 step 5: roster and preference gossip (stand-in for the Roster serve
       if (!session || !target) continue;
       for (let sent = 0; sent <= MAX_GOSSIP_SET; sent += STATEMENTS_PER_FRAME) if (!session.sendWire({ t: "roster.statements", statements: full } as WireMessage)) break;
       await until(() => target.state === "closed", { timeout: 10_000, what: "B ends the session" });
+      // A's log of the bye comes over the wire, a moment after B's session closed: give it that moment before a retry is judged needed.
+      await until(tooLarge, { timeout: 1_500 }).catch(() => undefined);
     }
     if (!tooLarge()) throw new Error(`no bye{too-large} in either log; B's last lines:\n${B.logs.slice(-10).join("\n")}\nA's last lines:\n${A.logs.slice(-10).join("\n")}`);
   }, 90_000);
