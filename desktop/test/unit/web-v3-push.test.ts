@@ -870,6 +870,11 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
         if (!enc.ok) throw new Error(enc.detail);
         link.send("control", encoder.encode(enc.text));
       },
+      /** Every frame sent so far was sealed and the server's side of the link handled it (no timed sleep: a loaded runner is slower than any sleep). */
+      async settle(): Promise<void> {
+        await link.drain();
+        await session.link.received();
+      },
     };
   }
 
@@ -889,17 +894,19 @@ describe("M4-25 review fixes F1, F3, F4, F5, F6", () => {
     const subB = { endpoint: "https://push.example/sub/B", keys: { p256dh: makeP256Pub(2), auth: makeAuth(2) } };
     const subLast = { endpoint: "https://push.example/sub/LAST", keys: { p256dh: makeP256Pub(3), auth: makeAuth(3) } };
 
+    // Two links deliver in no fixed order: each batch is settled (sealed, handed over, handled) before the next is sent, or a
+    // slow runner let one of the 25 subB frames land after subLast (the ubuntu CI runner, 2026-11-19: the window flushed subB).
     c1.sendPush(subA);
-    await new Promise((r) => setTimeout(r, 20));
+    await c1.settle();
     await s.roster.idle();
     for (let i = 0; i < 25; i++) {
       c1.sendPush(subB);
       c2.sendPush(subA);
     }
-    await new Promise((r) => setTimeout(r, 40));
+    await Promise.all([c1.settle(), c2.settle()]);
     await s.roster.idle();
     c2.sendPush(subLast);
-    await new Promise((r) => setTimeout(r, 20));
+    await c2.settle();
     await s.roster.idle();
 
     const beforeWindow = s.roster.statements().filter((st) => st.statement.body.type === "profile" && st.statement.body.field === "push");

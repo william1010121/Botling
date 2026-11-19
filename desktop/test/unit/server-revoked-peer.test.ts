@@ -210,8 +210,10 @@ describe("M4-06: what a server does when another server becomes invalid", () => 
     await until(() => {
       const p = peerOf(s2, k3.memberId);
       const delta = s2.log.slice(s2LogsBefore);
-      return p?.state === "gone" && delta.includes(`peer ${k3.memberId}: session ended (bye revoked`);
-    }, { timeout: 20_000, what: "s2 ends live session with s3 on revocation merge" });
+      // The roster change ends the session while the merge is still returning: its "took 1 …" line comes a few ticks later
+      // (the poll read the log between the two on the ubuntu and macOS CI runners, 2026-11-19), so wait for both lines.
+      return p?.state === "gone" && delta.includes(`peer ${k3.memberId}: session ended (bye revoked`) && /took 1 (revocation )?statement/.test(delta);
+    }, { timeout: 20_000, what: "s2 ends live session with s3 on revocation merge and logs that it took the Revoke" });
 
     const delta = s2.log.slice(s2LogsBefore);
     // s2 takes the Revoke by the peer session's exchange ("took 1 revocation statement(s)") or by gossip ("took 1 statement(s)"), whichever comes first.
