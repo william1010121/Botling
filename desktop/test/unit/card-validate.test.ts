@@ -146,7 +146,7 @@ describe("validateCardShow: the live inline-chart (the library's copy: `items` o
     expect(check({ title: "x" }, template)).toMatch(/kind is missing \(bars \/ heatmap\)/);
     expect(check({ kind: "bars", items: [{ label: "a", value: "x" }] }, template)).toMatch(/items\[0\]\.value must be a number/);
     expect(check({ kind: "targets", target: "x", items: ROWS })).toMatch(/^target must be a number/);
-    expect(check({ kind: "heatmap" })).toMatch(/kind "heatmap" is unknown \(bars \/ waterfall \/ dumbbell \/ line \/ targets\)/);
+    expect(check({ kind: "heatmap" })).toMatch(/kind "heatmap" is unknown \(bars \/ waterfall \/ dumbbell \/ line \/ targets \/ stacked\)/);
     expect(check({ kind: "heatmap" }, "no list in this one")).toMatch(/kind "heatmap" is unknown/);
   });
 
